@@ -19,6 +19,7 @@ import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { DEFAULT_SETTINGS } from './core/settings/settings.models';
 import { SettingsService } from './core/settings/settings.service';
 import { DetailPanelComponent } from './features/detail/detail-panel';
+import { FieldsDialogComponent } from './features/fields/fields-dialog';
 import { PANEL_MIN, panelHeight, panelMax } from './features/detail/detail-logic';
 import { LogTableViewComponent } from './features/log-table/log-table-view';
 import { OverviewRulerComponent } from './features/log-table/overview-ruler';
@@ -40,6 +41,7 @@ import { SplitterComponent } from './shared/splitter';
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
     DetailPanelComponent,
+    FieldsDialogComponent,
     LogTableViewComponent,
     MergeDialogComponent,
     OpenPathDialogComponent,
@@ -130,6 +132,9 @@ import { SplitterComponent } from './shared/splitter';
     }
     @if (mergeDialogOpen()) {
       <app-merge-dialog (closed)="mergeDialogOpen.set(false)" />
+    }
+    @if (sessions.fieldsDialog(); as request) {
+      <app-fields-dialog [request]="request" (closed)="sessions.fieldsDialog.set(null)" />
     }
   `,
   styles: `

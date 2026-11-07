@@ -1,6 +1,7 @@
 //! Thin command layer: argument mapping only, the logic lives in the session.
 
 use crate::error::{AppError, AppResult, ErrorCode};
+use crate::extract::{ExtractRule, FieldSuggestion, RulePreview};
 use crate::filter::{SearchMode, SearchQuery};
 use crate::filter_expr::FilterExpr;
 use crate::level::Level;
@@ -12,6 +13,7 @@ use crate::model::{
 use crate::profile::Profile;
 use crate::session::{LogSession, OpenOptions, SessionManager};
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::ipc::Channel;
@@ -48,6 +50,7 @@ pub async fn open_log(
         let manager = app.state::<SessionManager>();
         let options = OpenOptions {
             keep_on_rotate: keep_on_rotate.unwrap_or(true),
+            ..OpenOptions::default()
         };
         let sink = Box::new(move |update: SessionUpdate| {
             // A closed webview just stops listening.
@@ -87,6 +90,7 @@ pub async fn open_merged(
             .collect::<AppResult<Vec<_>>>()?;
         let options = OpenOptions {
             keep_on_rotate: keep_on_rotate.unwrap_or(true),
+            ..OpenOptions::default()
         };
         let sink = Box::new(move |update: SessionUpdate| {
             let _ = on_update.send(update);
@@ -299,4 +303,54 @@ pub async fn set_custom_profiles(
     profiles: Vec<Profile>,
 ) -> AppResult<()> {
     state.set_custom_profiles(profiles)
+}
+
+/// Extraction rules for the profile of a session (prompt 011), right away for every open session of
+/// that profile. Returns the new columns of the session.
+#[tauri::command]
+pub async fn set_extract_rules(
+    app: AppHandle,
+    session_id: u64,
+    rules: Vec<ExtractRule>,
+) -> AppResult<ColumnSet> {
+    blocking(move || {
+        app.state::<SessionManager>()
+            .set_extract_rules(session_id, rules)
+    })
+    .await
+}
+
+/// All rules from the settings, per profile id, at start.
+#[tauri::command]
+pub async fn load_extract_rules(
+    app: AppHandle,
+    rules: HashMap<String, Vec<ExtractRule>>,
+) -> AppResult<()> {
+    blocking(move || {
+        app.state::<SessionManager>().load_extract_rules(rules);
+        Ok(())
+    })
+    .await
+}
+
+/// Candidates for rules from a sample of entry heads over the whole file.
+#[tauri::command]
+pub async fn suggest_fields(
+    state: State<'_, SessionManager>,
+    session_id: u64,
+) -> AppResult<Vec<FieldSuggestion>> {
+    let session = session(&state, session_id)?;
+    blocking(move || session.suggest_fields()).await
+}
+
+/// A rule tried on some lines (the whole line is the source), for the dialog: checks it, too.
+#[tauri::command]
+pub async fn preview_extract_rule(rule: ExtractRule, lines: Vec<String>) -> AppResult<RulePreview> {
+    blocking(move || {
+        if lines.len() > 5000 {
+            return Err(AppError::new(ErrorCode::TooLarge, "at most 5000 lines"));
+        }
+        crate::extract::preview(&rule, &lines)
+    })
+    .await
 }

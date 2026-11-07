@@ -40,6 +40,9 @@ import { LogSessionService } from '../sessions/log-session.service';
 import { labelWidth } from '../merge/merge-logic';
 import { ColumnMenuComponent } from './column-menu';
 import { RowMenuAction, RowMenuComponent, RowMenuItem, rowMenuItems } from './row-menu';
+import { locateSelection } from '../fields/rule-from-selection';
+import { isNumericKind } from '../fields/fields-logic';
+import { LogLine } from '../../core/log/log.models';
 import { SessionState } from '../sessions/session-state';
 import { COL_NUMBER, COL_TEXT, ID_NUMBER, ID_TEXT, LogAreaModel } from './log-area-model';
 import {
@@ -88,6 +91,10 @@ interface RowMenu {
   y: number;
   items: RowMenuItem[];
   line: number | null;
+  /** The line under the pointer, for a column from marked text (prompt 011). */
+  logLine: LogLine | null;
+  /** Column view: the column under the pointer. */
+  columnId: string | null;
   text: string;
   cell: { column: string; value: string } | null;
   returnTo: HTMLElement | null;
@@ -444,7 +451,10 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
     const area = new LogAreaModel(
       () => this.session(),
       () => this.rowH(),
-      [{ id: ID_NUMBER, field: -1 }, ...columns.map((c) => ({ id: c.id, field: c.field }))],
+      [
+        { id: ID_NUMBER, field: -1 },
+        ...columns.map((c) => ({ id: c.id, field: c.field, numeric: isNumericKind(c.kind) })),
+      ],
     );
     area.showNumbers = () => this.settings().showLineNumbers;
     const message = set.columns.findIndex((c) => c.id === MESSAGE_ID);
@@ -582,6 +592,7 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
       }
     }
     area.leadColumn = lead;
+    area.fillColumn = last;
     let changed = false;
     if (last > 0) {
       const others = data.reduce((sum, w, i) => (i === last - 1 ? sum : sum + w), 0);
@@ -813,6 +824,8 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
     let cell: RowMenu['cell'] = null;
     let cellLabel = '';
     const area = this.config().area;
+    const columnId =
+      area.columnView && event.columnIndex > 0 ? area.columnAt(event.columnIndex).id : null;
     if (line && !line.isContinuation && area.columnView && event.columnIndex >= 0) {
       const id = area.columnAt(event.columnIndex).id;
       const columns = session.columns()?.columns ?? [];
@@ -836,6 +849,8 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
       y: Math.max(0, Math.min((original?.clientY ?? box.top) - box.top, host.clientHeight - 140)),
       items,
       line: line?.line ?? null,
+      logLine: line,
+      columnId,
       text,
       cell,
       returnTo:
@@ -865,6 +880,9 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
       case 'filter-value':
         if (menu.cell) this.sessions.filterByValue(session, menu.cell.column, menu.cell.value);
         break;
+      case 'column-from-selection':
+        if (menu.logLine) this.columnFromSelection(menu.logLine, menu.text, menu.columnId);
+        break;
       case 'from-here':
       case 'to-here': {
         // The line under the pointer: its entry becomes the selection, the section starts or ends there.
@@ -881,6 +899,36 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
         break;
       }
     }
+  }
+
+  /**
+   * Prompt 011: marked text of a line as the start of a rule. The source is the column of the format the marked
+   * text lies in (the cell under the pointer first, then the message); the dialog shows the rule and its hits.
+   */
+  private columnFromSelection(line: LogLine, marked: string, columnId: string | null): void {
+    const session = this.session();
+    const columns = session.columns()?.columns ?? [];
+    const base = columns
+      .map((column, index) => ({ column, span: line.fields[index] }))
+      .filter((c) => !c.column.rule && c.span && c.span[1] > c.span[0]);
+    const cell = base.find((c) => c.column.id === columnId);
+    const at = locateSelection(line.text, marked, cell?.span ?? null);
+    if (!at) {
+      this.sessions.showFindMessage(session, 'Markierung nicht in der Zeile gefunden');
+      return;
+    }
+    const inside = (c: (typeof base)[number]) => c.span[0] <= at[0] && at[1] <= c.span[1];
+    const source =
+      (cell && inside(cell) ? cell : null) ??
+      base.find((c) => c.column.id === MESSAGE_ID && inside(c)) ??
+      base.find(inside);
+    const [from, to] = source ? source.span : [0, line.text.length];
+    this.sessions.openFields(session, {
+      text: line.text.slice(from, to),
+      start: at[0] - from,
+      end: at[1] - from,
+      column: source?.column.id ?? MESSAGE_ID,
+    });
   }
 
   protected onTableContextMenu(event: GeMouseEvent): void {

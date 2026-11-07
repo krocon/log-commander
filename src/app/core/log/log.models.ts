@@ -106,12 +106,48 @@ export interface LogLine {
   fields: [number, number][];
 }
 
-export type ColumnKind = 'timestamp' | 'level' | 'text' | 'number';
+/** `percent`, `duration` and `size` are extracted values (prompt 011), numbers with a unit. */
+export type ColumnKind =
+  'timestamp' | 'level' | 'text' | 'number' | 'percent' | 'duration' | 'size';
 
 export interface Column {
   id: string;
   label: string;
   kind: ColumnKind;
+  /** Unit of an extracted value written without one (prompt 011). */
+  unit?: string;
+  /** The extraction rule of the column, if it is one (prompt 011). */
+  rule?: string;
+}
+
+/** What an extracted value is; numbers compare in a base unit (seconds, bytes). Mirrors `extract.rs`. */
+export type ValueKind = 'text' | 'number' | 'percent' | 'duration' | 'size';
+
+/** A field taken out of a column's text by a regex with exactly one group (prompt 011). */
+export interface ExtractRule {
+  id: string;
+  /** Also the column id; must not be a column of the format. */
+  name: string;
+  /** The column the regex runs over (default `message`). */
+  column: string;
+  pattern: string;
+  kind: ValueKind;
+  /** Unit of a value written without one (`took (\d+)ms` → `ms`). */
+  unit: string | null;
+}
+
+/** A rule `suggest_fields` found in a sample of the file, with examples and its share of the entries. */
+export interface FieldSuggestion {
+  rule: ExtractRule;
+  examples: string[];
+  share: number;
+  distinct: number;
+}
+
+/** A rule tried on some lines: span of the value (UTF-16) and its number per line. */
+export interface RulePreview {
+  spans: ([number, number] | null)[];
+  values: (number | null)[];
 }
 
 /** The columns lines split into, fixed per session until the format changes. */

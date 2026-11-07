@@ -3,6 +3,7 @@
 
 use crate::encoding::{display_text, strip_ansi, Encoding};
 use crate::error::{AppError, AppResult, ErrorCode};
+use crate::extract::{self, ExtractRule, FieldSuggestion, RuleBook};
 use crate::fields::{self, FormatGuess};
 use crate::filter::{
     FilterCheckpoint, FilterSpec, FilteredLines, LevelMask, Probe, SearchMode, SearchQuery,
@@ -53,12 +54,15 @@ pub type UpdateSink = Box<dyn Fn(SessionUpdate) + Send + Sync>;
 #[derive(Debug, Clone)]
 pub struct OpenOptions {
     pub keep_on_rotate: bool,
+    /// Extraction rules per profile (prompt 011), shared with the other sessions.
+    pub rules: Arc<RuleBook>,
 }
 
 impl Default for OpenOptions {
     fn default() -> Self {
         Self {
             keep_on_rotate: true,
+            rules: Arc::default(),
         }
     }
 }
@@ -112,10 +116,18 @@ pub struct SessionData {
     pub sources: Vec<SourceUpdate>,
     /// The user asked to merge everything again ("Neu sortieren").
     pub resort_requested: bool,
+    /// Extraction rules of every profile (prompt 011): each format gets the rules of its profile.
+    pub rule_book: Arc<RuleBook>,
 }
 
 impl SessionData {
-    fn new(detector: Arc<LevelDetector>, profile_id: String, file_size: u64, keep: bool) -> Self {
+    fn new(
+        detector: Arc<LevelDetector>,
+        profile_id: String,
+        file_size: u64,
+        options: &OpenOptions,
+    ) -> Self {
+        let keep = options.keep_on_rotate;
         let spec = FilterSpec::default();
         Self {
             index: LineIndex::default(),
@@ -148,7 +160,13 @@ impl SessionData {
             dirty: true,
             sources: Vec::new(),
             resort_requested: false,
+            rule_book: Arc::clone(&options.rules),
         }
+    }
+
+    /// A format with the extraction rules of its profile (prompt 011).
+    pub fn with_rules(&self, format: &FormatGuess) -> FormatGuess {
+        format.with_rules(&self.rule_book.get(&format.profile_id))
     }
 
     pub fn is_merge(&self) -> bool {
@@ -166,7 +184,7 @@ impl SessionData {
 
     /// Uses a new format right away, with a new view generation so cached spans are void.
     pub fn set_format(&mut self, format: FormatGuess, view_generation: u64) {
-        self.format = Arc::new(format);
+        self.format = Arc::new(self.with_rules(&format));
         self.columns_revision += 1;
         self.view_generation = view_generation;
         self.dirty = true;
@@ -280,12 +298,7 @@ impl LogSession {
         }
         let file = open_shared(&path).map_err(|e| AppError::from_io(&e, &path))?;
         let detector = Arc::new(default_profile.detector()?);
-        let data = SessionData::new(
-            detector,
-            default_profile.id.clone(),
-            meta.len(),
-            options.keep_on_rotate,
-        );
+        let data = SessionData::new(detector, default_profile.id.clone(), meta.len(), &options);
         let (wake, wake_rx): (Sender<()>, Receiver<()>) = channel();
         let shared = Arc::new(Shared::new(data, wake, sink));
         let mut tailer = Tailer::new(Arc::clone(&shared), path.clone(), file)
@@ -322,7 +335,7 @@ impl LogSession {
             Arc::new(first.detector()?),
             first.id.clone(),
             worker.total_size(),
-            options.keep_on_rotate,
+            &options,
         );
         worker.init_data(&mut data);
         let infos = worker.infos();
@@ -568,6 +581,87 @@ impl LogSession {
         }
     }
 
+    /// The profile the rules of this session belong to: the one of its format (prompt 011).
+    pub fn format_profile(&self) -> String {
+        self.shared.data.read().format.profile_id.clone()
+    }
+
+    /// New extraction rules for the profile of this session's format (prompt 011). They are checked
+    /// against the columns of the format; nothing is renamed. Returns the profile they belong to; the
+    /// manager applies them to the other sessions of that profile.
+    pub fn set_extract_rules(&self, rules: Vec<ExtractRule>) -> AppResult<String> {
+        let (profile, book) = {
+            let data = self.shared.data.read();
+            extract::validate(&rules, data.format.parser.base_columns())?;
+            (data.format.profile_id.clone(), Arc::clone(&data.rule_book))
+        };
+        book.set(&profile, rules);
+        self.refresh_rules();
+        Ok(profile)
+    }
+
+    /// The rules of the profile changed: the format takes them over now, the requested one too.
+    /// A new columns revision and view generation make the frontend load columns and lines again.
+    pub fn refresh_rules(&self) {
+        let view = self.shared.next_view_generation();
+        let mut data = self.shared.data.write();
+        let current = Arc::clone(&data.format);
+        data.set_format((*current).clone(), view);
+        if let Some(requested) = data.requested_format.take() {
+            data.requested_format = Some(Arc::new(data.with_rules(&requested)));
+        }
+        drop(data);
+        self.shared.wake();
+    }
+
+    /// Candidates for extraction rules (prompt 011) from up to `SUGGEST_SAMPLE` entry heads spread
+    /// over the whole file, not only its start. Reads the file: run it blocking.
+    pub fn suggest_fields(&self) -> AppResult<Vec<FieldSuggestion>> {
+        let (entries, segments, format) = {
+            let data = self.shared.data.read();
+            let total = data.index.len();
+            let want = extract::SUGGEST_SAMPLE.min(total);
+            let mut entries: Vec<LineEntry> = Vec::with_capacity(want);
+            let mut next = 0usize;
+            for i in 0..want {
+                // Evenly spread; from there the next head, without going back.
+                let mut at = (i as u64 * total as u64 / want as u64) as usize;
+                at = at.max(next);
+                let end = (at + 64).min(total);
+                while at < end && data.index.entries[at].is_continuation() {
+                    at += 1;
+                }
+                if at < end {
+                    entries.push(data.index.entries[at]);
+                    next = at + 1;
+                }
+            }
+            (entries, data.segments.clone(), Arc::clone(&data.format))
+        };
+        let parser = &format.parser;
+        let source = parser.fallback_column().id.clone();
+        let source_index = parser
+            .columns()
+            .iter()
+            .position(|c| c.id == source)
+            .unwrap_or(0);
+        let mut reader = LineReader::new(segments, SCAN_BLOCK);
+        let mut texts = Vec::with_capacity(entries.len());
+        for entry in &entries {
+            let (raw, encoding) = reader
+                .raw(entry, fields::MAX_PARSE_BYTES)
+                .map_err(|e| AppError::from_io(&e, &self.path))?;
+            let text = display_text(raw, encoding).into_owned();
+            let value = parser
+                .field(&text, source_index)
+                .map(str::to_string)
+                .unwrap_or_default();
+            texts.push(value);
+        }
+        let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
+        Ok(extract::suggest(&refs, parser.columns(), &source))
+    }
+
     /// A chosen profile wins over the suggestion, for the levels and for the layout. The new
     /// columns apply when the levels are recomputed, together with a new view generation.
     pub fn set_profile(&self, profile: &Profile) -> AppResult<FilterInfo> {
@@ -581,9 +675,10 @@ impl LogSession {
         let detector = Arc::new(profile.detector()?);
         let sample = Arc::clone(&self.shared.data.read().sample);
         let refs: Vec<&str> = sample.iter().map(String::as_str).collect();
-        let format = Arc::new(fields::format_for(profile, &refs)?);
+        let format = fields::format_for(profile, &refs)?;
         {
             let mut data = self.shared.data.write();
+            let format = Arc::new(data.with_rules(&format));
             data.detector = detector;
             data.profile_id = profile.id.clone();
             data.chosen_profile = Some(profile.clone());
@@ -1196,6 +1291,7 @@ pub struct SessionManager {
     sessions: RwLock<HashMap<u64, Arc<LogSession>>>,
     next_id: AtomicU64,
     profiles: RwLock<ProfileRegistry>,
+    rules: Arc<RuleBook>,
 }
 
 impl Default for SessionManager {
@@ -1204,6 +1300,7 @@ impl Default for SessionManager {
             sessions: RwLock::new(HashMap::new()),
             next_id: AtomicU64::new(1),
             profiles: RwLock::new(ProfileRegistry::default()),
+            rules: Arc::default(),
         }
     }
 }
@@ -1212,9 +1309,10 @@ impl SessionManager {
     pub fn open(
         &self,
         path: &Path,
-        options: OpenOptions,
+        mut options: OpenOptions,
         sink: UpdateSink,
     ) -> AppResult<SessionInfo> {
+        options.rules = Arc::clone(&self.rules);
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let default_profile = self.profiles.read().find(crate::profile::GENERIC_PROFILE)?;
         let session = LogSession::open(id, path, options, &default_profile, sink)?;
@@ -1226,9 +1324,10 @@ impl SessionManager {
     pub fn open_merged(
         &self,
         sources: Vec<MergeSource>,
-        options: OpenOptions,
+        mut options: OpenOptions,
         sink: UpdateSink,
     ) -> AppResult<SessionInfo> {
+        options.rules = Arc::clone(&self.rules);
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let session = LogSession::open_merged(id, sources, options, sink)?;
         let info = session.info();
@@ -1261,5 +1360,26 @@ impl SessionManager {
 
     pub fn set_custom_profiles(&self, profiles: Vec<Profile>) -> AppResult<()> {
         self.profiles.write().set_custom(profiles)
+    }
+
+    /// Rules for the profile of a session (prompt 011), right away for every open session of that
+    /// profile. Returns the columns of the session.
+    pub fn set_extract_rules(&self, id: u64, rules: Vec<ExtractRule>) -> AppResult<ColumnSet> {
+        let session = self.session(id)?;
+        let profile = session.set_extract_rules(rules)?;
+        for other in self.sessions.read().values() {
+            if other.id != id && other.format_profile() == profile {
+                other.refresh_rules();
+            }
+        }
+        Ok(session.columns())
+    }
+
+    /// All rules from the settings, at start; open sessions take them over.
+    pub fn load_extract_rules(&self, all: HashMap<String, Vec<ExtractRule>>) {
+        self.rules.load(all);
+        for session in self.sessions.read().values() {
+            session.refresh_rules();
+        }
     }
 }

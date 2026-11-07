@@ -10,7 +10,8 @@
 //! at most [`MAX_PATTERN_CHARS`] characters, regex size limits; errors carry the id of the node.
 
 use crate::error::{AppError, AppResult, ErrorCode};
-use crate::fields::{ColumnKind, FormatGuess};
+use crate::extract::{parse_value, ValueKind};
+use crate::fields::FormatGuess;
 use crate::filter::{LevelMask, SearchQuery, MAX_MATCHES_PER_LINE};
 use crate::level::Level;
 use crate::timestamp::TimestampParser;
@@ -142,8 +143,19 @@ enum Node {
 #[derive(Debug)]
 enum FieldTest {
     Regex(Regex),
-    Number { op: FieldOp, a: f64, b: f64 },
-    Text { op: FieldOp, a: String, b: String },
+    /// Values in the base unit of the column (prompt 011): `took > 500 ms` compares seconds.
+    Number {
+        op: FieldOp,
+        a: f64,
+        b: f64,
+        kind: ValueKind,
+        unit: Option<String>,
+    },
+    Text {
+        op: FieldOp,
+        a: String,
+        b: String,
+    },
 }
 
 #[derive(Debug)]
@@ -430,8 +442,14 @@ impl FieldTest {
     fn matches(&self, value: &str) -> bool {
         match self {
             FieldTest::Regex(regex) => regex.is_match(value),
-            FieldTest::Number { op, a, b } => {
-                let Some(n) = parse_number(value) else {
+            FieldTest::Number {
+                op,
+                a,
+                b,
+                kind,
+                unit,
+            } => {
+                let Some(n) = parse_value(value, *kind, unit.as_deref()) else {
                     return false;
                 };
                 match op {
@@ -582,9 +600,15 @@ impl Builder<'_, '_> {
                 let value2 = value2.clone().unwrap_or_default();
                 check_len(id, &value2)?;
                 let flags = if *case_sensitive { "" } else { "(?i)" };
+                // Numbers come from `parse_value` with the kind and unit of the column (prompt 011);
+                // a text column compares as numbers if the values typed are numbers.
+                let column_kind = ValueKind::of_column(columns[index].kind);
+                let value_kind = column_kind.unwrap_or(ValueKind::Number);
+                let unit = columns[index].unit.clone();
+                let number = |text: &str| parse_value(text, value_kind, unit.as_deref());
                 let test = match op {
                     FieldOp::Eq | FieldOp::Contains | FieldOp::Regex
-                        if !(*op == FieldOp::Eq && columns[index].kind == ColumnKind::Number) =>
+                        if !(*op == FieldOp::Eq && column_kind.is_some()) =>
                     {
                         let body = match op {
                             FieldOp::Eq => format!(r"^\s*{}\s*$", regex::escape(value)),
@@ -596,21 +620,27 @@ impl Builder<'_, '_> {
                         FieldTest::Regex(regex)
                     }
                     _ => {
-                        let numeric = columns[index].kind == ColumnKind::Number
-                            || parse_number(value).is_some()
-                                && (*op != FieldOp::Between || parse_number(&value2).is_some());
+                        let numeric = column_kind.is_some()
+                            || number(value).is_some()
+                                && (*op != FieldOp::Between || number(&value2).is_some());
                         if numeric {
-                            let a = parse_number(value).ok_or_else(|| {
+                            let a = number(value).ok_or_else(|| {
                                 node_error(id, &format!("not a number: {}", short(value)))
                             })?;
                             let b = if *op == FieldOp::Between {
-                                parse_number(&value2).ok_or_else(|| {
+                                number(&value2).ok_or_else(|| {
                                     node_error(id, &format!("not a number: {}", short(&value2)))
                                 })?
                             } else {
                                 a
                             };
-                            FieldTest::Number { op: *op, a, b }
+                            FieldTest::Number {
+                                op: *op,
+                                a,
+                                b,
+                                kind: value_kind,
+                                unit: unit.clone(),
+                            }
                         } else {
                             FieldTest::Text {
                                 op: *op,
@@ -692,14 +722,6 @@ fn expr_id(expr: &FilterExpr) -> &str {
 
 fn short(text: &str) -> String {
     text.chars().take(40).collect()
-}
-
-fn parse_number(text: &str) -> Option<f64> {
-    let text = text.trim();
-    text.parse::<f64>()
-        .ok()
-        .or_else(|| text.replace(',', ".").parse().ok())
-        .filter(|n| n.is_finite())
 }
 
 fn clock_for(ctx: &ExprContext) -> TimestampParser {

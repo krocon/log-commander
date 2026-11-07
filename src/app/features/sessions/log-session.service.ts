@@ -1,6 +1,7 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { LogApi } from '../../core/log/log-api';
 import {
+  ExtractRule,
   FilterCond,
   FilterInfo,
   Level,
@@ -36,6 +37,21 @@ const WARN_LEVELS: readonly Level[] = ['WARN', 'ERROR', 'FATAL'];
 const ERROR_VISIBLE_MS = 7000;
 const FIND_MESSAGE_MS = 2500;
 
+/** Marked text of a line to build an extraction rule from (prompt 011): offsets into the source column's text. */
+export interface SelectionDraft {
+  /** The text of the source column of the line. */
+  text: string;
+  start: number;
+  end: number;
+  column: string;
+}
+
+/** The dialog „Felder“ is open for this tab, maybe with marked text to start from. */
+export interface FieldsRequest {
+  session: SessionState;
+  draft: SelectionDraft | null;
+}
+
 /** The open files (tabs) and everything that changes a session in the backend. */
 @Injectable({ providedIn: 'root' })
 export class LogSessionService {
@@ -47,11 +63,14 @@ export class LogSessionService {
   readonly active = computed(() => this.sessions().find((s) => s.id === this.activeId()) ?? null);
   readonly profiles = signal<readonly Profile[]>([]);
   readonly error = signal<string | null>(null);
+  /** The dialog „Felder“ (prompt 011). */
+  readonly fieldsDialog = signal<FieldsRequest | null>(null);
   private errorTimer: ReturnType<typeof setTimeout> | null = null;
 
   async refreshProfiles(): Promise<void> {
     try {
       await this.api.setCustomProfiles(this.settings.settings().customProfiles);
+      await this.api.loadExtractRules(this.settings.settings().extractRules);
     } catch (e) {
       this.showError(toAppError(e));
     }
@@ -122,7 +141,9 @@ export class LogSessionService {
     state = new SessionState(info, this.api);
     const created = state;
     created.onColumnsChanged = () => void this.applyFilter(created, true);
+    created.onLoaded = () => void this.suggestOnOpen(created);
     for (const update of early) state.applyUpdate(update);
+    created.notifyLoaded();
     this.sessions.update((all) => [...all, state as SessionState]);
     this.activate(state.id);
     return info;
@@ -570,6 +591,58 @@ export class LogSessionService {
       await writeClipboard(await this.api.copyLines(session.id, first, last, 'all'));
     } catch (e) {
       this.showError(toAppError(e));
+    }
+  }
+
+  // ---------------------------------------------------------------- extracted fields (prompt 011)
+
+  /** The rules of the profile of a tab's format, as saved. */
+  rulesOf(session: SessionState): ExtractRule[] {
+    const profileId = session.columns()?.profileId;
+    return profileId ? (this.settings.settings().extractRules[profileId] ?? []) : [];
+  }
+
+  openFields(session: SessionState, draft: SelectionDraft | null = null): void {
+    this.fieldsDialog.set({ session, draft });
+  }
+
+  /**
+   * Fields in the background on opening: only for a format without rules, once per profile, never as a dialog
+   * (the tail runs). What is found waits as a hint in the status bar.
+   */
+  private async suggestOnOpen(session: SessionState): Promise<void> {
+    try {
+      const set = await this.api.getColumns(session.id);
+      const { extractRules, fieldHints } = this.settings.settings();
+      if (extractRules[set.profileId]?.length || fieldHints.includes(set.profileId)) return;
+      if (session.update().totalLines === 0) return;
+      const found = await this.api.suggestFields(session.id);
+      if (!found.length || !this.sessions().includes(session)) return;
+      session.fieldHint.set(found);
+      this.settings.update({ fieldHints: [...this.settings.settings().fieldHints, set.profileId] });
+    } catch {
+      // A hint is a convenience: no backend, a closed tab or an unreadable file just shows none.
+    }
+  }
+
+  /**
+   * New rules for the profile of the tab's format: the backend checks them and applies them to every open tab of
+   * the profile, then they are saved. A failure comes back (with the rule in `nodeId`) and changes nothing.
+   */
+  async setExtractRules(
+    session: SessionState,
+    rules: readonly ExtractRule[],
+  ): Promise<AppError | null> {
+    try {
+      const set = await this.api.setExtractRules(session.id, rules);
+      session.acceptColumns(set);
+      const all = { ...this.settings.settings().extractRules };
+      if (rules.length) all[set.profileId] = rules.map((r) => ({ ...r }));
+      else delete all[set.profileId];
+      this.settings.update({ extractRules: all });
+      return null;
+    } catch (e) {
+      return toAppError(e);
     }
   }
 

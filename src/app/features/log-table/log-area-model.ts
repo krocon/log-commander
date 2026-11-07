@@ -22,6 +22,8 @@ export const ID_TEXT = 'text';
 export interface TableColumn {
   id: string;
   field: number;
+  /** A number column: right-aligned (prompt 011). */
+  numeric?: boolean;
 }
 
 function appendSegments(parent: HTMLElement, segments: readonly TextSegment[]): void {
@@ -108,6 +110,8 @@ export class LogAreaModel extends AreaModel {
   spanOffset = 0;
   /** First shown data column: it carries the level mark. */
   leadColumn = COL_TEXT;
+  /** Last shown column: it fills the rest of the width, so a number stays left there (it would be cut). */
+  fillColumn = -1;
   /** Line numbers in the gutter (a merge shows it for the source name also without them). */
   showNumbers: () => boolean = () => true;
 
@@ -203,6 +207,9 @@ export class LogAreaModel extends AreaModel {
       if (columnIndex === this.leadColumn) classes.push('lt-lead');
       if (line && this.spans(line)) {
         classes.push(columnIndex === this.spanFrom ? 'lt-span' : 'lt-spanned');
+      }
+      if (this.columnAt(columnIndex).numeric && columnIndex !== this.fillColumn) {
+        classes.push('lt-num');
       }
     }
     return classes;

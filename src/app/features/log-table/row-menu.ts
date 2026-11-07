@@ -16,7 +16,12 @@ export interface RowMenuItem {
 }
 
 export type RowMenuAction =
-  'filter-text' | 'exclude-text' | 'filter-value' | 'from-here' | 'to-here';
+  | 'filter-text'
+  | 'exclude-text'
+  | 'filter-value'
+  | 'column-from-selection'
+  | 'from-here'
+  | 'to-here';
 
 /** Where the menu was opened: marked text, a cell with a value (column view), a line. */
 export interface RowMenuContext {
@@ -35,6 +40,8 @@ export function rowMenuItems(context: RowMenuContext): RowMenuItem[] {
   if (text) {
     items.push({ id: 'filter-text', label: `Filtern auf „${short(text)}“`, key: 'I' });
     items.push({ id: 'exclude-text', label: `Ausschließen: „${short(text)}“`, key: 'Shift+I' });
+    // Prompt 011: the marked value as a column of its own.
+    if (context.hasLine) items.push({ id: 'column-from-selection', label: 'Spalte aus Auswahl …' });
   }
   if (context.cell) {
     const value = context.cell.value.trim();

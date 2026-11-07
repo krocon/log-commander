@@ -33,7 +33,10 @@ fn open(path: &Path, keep_on_rotate: bool) -> Fixture {
     let session = LogSession::open(
         1,
         path,
-        OpenOptions { keep_on_rotate },
+        OpenOptions {
+            keep_on_rotate,
+            ..OpenOptions::default()
+        },
         &generic(),
         Box::new(move |update| sink_updates.lock().push(update)),
     )

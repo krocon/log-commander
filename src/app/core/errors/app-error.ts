@@ -11,6 +11,7 @@ export type ErrorCode =
   | 'too_large'
   | 'no_timestamps'
   | 'invalid_merge'
+  | 'invalid_rule'
   | 'backend_unavailable'
   | 'unknown';
 
@@ -18,7 +19,7 @@ export interface AppError {
   code: ErrorCode;
   message: string;
   path?: string;
-  /** The node of a filter expression the error is about (prompt 010). */
+  /** The node of a filter expression (prompt 010) or the extraction rule (prompt 011) the error is about. */
   nodeId?: string;
 }
 
@@ -42,6 +43,8 @@ export function describeError(error: AppError): string {
       return `Keine Zeitstempel in den ersten 200 Zeilen, Zusammenführen nicht möglich${where}`;
     case 'invalid_merge':
       return `Zusammenführen nicht möglich: ${error.message}${where}`;
+    case 'invalid_rule':
+      return `Regel ungültig: ${error.message}`;
     case 'backend_unavailable':
       return 'Desktop-Backend nicht verfügbar (läuft die App im Browser?)';
     default:

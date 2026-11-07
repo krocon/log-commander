@@ -191,4 +191,62 @@ describe('settings', () => {
     expect(mergeSettings({ showOverviewRuler: false }).showOverviewRuler).toBe(false);
     expect(mergeSettings({ showOverviewRuler: 'no' as never }).showOverviewRuler).toBe(true);
   });
+
+  it('keeps valid extraction rules per profile and repairs broken ones', () => {
+    expect(mergeSettings(null).extractRules).toEqual({});
+    expect(mergeSettings(null).fieldHints).toEqual([]);
+    const merged = mergeSettings({
+      extractRules: {
+        log4j: [
+          {
+            id: 'a',
+            name: ' cpu ',
+            column: 'message',
+            pattern: 'cpu=(\\d+)',
+            kind: 'percent',
+            unit: '%',
+          },
+          {
+            id: 'a',
+            name: 'twice',
+            column: 'message',
+            pattern: 'x(\\d)',
+            kind: 'number',
+            unit: null,
+          },
+          { id: 'b', name: 'took', pattern: 'took (\\d+)', kind: 'weird', unit: '' },
+          { id: 'c', name: '', pattern: 'x' },
+          'junk',
+        ],
+        broken: 'nope',
+        empty: [],
+      } as never,
+      fieldHints: ['log4j', 'log4j', 3] as never,
+    });
+    expect(merged.extractRules).toEqual({
+      log4j: [
+        {
+          id: 'a',
+          name: 'cpu',
+          column: 'message',
+          pattern: 'cpu=(\\d+)',
+          kind: 'percent',
+          unit: '%',
+        },
+        {
+          id: 'b',
+          name: 'took',
+          column: 'message',
+          pattern: 'took (\\d+)',
+          kind: 'text',
+          unit: null,
+        },
+      ],
+    });
+    expect(merged.fieldHints).toEqual([]);
+    expect(mergeSettings({ fieldHints: ['log4j', 'log4j', 'json'] }).fieldHints).toEqual([
+      'log4j',
+      'json',
+    ]);
+  });
 });

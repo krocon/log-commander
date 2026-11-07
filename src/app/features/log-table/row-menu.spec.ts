@@ -12,13 +12,16 @@ describe('row menu', () => {
     expect(all.map((i) => i.id)).toEqual([
       'filter-text',
       'exclude-text',
+      'column-from-selection',
       'filter-value',
       'from-here',
       'to-here',
     ]);
     expect(all[0].label).toBe('Filtern auf „req-42“');
-    expect(all[2].label).toBe('Filtern nach Thread = „main“');
+    expect(all[3].label).toBe('Filtern nach Thread = „main“');
     const long = rowMenuItems({ selectedText: 'x'.repeat(50), cell: null, hasLine: false });
     expect(long[0].label.length).toBeLessThan(50);
+    // A column from marked text needs the line it is in.
+    expect(long.map((i) => i.id)).not.toContain('column-from-selection');
   });
 });

@@ -766,7 +766,7 @@ impl MergeWorker {
             .map(|f| Arc::clone(&f.segments[0].segment))
             .collect();
         data.encoding = self.files[0].encoding();
-        data.format = Arc::clone(&self.format);
+        data.format = Arc::new(data.with_rules(&self.format));
         data.sample = Arc::new(self.samples[0].texts.clone());
         data.suggested_profile = Some(self.profiles[0].id.clone());
         data.profile_auto = false;

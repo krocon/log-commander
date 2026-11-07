@@ -25,6 +25,9 @@ Architektur verbaut nichts davon.
 - Verkettete Filter (Prompt 010): Filterbaum in der Seitenleiste mit Gruppen UND/ODER, NICHT, an/aus, Verschieben
   (`Alt+↑/↓`, Ziehen); Bedingungen Text/Regex, Level, Feld, Zeit, Abschnitt zwischen Marken, Zeilen; je Eintrag
   ausgewertet; Schnellwege `I`/Rechtsklick „Filtern auf …“, Zellwert, „Abschnitt ab/bis hier“; gespeicherte Filter mit Baum
+- Feld-Extraktion (Prompt 011): Messwerte aus der Nachricht als Spalten (Text, Zahl, Prozent, Dauer, Größe mit
+  Einheiten), Vorschläge beim Öffnen als Hinweis, Dialog „Felder“, „Spalte aus Auswahl“ mit Vorschau, Regeln je Format,
+  Feld-Bedingungen vergleichen in Basiseinheit (`took > 500 ms`)
 - Overview Ruler und Navigation (Prompt 007): Leiste rechts mit Fehlern, Warnungen, Lesezeichen, Auswahl und
   sichtbarem Bereich, Klick springt; `E`/`W` nächster Fehler bzw. Warnung, `M`/`N` Lesezeichen (nur im Speicher), `G`
   aus dem Filter ins Gesamtlog und zurück
@@ -39,9 +42,13 @@ Angabe die lokale Zone), Zeilennummer in der Quelldatei (bräuchte eine Spalte i
 in „Zuletzt geöffnet“, Archive und Ordner im Merge, Spalten je Quelle bei verschiedenen Formaten.
 
 **Struktur:** Im Detail-Panel vorheriger/nächster Eintrag, Felder eines Eintrags als Tabelle, YAML/SQL formatieren;
-Filtern aus dem Spaltenkopf (Wert der gewählten Zeile; die Zelle kann es schon), fixierte Spalten, eigene Felder aus der Nachricht (011),
+Filtern aus dem Spaltenkopf (Wert der gewählten Zeile; die Zelle kann es schon), fixierte Spalten,
 Layout je Quelle beim Merge (006), einklappbare Stacktraces, Zeilenumbruch als Folgezeilen fester Höhe (eine Logzeile belegt
 mehrere Tabellenzeilen; braucht eine Zeilen-zu-Bildschirmzeilen-Liste im Backend, neu je Breite und Schrift).
+
+**Felder (Nachfragen zu 011):** Auswertung und Diagramme der Werte (012, setzt auf `parse_value` im Hintergrund-Job
+auf), mehrere Treffer je Zeile als Liste, abgeleitete Spalten (Formeln), Felder aus Fortsetzungszeilen, Anlegen aus dem
+Stacktrace, Regeln je Datei statt je Format.
 
 **Seitenleiste:** Thread/Logger als Knoten und Statistik-Zeilen (011),
 Zeitfilter (006/014), Tortendiagramme, Lesezeichen und Notizen.
