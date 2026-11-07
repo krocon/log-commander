@@ -71,6 +71,14 @@ import { draftFromInference, parseLayouts } from '../sessions/format-logic';
             />
             Übersichtsleiste rechts (Fehler, Warnungen, Lesezeichen)
           </label>
+          <label class="check">
+            <input
+              type="checkbox"
+              [checked]="settings().showTimeline"
+              (change)="setCheck('showTimeline', $event)"
+            />
+            Zeitstrahl über dem Log (Einträge über die Zeit, Z)
+          </label>
         </section>
 
         <section>
@@ -367,7 +375,10 @@ export class SettingsDialogComponent implements OnInit {
     this.settingsService.update({ fontSize: Number((event.target as HTMLInputElement).value) });
   }
 
-  protected setCheck(key: 'showLineNumbers' | 'showOverviewRuler', event: Event): void {
+  protected setCheck(
+    key: 'showLineNumbers' | 'showOverviewRuler' | 'showTimeline',
+    event: Event,
+  ): void {
     this.settingsService.update({ [key]: (event.target as HTMLInputElement).checked });
   }
 

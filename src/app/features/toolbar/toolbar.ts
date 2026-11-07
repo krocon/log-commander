@@ -106,6 +106,20 @@ const SEARCH_DEBOUNCE_MS = 200;
       </button>
       <button
         type="button"
+        class="timeline-toggle"
+        aria-controls="timeline"
+        [attr.aria-pressed]="settings().showTimeline"
+        [title]="
+          settings().showTimeline
+            ? 'Zeitstrahl ausblenden (Z)'
+            : 'Zeitstrahl: Einträge über die Zeit, Lücken und Spitzen (Z)'
+        "
+        (click)="toggleTimeline()"
+      >
+        ⏱ Zeit
+      </button>
+      <button
+        type="button"
         class="dashboard-toggle"
         [disabled]="!s"
         [attr.aria-pressed]="s?.mode() === 'dashboard'"
@@ -543,6 +557,10 @@ export class ToolbarComponent implements OnInit, OnDestroy {
   protected toggleFreeze(): void {
     const session = this.session();
     if (session) void this.sessions.toggleFreeze(session);
+  }
+
+  protected toggleTimeline(): void {
+    this.settingsService.update({ showTimeline: !this.settings().showTimeline });
   }
 
   protected toggleDetail(): void {

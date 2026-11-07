@@ -18,13 +18,15 @@ use crate::merge::{MergeSource, MergeWorker};
 use crate::model::{
     ColumnSet, EntryDetail, EntryRange, FilterInfo, FindHit, LogLine, Overview, OverviewMark,
     ReportResult, ReportSchema, ReportStatus, SessionInfo, SessionUpdate, SourceInfo, SourceUpdate,
-    Status, ViewInfo,
+    Status, TimeAnchor, TimeHit, TimeRange, Timeline, TimelineBucket, ViewInfo,
 };
 use crate::overview::{level_bit, LevelSummary};
 use crate::platform::open_shared;
 use crate::profile::{Profile, ProfileRegistry};
 use crate::report_db::{ReportDb, ReportLimits};
 use crate::tail::Tailer;
+use crate::timeline::{TimeMark, TimelineQuery};
+use crate::timestamp::TimestampParser;
 use crate::views::{compose, ViewFilter, MAX_VIEWS};
 use memchr::memchr;
 use parking_lot::{Mutex, RwLock};
@@ -52,6 +54,10 @@ const MAX_ENTRY_WALK: usize = 100_000;
 pub const MAX_OVERVIEW_BUCKETS: usize = 8192;
 /// Lines (selection and bookmarks) whose position the overview reports.
 pub const MAX_OVERVIEW_LINES: usize = 10_000;
+/// At most this many time buckets per timeline (prompt 014).
+pub const MAX_TIMELINE_BUCKETS: usize = 4096;
+/// Line → time anchors per timeline answer.
+pub const TIMELINE_ANCHORS: usize = 1024;
 
 pub type UpdateSink = Box<dyn Fn(SessionUpdate) + Send + Sync>;
 
@@ -82,6 +88,8 @@ impl Default for OpenOptions {
 #[derive(Debug, Clone, Copy)]
 pub struct Provisional {
     pub prev: PrevLine,
+    /// The time summary before the line (prompt 014): a time it brought is taken back exactly.
+    pub time: TimeMark,
 }
 
 /// Where updates of a view go (a Tauri channel per view).
@@ -276,7 +284,12 @@ impl SessionData {
 
     /// Appends one line to the index and to the list of every view. `probe(i)` reads the text for
     /// view `i` of `views`; it is only called when that view's answer depends on it.
-    pub fn push_line(&mut self, entry: LineEntry, mut probe: impl FnMut(usize) -> Probe) {
+    pub fn push_line(
+        &mut self,
+        entry: LineEntry,
+        ts: Option<i64>,
+        mut probe: impl FnMut(usize) -> Probe,
+    ) {
         for (i, view) in self.views.iter_mut().enumerate() {
             view.filter.append_from(
                 entry.source(),
@@ -285,13 +298,14 @@ impl SessionData {
                 || probe(i),
             );
         }
-        self.index.push(entry);
+        self.index.push_timed(entry, ts);
     }
 
     /// Removes the provisional last line, if there is one.
     pub fn retract_provisional(&mut self) {
         if let Some(provisional) = self.provisional.take() {
             self.index.pop();
+            self.index.time.restore(provisional.time);
             for view in &mut self.views {
                 if let Some(checkpoint) = view.provisional.take() {
                     view.filter.restore(checkpoint);
@@ -306,7 +320,10 @@ impl SessionData {
         for view in &mut self.views {
             view.provisional = Some(view.filter.checkpoint());
         }
-        self.provisional = Some(Provisional { prev });
+        self.provisional = Some(Provisional {
+            prev,
+            time: self.index.time.mark(),
+        });
     }
 
     /// Uses a new format right away, with a new view generation so cached spans are void.
@@ -1053,11 +1070,7 @@ impl LogSession {
         let expr = match &composed.expr {
             None => None,
             Some(expr) => {
-                let reference = data
-                    .segments
-                    .first()
-                    .and_then(|s| s.file.metadata().ok()?.modified().ok())
-                    .unwrap_or_else(std::time::SystemTime::now);
+                let reference = reference_time(data);
                 let ctx = ExprContext {
                     format: Arc::clone(&data.format),
                     sample: &data.sample,
@@ -1546,6 +1559,131 @@ impl LogSession {
             }))
     }
 
+    /// The timeline (prompt 014): entries of the whole file over time, from the running time
+    /// summary of the index; `from`/`to` `None` is the whole file (percentile axis). A read lock only.
+    pub fn timeline(
+        &self,
+        from: Option<i64>,
+        to: Option<i64>,
+        buckets: usize,
+    ) -> AppResult<Timeline> {
+        if buckets > MAX_TIMELINE_BUCKETS {
+            return Err(AppError::new(
+                ErrorCode::TooLarge,
+                format!("at most {MAX_TIMELINE_BUCKETS} buckets per timeline"),
+            ));
+        }
+        let data = self.shared.data.read();
+        let time = &data.index.time;
+        let laid = time.timeline(&TimelineQuery {
+            from,
+            to,
+            buckets,
+            anchors: TIMELINE_ANCHORS,
+        });
+        let has_times = laid.min.is_some();
+        Ok(Timeline {
+            epoch: data.epoch,
+            total_lines: data.index.len() as u64,
+            entries: laid.entries,
+            has_times,
+            from: laid.from,
+            to: laid.to,
+            buckets: laid
+                .buckets
+                .iter()
+                .map(|b| TimelineBucket {
+                    all: b.all,
+                    warn: b.warn,
+                    error: b.error,
+                    fatal: b.fatal,
+                })
+                .collect(),
+            gaps: laid
+                .gaps
+                .iter()
+                .map(|&(from, to)| TimeRange { from, to })
+                .collect(),
+            min: laid.min,
+            max: laid.max,
+            before: laid.before,
+            after: laid.after,
+            untimed: laid.untimed,
+            anchors: laid
+                .anchors
+                .iter()
+                .map(|&(line, ts)| TimeAnchor {
+                    line: line as u32,
+                    ts,
+                })
+                .collect(),
+        })
+    }
+
+    /// The first entry head at or after `ts` in a view (prompt 014): the chunk from the time
+    /// summary, then its heads read and parsed. A hidden line gives the next visible one. `None`
+    /// when the file has no times; after the last time, the last line.
+    pub fn position_at_time(&self, view: u32, ts: i64) -> AppResult<Option<TimeHit>> {
+        let (range, entries, segments, mut clock) = {
+            let data = self.shared.data.read();
+            data.view(view)?;
+            let time = &data.index.time;
+            if !time.has_times() || data.index.is_empty() {
+                return Ok(None);
+            }
+            let Some((start, end)) = time.chunk_reaching(ts) else {
+                let last = data.index.len() as u32 - 1;
+                drop(data);
+                return self.time_hit(view, last, false);
+            };
+            let (start, end) = (start as usize, end as usize);
+            let clock = TimestampParser::detect(
+                data.sample.iter().map(String::as_str),
+                reference_time(&data),
+            );
+            (
+                start,
+                data.index.entries[start..end.min(data.index.len())].to_vec(),
+                data.segments.clone(),
+                clock,
+            )
+        };
+        let mut reader = LineReader::new(segments, SCAN_BLOCK);
+        let mut found = None;
+        for (i, entry) in entries.iter().enumerate() {
+            if entry.is_continuation() && range + i > 0 {
+                continue;
+            }
+            let Ok((raw, encoding)) = reader.raw(entry, fields::MAX_PARSE_BYTES) else {
+                continue;
+            };
+            let text = detection_bytes(raw, encoding);
+            if crate::merge::time_of(&mut clock, &text).is_some_and(|t| t >= ts) {
+                found = Some(range + i);
+                break;
+            }
+        }
+        let exact = found.is_some();
+        self.time_hit(view, found.unwrap_or(range) as u32, exact)
+    }
+
+    fn time_hit(&self, view: u32, line: u32, exact: bool) -> AppResult<Option<TimeHit>> {
+        let data = self.shared.data.read();
+        let total = data.index.len();
+        let filter = &data.view(view)?.filter;
+        let position = filter.position_of(line, total);
+        let count = filter.len(total);
+        if count == 0 {
+            return Ok(None);
+        }
+        let position = position.min(count - 1);
+        Ok(Some(TimeHit {
+            line: filter.line_at(position, total).unwrap_or(line),
+            position: position as u32,
+            exact,
+        }))
+    }
+
     /// Position of a line in view 0 (or of the next visible line after it).
     pub fn position_of_line(&self, line: u32) -> u32 {
         self.position_in(0, line).unwrap_or(0)
@@ -1743,6 +1881,14 @@ impl Drop for LogSession {
 }
 
 /// Plain bytes of a line for the level detection: decoded for UTF-16, without ANSI colours.
+/// Date for logs that only write a time of day: the modification time of the first file.
+pub fn reference_time(data: &SessionData) -> std::time::SystemTime {
+    data.segments
+        .first()
+        .and_then(|s| s.file.metadata().ok()?.modified().ok())
+        .unwrap_or_else(std::time::SystemTime::now)
+}
+
 pub fn detection_bytes<'a>(raw: &'a [u8], encoding: Encoding) -> Cow<'a, [u8]> {
     match encoding {
         Encoding::Utf8 | Encoding::Latin1 if memchr(0x1b, raw).is_none() => Cow::Borrowed(raw),
@@ -1882,6 +2028,9 @@ fn run_relevel(shared: &Arc<Shared>, generation: u64) -> bool {
                     summary.push(entry.level());
                 }
                 data.index.summary = summary;
+                // Entry counts per chunk of the timeline (prompt 014); its times stay.
+                let index = &mut data.index;
+                index.time.recount(&index.entries);
             }
             data.relevel_needed = false;
             // The columns change with new view generations, so cached spans are void.

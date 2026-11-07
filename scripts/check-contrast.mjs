@@ -41,6 +41,9 @@ const PAIRS = [
   ['tok-url', 'bg-app'],
   // Dashboard (prompt 012): errors and notes of a panel, legend and axis text on the panel.
   ['danger', 'bg-panel'],
+  // Timeline (prompt 014): axis labels and hints on the strip.
+  ['text-dim', 'ruler-bg'],
+  ['text', 'ruler-bg'],
 ];
 
 // Graphics without text (WCAG 1.4.11, 3:1): the grip of the splitters (src/app/shared/splitter.ts)
@@ -74,6 +77,13 @@ const GRAPHIC_PAIRS = [
     ],
   ),
   ['ruler-band-edge', 'ruler-bg'],
+  // Timeline (prompt 014): neutral columns on the strip and in the band, the hatching of an outage, cursor
+  // and selection (accent) on both.
+  ['tl-all', 'ruler-bg'],
+  ['tl-all', 'ruler-band'],
+  ['tl-gap', 'ruler-bg'],
+  ['accent', 'ruler-bg'],
+  ['accent', 'ruler-band'],
   ['ruler-bookmark', 'bg-gutter'],
   ['ruler-bookmark', 'row-selected'],
   // Dashboard (prompt 012): series and level series on the panel; the legend names each, so colour is

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { makeEntry, metricsText, parseArgs } from './gen-log.mjs';
+import { entryTime, makeEntry, metricsText, parseArgs } from './gen-log.mjs';
 
 function seeded(seed) {
   let state = seed;
@@ -69,4 +69,25 @@ test('metrics: cpu, mem and took in the message, ms or s', () => {
   assert.match(entry, / cpu=\d+\.\d% mem=/);
   assert.equal(parseArgs(['a.log', '--metrics']).metrics, true);
   assert.equal(parseArgs(['a.log']).metrics, false);
+});
+
+test('a synthetic clock with pauses (prompt 014)', () => {
+  const options = parseArgs([
+    'gap.log',
+    '--start',
+    '2026-01-15T09:00:00Z',
+    '--pause-after',
+    '300',
+    '--pause',
+    '47',
+  ]);
+  assert.equal(entryTime(options, 0).toISOString(), '2026-01-15T09:00:00.000Z');
+  assert.equal(entryTime(options, 299).toISOString(), '2026-01-15T09:04:59.000Z');
+  // 47 minutes of silence after 300 entries, then one entry a second again.
+  assert.equal(entryTime(options, 300).toISOString(), '2026-01-15T09:52:00.000Z');
+  assert.equal(entryTime(options, 301).toISOString(), '2026-01-15T09:52:01.000Z');
+  // Without a start the real clock, shifted by the pauses.
+  const live = parseArgs(['x.log', '--pause-after', '10', '--pause', '1']);
+  assert.equal(entryTime(live, 25, 0).getTime(), 2 * 60_000);
+  assert.throws(() => parseArgs(['x.log', '--start', 'yesterday-ish']));
 });

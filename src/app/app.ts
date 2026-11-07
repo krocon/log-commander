@@ -34,6 +34,7 @@ import { SidebarState } from './features/sidebar/sidebar-state';
 import { StartScreenComponent } from './features/start/start-screen';
 import { StatusBarComponent } from './features/statusbar/status-bar';
 import { TabsComponent } from './features/tabs/tabs';
+import { TimelineComponent } from './features/timeline/timeline';
 import { ToolbarComponent } from './features/toolbar/toolbar';
 import { SplitterComponent } from './shared/splitter';
 
@@ -54,6 +55,7 @@ import { SplitterComponent } from './shared/splitter';
     SplitterComponent,
     StatusBarComponent,
     TabsComponent,
+    TimelineComponent,
     ToolbarComponent,
   ],
   template: `
@@ -84,6 +86,10 @@ import { SplitterComponent } from './shared/splitter';
         <div class="column">
           @let dash = session.mode() === 'dashboard';
           <div class="log-layer" [class.behind]="dash" [inert]="dash">
+            @if (settings.settings().showTimeline) {
+              <!-- Prompt 014: entries of the file over time, above the log. -->
+              <app-timeline id="timeline" [session]="session" />
+            }
             <div class="log-row">
               <app-log-table-view class="log" [session]="session" />
               @if (settings.settings().showOverviewRuler) {

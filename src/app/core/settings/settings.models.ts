@@ -42,6 +42,8 @@ export interface Settings {
   showLineNumbers: boolean;
   /** Overview ruler right of the log (prompt 007). */
   showOverviewRuler: boolean;
+  /** Timeline above the log (prompt 014): entries over time, toggled with `Z`. */
+  showTimeline: boolean;
   /** After a rotation: keep the old file's lines above the new ones, or start over. */
   keepOnRotate: boolean;
   /** CSS colour per token name without the `--` (e.g. `lv-error-fg`). */
@@ -71,6 +73,7 @@ export const DEFAULT_SETTINGS: Settings = {
   fontSize: 13,
   showLineNumbers: true,
   showOverviewRuler: true,
+  showTimeline: true,
   keepOnRotate: true,
   colorOverrides: {},
   customProfiles: [],
@@ -142,6 +145,9 @@ export function mergeSettings(saved: Partial<Settings> | null | undefined): Sett
   merged.columnLayouts = mergeColumnLayouts(merged.columnLayouts);
   if (typeof merged.showOverviewRuler !== 'boolean') {
     merged.showOverviewRuler = DEFAULT_SETTINGS.showOverviewRuler;
+  }
+  if (typeof merged.showTimeline !== 'boolean') {
+    merged.showTimeline = DEFAULT_SETTINGS.showTimeline;
   }
   if (typeof merged.detailVisible !== 'boolean')
     merged.detailVisible = DEFAULT_SETTINGS.detailVisible;

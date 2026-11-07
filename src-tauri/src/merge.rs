@@ -57,6 +57,8 @@ pub struct MergedLine {
     pub entry: LineEntry,
     pub probe: Probe,
     pub matcher: u32,
+    /// The time of an entry head as merged (for the timeline, prompt 014); set when released.
+    pub time: Option<i64>,
 }
 
 #[derive(Debug)]
@@ -222,6 +224,7 @@ impl Merger {
             entry: LineEntry::new(offset, len, level, continuation),
             probe,
             matcher,
+            time: None,
         };
         if continuation {
             if let Some(open) = s.open {
@@ -335,6 +338,9 @@ impl Merger {
         }
         s.lines += count;
         self.last_source = Some(source);
+        if !pending.orphan && pending.time != i64::MIN {
+            head.time = Some(pending.time);
+        }
         out.push(head);
         out.extend(pending.rest);
     }
@@ -1188,7 +1194,7 @@ impl Runner {
                     &[]
                 };
                 let mut current = fresh.line(entry);
-                data.push_line(entry, |v| current.probe(v, prepared));
+                data.push_line(entry, line.time, |v| current.probe(v, prepared));
             }
             self.publish(&mut data);
             data.dirty = true;

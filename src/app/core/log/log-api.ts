@@ -25,6 +25,8 @@ import {
   SearchQuery,
   SessionInfo,
   SessionUpdate,
+  TimeHit,
+  Timeline,
   ViewFilterSpec,
   ViewInfo,
 } from './log.models';
@@ -164,6 +166,21 @@ export class LogApi {
     viewId = 0,
   ): Promise<Overview> {
     return call('get_overview', { sessionId, buckets, lines, viewId });
+  }
+
+  /** The timeline of the whole file (prompt 014); `from`/`to` null: the whole file. */
+  getTimeline(
+    sessionId: number,
+    from: number | null,
+    to: number | null,
+    buckets: number,
+  ): Promise<Timeline> {
+    return call('get_timeline', { sessionId, from, to, buckets });
+  }
+
+  /** The first entry at or after `ts` (microseconds, UTC) in the view; null without times. */
+  positionAtTime(sessionId: number, ts: number, viewId = 0): Promise<TimeHit | null> {
+    return call('position_at_time', { sessionId, ts, viewId });
   }
 
   /** Next or previous entry of one of `levels`, strictly after / before `fromPosition` (null: start / end). */

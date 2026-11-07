@@ -445,6 +445,26 @@ fn measure_500mb() {
             / 1024
     );
 
+    // Prompt 014: the timeline over the whole file and a jump to a time.
+    let start = Instant::now();
+    let rounds = 20;
+    let mut timeline = None;
+    for _ in 0..rounds {
+        timeline = Some(fx.session.timeline(None, None, 1000).unwrap());
+    }
+    let timeline = timeline.unwrap();
+    println!(
+        "get_timeline (1000 buckets): {:?} each, {} entries",
+        start.elapsed() / rounds,
+        timeline.entries
+    );
+    let start = Instant::now();
+    let hit = fx
+        .session
+        .position_at_time(0, timeline.max.unwrap())
+        .unwrap();
+    println!("position_at_time: {:?} ({hit:?})", start.elapsed());
+
     let start = Instant::now();
     let info = fx
         .session

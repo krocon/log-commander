@@ -40,6 +40,7 @@ Einstellung `theme`: `system` (Standard), `dark`, `light`. Der `SettingsService`
 | Splitter | `--splitter-bg`, `--splitter-grip`, `--splitter-hover-bg` | Leiste, Griff in der Mitte, Hover/Ziehen (`shared/splitter.ts`) |
 | Quellen (Merge) | `--src-1` … `--src-8`, Klasse `src-N` setzt `--src` | Streifen im Zeilenrand, Chips, Dialog, Baum und Statistik (Prompt 006); ab der neunten Quelle wiederholt, der Dateiname unterscheidet |
 | Overview Ruler | `--ruler-bg`, `--ruler-band`, `--ruler-band-edge`, `--ruler-fatal`, `--ruler-error`, `--ruler-warn`, `--ruler-bookmark`, `--ruler-selection` | Leiste rechts (Prompt 007): Fläche, Band des sichtbaren Bereichs und seine Kanten, Level-Balken (FATAL und ERROR in der linken Spur, WARN in der rechten, Länge = Dichte), Lesezeichen (auch das Fähnchen `⚑` im Zeilenrand), Auswahl. Der Canvas liest sie per `getComputedStyle`, bei Themewechsel neu |
+| Zeitstrahl | `--tl-all`, `--tl-gap`; dazu `--ruler-bg`, `--ruler-band`, `--ruler-band-edge`, `--ruler-warn`/`-error`/`-fatal`, `--accent`, `--text-dim` | Streifen über dem Log (Prompt 014): neutrale Säulen, Schraffur eines Ausfalls; Fläche, Band und Level-Farben wie im Ruler, Cursor und markiertes Fenster in `--accent`, Achsenbeschriftung `--text-dim`. Der Canvas liest sie per `getComputedStyle`, bei Themewechsel neu |
 | Dashboard | `--chart-1` … `--chart-8`, `--chart-lv-<level>` (unknown, trace, debug, info, warn, error, fatal), `--chart-grid` | Reihen der Diagramme (Prompt 012), Reihen je Level in kräftigen Varianten der Level-Farben, Gitterlinien. Achsentext `--text-dim`, Fehler `--danger` auf `--bg-panel`. Der Canvas liest sie per `getComputedStyle`, bei Themewechsel neu |
 | Inline-Tokens | `--tok-time`, `--tok-number`, `--tok-string`, `--tok-id`, `--tok-url` | Hervorhebung in der Zeile (`highlight.ts`) |
 
@@ -80,6 +81,9 @@ läuft als erster Schritt in `npm run check`.
 - Dashboard (Prompt 012): `--chart-*` und `--chart-lv-*` stehen in `GRAPHIC_PAIRS` gegen `--bg-panel` (Panelfläche),
   `--danger` auf `--bg-panel` in `PAIRS`. Gitterlinien (`--chart-grid`) sind Zierde und werden nicht geprüft. Jede
   Reihe steht mit Namen und Wert in der Legende, Kreisstücke mit Name, Wert und Anteil daneben.
+- Zeitstrahl (Prompt 014): `--tl-all` gegen `--ruler-bg` und `--ruler-band`, `--tl-gap` und `--accent` gegen
+  `--ruler-bg` (`--accent` auch gegen `--ruler-band`) in `GRAPHIC_PAIRS`; Achsentext `--text-dim` und `--text` auf
+  `--ruler-bg` in `PAIRS`. Zahlen stehen im Tooltip und im `aria-label`, ein Ausfall auch als Text („keine Einträge …“).
 - Seitenleiste (Prompt 005): aktuelle Datei mit `--text` auf `--row-selected` (in `PAIRS`), sonst vorhandene Tokens.
 - Farbe ist nie die einzige Information: Level steht als Wort in der Zeile, Zustände haben Text oder Symbol.
 
