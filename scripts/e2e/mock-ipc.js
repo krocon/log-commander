@@ -44,6 +44,7 @@
         return {
           line: index,
           level,
+          source: 0,
           text: line,
           isContinuation,
           truncated: false,
@@ -85,7 +86,33 @@
       frozen: session.frozen ?? false,
       pendingBytes: 0,
       frozenStale: false,
+      sources: (session.sources ?? []).map((s) => ({
+        status: { kind: 'live' },
+        fileSize: s.size,
+        lines: session.lines.filter((l) => l.source === s.index).length,
+        lateLines: 0,
+      })),
     };
+  }
+
+  /** Sort key of a line's time: the first 19 characters with `T` as a space. */
+  const timeKey = (text) => text.slice(0, 19).replace('T', ' ');
+
+  /** Entries (head + continuations) of several files mixed by time, stable. */
+  function mergeLines(perFile) {
+    const entries = [];
+    perFile.forEach((lines, source) => {
+      let key = '';
+      for (const line of lines) {
+        if (!line.isContinuation) {
+          key = /^\d{4}-\d{2}-\d{2}/.test(line.text) ? timeKey(line.text) : key;
+          entries.push({ key, source, seq: entries.length, lines: [] });
+        }
+        entries.at(-1)?.lines.push({ ...line, source });
+      }
+    });
+    entries.sort((a, b) => a.key.localeCompare(b.key) || a.source - b.source || a.seq - b.seq);
+    return entries.flatMap((e) => e.lines).map((line, i) => ({ ...line, line: i }));
   }
 
   function withMatches(line, search) {
@@ -119,6 +146,8 @@
       totalBytes: new TextEncoder().encode(text).length - (last - first),
       text,
       truncated: false,
+      source: lines[first].source ?? 0,
+      byteOffset: 0,
     };
   }
 
@@ -153,8 +182,54 @@
         fileName: name,
         suggestedProfileId: 'log4j',
         update: update(session),
+        sources: [],
       };
     },
+    open_merged({ sources, onUpdate }) {
+      const id = sessions.size + 1;
+      const infos = sources.map(({ path }, index) => {
+        const name = path.split('/').pop();
+        return { index, path, fileName: name, profileId: 'log4j', encoding: 'utf8' };
+      });
+      const texts = infos.map((info) => setupData.files[info.fileName]);
+      const session = {
+        id,
+        columns: SPRING_COLUMNS,
+        lines: mergeLines(texts.map((text) => classify(text, SPRING_COLUMNS))),
+        size: texts.reduce((sum, t) => sum + t.length, 0),
+        generation: 0,
+        filter: { levels: LEVELS, search: '', mode: 'filter' },
+        channel: onUpdate.id,
+        sent: 0,
+        sources: infos.map((info, i) => ({ index: i, size: texts[i].length })),
+      };
+      sessions.set(id, session);
+      return {
+        sessionId: id,
+        path: '',
+        fileName: infos.map((i) => i.fileName).join(' + '),
+        suggestedProfileId: 'log4j',
+        update: update(session),
+        sources: infos,
+      };
+    },
+    inspect_merge_source({ path }) {
+      const name = path.split('/').pop();
+      const text = setupData.files[name] ?? '';
+      const lines = text.split('\n').filter((l) => /^\d{4}-/.test(l));
+      const micros = (line) =>
+        line ? new Date(timeKey(line).replace(' ', 'T')).getTime() * 1000 : null;
+      return {
+        path,
+        fileName: name,
+        suggestedProfileId: name === 'worker.log' ? 'python' : 'log4j',
+        encoding: 'utf8',
+        firstTime: micros(lines[0]),
+        lastTime: micros(lines.at(-1)),
+        fileSize: text.length,
+      };
+    },
+    resort: () => null,
     get_lines({ sessionId, start, count }) {
       const session = sessions.get(sessionId);
       const search = session.filter.search;

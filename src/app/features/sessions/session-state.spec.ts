@@ -6,6 +6,7 @@ import { SessionState } from './session-state';
 const line = (n: number): LogLine => ({
   line: n,
   level: 'ERROR',
+  source: 0,
   text: `line ${n}`,
   isContinuation: false,
   truncated: false,
@@ -55,6 +56,7 @@ function setup(initial: number) {
       fileName: 'a.log',
       suggestedProfileId: 'generic',
       update: update(initial),
+      sources: [],
     },
     api,
   );
@@ -169,6 +171,7 @@ describe('SessionState.displayedLines', () => {
         fileName: 'a.log',
         suggestedProfileId: 'generic',
         update: update(0),
+        sources: [],
       },
       api,
     );

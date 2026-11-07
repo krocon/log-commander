@@ -2,8 +2,8 @@
 //! and reading line text back from the file.
 //!
 //! Offsets in the index are *virtual*: every file segment of a session (the file before and after
-//! a rotation) occupies its own range, see [`Segment`]. A later merged view of rotated archives
-//! can build on the same scheme.
+//! a rotation) occupies its own range, see [`Segment`]. A merge of several files (prompt 006) gives
+//! every source its own address space: the top byte of an offset is the source ([`source_of`]).
 
 use crate::encoding::Encoding;
 use crate::level::Level;
@@ -19,6 +19,21 @@ pub const MAX_DISPLAY_BYTES: usize = 128 * 1024;
 /// Text of a line that search looks at.
 pub const MAX_SEARCH_BYTES: usize = 1024 * 1024;
 
+/// The top bits of a virtual offset name the source of a merged session; a single file is source 0.
+pub const SOURCE_SHIFT: u32 = 56;
+/// Sources of one merge (the source filter is a `u16` mask).
+pub const MAX_SOURCES: usize = 16;
+
+/// The source a virtual offset belongs to.
+pub fn source_of(offset: u64) -> usize {
+    (offset >> SOURCE_SHIFT) as usize
+}
+
+/// First virtual offset of a source's address space.
+pub fn source_base(source: usize) -> u64 {
+    (source as u64) << SOURCE_SHIFT
+}
+
 const FLAG_CONTINUATION: u8 = 0b1000_0000;
 const LEVEL_MASK: u8 = 0b0000_0111;
 
@@ -30,6 +45,18 @@ pub struct LineEntry {
 }
 
 impl LineEntry {
+    pub fn source(&self) -> usize {
+        source_of(self.offset)
+    }
+
+    /// The same line as the head of an entry of its own.
+    pub fn as_head(self) -> Self {
+        Self {
+            meta: self.meta & !FLAG_CONTINUATION,
+            ..self
+        }
+    }
+
     pub fn new(offset: u64, len: u32, level: Level, continuation: bool) -> Self {
         let flag = if continuation { FLAG_CONTINUATION } else { 0 };
         Self {
@@ -114,6 +141,18 @@ impl LineSplitter {
         (self.carry_offset, trim_cr(&self.carry, self.encoding))
     }
 
+    /// Hands out the incomplete last line as a line of its own; what follows starts a new line.
+    pub fn take_partial(&mut self) -> Option<(u64, Vec<u8>)> {
+        if self.carry.is_empty() {
+            return None;
+        }
+        let offset = self.carry_offset;
+        let raw = trim_cr(&self.carry, self.encoding).to_vec();
+        self.carry_offset += self.carry.len() as u64;
+        self.carry.clear();
+        Some((offset, raw))
+    }
+
     /// Feeds the block that follows the previous one in the file. `on_line(offset, raw)` gets
     /// each complete line without its line end.
     pub fn feed(&mut self, block: &[u8], mut on_line: impl FnMut(u64, &[u8])) {
@@ -194,6 +233,12 @@ pub struct Segment {
     pub encoding: Encoding,
 }
 
+/// Adds a segment where its base belongs: lookups by offset need them sorted.
+pub fn insert_segment(segments: &mut Vec<Arc<Segment>>, segment: Arc<Segment>) {
+    let at = segments.partition_point(|s| s.base <= segment.base);
+    segments.insert(at, segment);
+}
+
 /// Positional read that neither moves a shared cursor nor needs a lock.
 pub fn read_at(file: &File, buf: &mut [u8], offset: u64) -> io::Result<usize> {
     #[cfg(unix)]
@@ -208,14 +253,21 @@ pub fn read_at(file: &File, buf: &mut [u8], offset: u64) -> io::Result<usize> {
     }
 }
 
-/// Reads the text of index entries with a sliding block buffer, so scanning neighbouring lines
-/// costs one read per block instead of one per line.
+/// Reads the text of index entries with a sliding block buffer per source, so scanning
+/// neighbouring lines costs one read per block instead of one per line, also when a merge changes
+/// the source from line to line.
 pub struct LineReader {
     segments: Vec<Arc<Segment>>,
     block: usize,
     backward: bool,
-    buf: Vec<u8>,
-    buf_start: u64,
+    /// One buffer per source (`offset >> SOURCE_SHIFT`), created on first use.
+    bufs: Vec<ReadBuf>,
+}
+
+#[derive(Default)]
+struct ReadBuf {
+    data: Vec<u8>,
+    start: u64,
 }
 
 impl LineReader {
@@ -224,8 +276,7 @@ impl LineReader {
             segments,
             block,
             backward: false,
-            buf: Vec::new(),
-            buf_start: 0,
+            bufs: Vec::new(),
         }
     }
 
@@ -237,14 +288,20 @@ impl LineReader {
 
     /// Up to `limit` raw bytes of the line (fewer if the file shrank in the meantime).
     pub fn raw(&mut self, entry: &LineEntry, limit: usize) -> io::Result<(&[u8], Encoding)> {
-        let Some(segment) = segment_of(&self.segments, entry.offset) else {
+        let at = self.segments.partition_point(|s| s.base <= entry.offset);
+        let Some(index) = at.checked_sub(1) else {
             return Ok((&[], Encoding::Utf8));
         };
+        let segment = &self.segments[index];
         let encoding = segment.encoding;
+        let source = source_of(entry.offset);
+        if self.bufs.len() <= source {
+            self.bufs.resize_with(source + 1, ReadBuf::default);
+        }
+        let buf = &mut self.bufs[source];
         let wanted = (entry.len as usize).min(limit);
         let end = entry.offset + wanted as u64;
-        let buffered =
-            entry.offset >= self.buf_start && end <= self.buf_start + self.buf.len() as u64;
+        let buffered = entry.offset >= buf.start && end <= buf.start + buf.data.len() as u64;
         if !buffered {
             let size = wanted.max(self.block);
             let start = if self.backward {
@@ -253,33 +310,33 @@ impl LineReader {
                 entry.offset
             };
             // Never read across the segment's end: virtual offsets of the next one follow.
-            let next_base = self
-                .segments
-                .iter()
-                .find(|s| s.base > segment.base)
-                .map_or(u64::MAX, |s| s.base);
+            let next_base = self.segments.get(index + 1).map_or(u64::MAX, |s| s.base);
             let size = (size as u64).min(next_base - start) as usize;
-            self.buf.resize(size, 0);
-            let file = Arc::clone(&segment.file);
+            buf.data.resize(size, 0);
             let physical = start - segment.base;
             let mut filled = 0usize;
             while filled < size {
-                let n = read_at(&file, &mut self.buf[filled..], physical + filled as u64)?;
+                let n = read_at(
+                    &segment.file,
+                    &mut buf.data[filled..],
+                    physical + filled as u64,
+                )?;
                 if n == 0 {
                     break;
                 }
                 filled += n;
             }
-            self.buf.truncate(filled);
-            self.buf_start = start;
+            buf.data.truncate(filled);
+            buf.start = start;
         }
-        let from = (entry.offset.saturating_sub(self.buf_start) as usize).min(self.buf.len());
-        let to = (end.saturating_sub(self.buf_start) as usize).min(self.buf.len());
-        Ok((&self.buf[from..to], encoding))
+        let from = (entry.offset.saturating_sub(buf.start) as usize).min(buf.data.len());
+        let to = (end.saturating_sub(buf.start) as usize).min(buf.data.len());
+        Ok((&buf.data[from..to], encoding))
     }
 }
 
-fn segment_of(segments: &[Arc<Segment>], offset: u64) -> Option<&Arc<Segment>> {
+/// The segment an offset lies in; `segments` sorted by base.
+pub fn segment_of(segments: &[Arc<Segment>], offset: u64) -> Option<&Arc<Segment>> {
     let after = segments.partition_point(|s| s.base <= offset);
     after.checked_sub(1).map(|i| &segments[i])
 }

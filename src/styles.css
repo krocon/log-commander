@@ -51,6 +51,16 @@
   --splitter-bg: #2a303a;
   --splitter-grip: #8d97a6;
   --splitter-hover-bg: #3a4250;
+
+  /* Sources of a merge (prompt 006): stripe in the gutter, chips, dialog. */
+  --src-1: #5aa2f7;
+  --src-2: #f0a94b;
+  --src-3: #4cc38a;
+  --src-4: #d98ee0;
+  --src-5: #e5d35a;
+  --src-6: #4fc9c9;
+  --src-7: #f07f7f;
+  --src-8: #a7b3ff;
 }
 /* @end */
 
@@ -101,8 +111,43 @@
   --splitter-bg: #dce0e6;
   --splitter-grip: #5f6b7a;
   --splitter-hover-bg: #c8ced7;
+
+  --src-1: #1a66d6;
+  --src-2: #b35f00;
+  --src-3: #0f7a4a;
+  --src-4: #9a3fa6;
+  --src-5: #7d6a00;
+  --src-6: #00727a;
+  --src-7: #c0392b;
+  --src-8: #4f5bd5;
 }
 /* @end */
+
+/* The colour of a source: `class="src-N"` sets `--src`. */
+.src-1 {
+  --src: var(--src-1);
+}
+.src-2 {
+  --src: var(--src-2);
+}
+.src-3 {
+  --src: var(--src-3);
+}
+.src-4 {
+  --src: var(--src-4);
+}
+.src-5 {
+  --src: var(--src-5);
+}
+.src-6 {
+  --src: var(--src-6);
+}
+.src-7 {
+  --src: var(--src-7);
+}
+.src-8 {
+  --src: var(--src-8);
+}
 
 :root {
   --font-ui: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;

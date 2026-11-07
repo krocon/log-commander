@@ -39,6 +39,7 @@ function setup(setFilter = vi.fn(() => Promise.resolve({}))) {
     fileName: 'a.log',
     suggestedProfileId: 'generic',
     update,
+    sources: [],
   };
   return { service, session: new SessionState(info, api), setFilter };
 }
@@ -49,7 +50,7 @@ describe('LogSessionService.applyPreset', () => {
     const query = { text: 'timeout', isRegex: false, caseSensitive: true };
     await service.applyPreset(session, { levels: ['WARN', 'ERROR'], query, mode: 'highlight' });
     expect(setFilter).toHaveBeenCalledTimes(1);
-    expect(setFilter).toHaveBeenCalledWith(1, ['WARN', 'ERROR'], query, 'highlight');
+    expect(setFilter).toHaveBeenCalledWith(1, ['WARN', 'ERROR'], query, 'highlight', null);
     expect([...session.levels()]).toEqual(['WARN', 'ERROR']);
     expect(session.query()).toEqual(query);
     expect(session.searchMode()).toBe('highlight');
@@ -75,5 +76,73 @@ describe('LogSessionService.applyPreset', () => {
     expect(setFilter).toHaveBeenCalledTimes(1);
     expect(session.query()).toEqual({ text: '', isRegex: true, caseSensitive: false });
     expect(session.presetRevision()).toBe(1);
+  });
+});
+
+describe('LogSessionService.openMerged', () => {
+  function mergeSetup() {
+    const openMerged = vi.fn((sources: { path: string }[]) =>
+      Promise.resolve({
+        sessionId: 7,
+        path: '',
+        fileName: 'a.log + b.log',
+        suggestedProfileId: 'generic',
+        update: { ...update, sources: [] },
+        sources: sources.map((s, index) => ({
+          index,
+          path: s.path,
+          fileName: s.path.slice(1),
+          profileId: 'generic',
+          encoding: 'utf8',
+        })),
+      } as SessionInfo),
+    );
+    const addRecentFile = vi.fn();
+    const setFilter = vi.fn(() => Promise.resolve({}));
+    const api = {
+      openMerged,
+      setFilter,
+      getColumns: () => new Promise(() => undefined),
+    } as unknown as LogApi;
+    TestBed.configureTestingModule({
+      providers: [
+        { provide: LogApi, useValue: api },
+        {
+          provide: SettingsService,
+          useValue: { settings: signal(DEFAULT_SETTINGS), addRecentFile },
+        },
+      ],
+    });
+    return { service: TestBed.inject(LogSessionService), openMerged, addRecentFile, setFilter };
+  }
+
+  it('opens a tab titled after the file count, not in the recent files', async () => {
+    const { service, openMerged, addRecentFile } = mergeSetup();
+    expect(await service.openMerged([{ path: '/a.log' }, { path: '/b.log' }])).toBeNull();
+    expect(openMerged).toHaveBeenCalledTimes(1);
+    const tab = service.active()!;
+    expect(tab.isMerge).toBe(true);
+    expect(tab.fileName).toBe('Merge (2 Dateien)');
+    expect(tab.title).toBe('/a.log\n/b.log');
+    expect(addRecentFile).not.toHaveBeenCalled();
+  });
+
+  it('activates the merge of the same files in any order instead of opening it again', async () => {
+    const { service, openMerged } = mergeSetup();
+    await service.openMerged([{ path: '/a.log' }, { path: '/b.log' }]);
+    service.activate(null);
+    await service.openMerged([{ path: '/b.log' }, { path: '/a.log', profileId: 'log4j' }]);
+    expect(openMerged).toHaveBeenCalledTimes(1);
+    expect(service.activeId()).toBe(7);
+    await service.openMerged([{ path: '/a.log' }, { path: '/c.log' }]);
+    expect(openMerged).toHaveBeenCalledTimes(2);
+  });
+
+  it('sends the source filter with the levels and the search', async () => {
+    const { service, setFilter } = mergeSetup();
+    await service.openMerged([{ path: '/a.log' }, { path: '/b.log' }]);
+    const tab = service.active()!;
+    await service.setSources(tab, 0b10);
+    expect(setFilter).toHaveBeenLastCalledWith(7, expect.any(Array), tab.query(), 'filter', 0b10);
   });
 });

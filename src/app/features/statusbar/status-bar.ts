@@ -3,6 +3,7 @@ import { formatBytes, formatCount } from '../../shared/format';
 import { LogSessionService } from '../sessions/log-session.service';
 import { statusPill } from './status-pill';
 import { formatSummary, partlyRecognised } from '../sessions/format-logic';
+import { lateLines, sourceProblems } from '../merge/merge-logic';
 
 @Component({
   selector: 'app-status-bar',
@@ -12,9 +13,18 @@ import { formatSummary, partlyRecognised } from '../sessions/format-logic';
       <span class="pill" [class]="'pill ' + pill().cls" role="status">
         <span class="dot"></span>{{ pill().label }}
       </span>
-      <span class="path" [title]="s.path"
-        ><bdi>{{ s.path }}</bdi></span
-      >
+      @if (s.isMerge) {
+        <span class="path" [title]="s.title"
+          ><bdi>{{ sourceNames() }}</bdi></span
+        >
+        @for (problem of sourceProblems(); track problem) {
+          <span class="stale">{{ problem }}</span>
+        }
+      } @else {
+        <span class="path" [title]="s.path"
+          ><bdi>{{ s.path }}</bdi></span
+        >
+      }
       @if (s.update().frozenStale) {
         <span class="stale">Datei wurde geleert, Anzeige ist evtl. unvollständig</span>
       }
@@ -26,6 +36,12 @@ import { formatSummary, partlyRecognised } from '../sessions/format-logic';
         <span title="Seit dem Einfrieren geschrieben, wird beim Fortsetzen nachgelesen"
           >+{{ bytes }} warten</span
         >
+      }
+      @if (late(); as count) {
+        <span class="late" title="Zeilen, die nach späteren angezeigt wurden, stehen am Ende">
+          {{ count }} verspätet ·
+          <button type="button" class="link" (click)="resort()">Neu sortieren</button>
+        </span>
       }
       @if (s.update().filterPending) {
         <span>Filter {{ percent(s.update().filterProgress) }}</span>
@@ -87,8 +103,15 @@ import { formatSummary, partlyRecognised } from '../sessions/format-logic';
     .frozen .dot {
       background: var(--accent);
     }
-    .stale {
+    .stale,
+    .late {
       color: var(--lv-warn-fg);
+    }
+    .link {
+      padding: 0 2px;
+      color: var(--accent);
+      text-decoration: underline;
+      font-size: inherit;
     }
     @keyframes pulse {
       50% {
@@ -119,7 +142,30 @@ export class StatusBarComponent {
 
   protected readonly size = computed(() => formatBytes(this.session()?.update().fileSize ?? 0));
 
+  protected readonly sourceNames = computed(
+    () =>
+      this.session()
+        ?.sources.map((s) => s.fileName)
+        .join(' + ') ?? '',
+  );
+
+  protected readonly sourceProblems = computed(() => {
+    const session = this.session();
+    return session?.isMerge ? sourceProblems(session.sources, session.update().sources ?? []) : [];
+  });
+
+  protected readonly late = computed(() => {
+    const count = lateLines(this.session()?.update().sources ?? []);
+    return count > 0 ? formatCount(count) : '';
+  });
+
+  protected resort(): void {
+    const session = this.session();
+    if (session) void this.sessions.resort(session);
+  }
+
   protected readonly encodingLabel = computed(() => {
+    if (this.session()?.isMerge) return 'gemischt';
     const encoding = this.session()?.update().encoding;
     const labels: Record<string, string> = {
       utf8: 'UTF-8',

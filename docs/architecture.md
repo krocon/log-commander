@@ -1,6 +1,6 @@
 # Architektur
 
-Stand: Seitenleiste (Prompt 005), Detail-Panel (Prompt 004), Spaltenansicht (Prompt 009) und Formaterkennung (Prompt 008) auf Basis des Startauftrags, des Flacker-Fixes (001), des Freeze-Buttons (002) und
+Stand: Dateien zusammenführen (Prompt 006), Seitenleiste (Prompt 005), Detail-Panel (Prompt 004), Spaltenansicht (Prompt 009) und Formaterkennung (Prompt 008) auf Basis des Startauftrags, des Flacker-Fixes (001), des Freeze-Buttons (002) und
 der GuiExpert Table (003). Dieses Dokument beschreibt
 Entscheidungen, nicht Wünsche. Geplantes steht in `docs/roadmap.md` und in `prompts/`.
 
@@ -24,6 +24,7 @@ Entscheidungen, nicht Wünsche. Geplantes steht in `docs/roadmap.md` und in `pro
 │  indexer.rs    LineIndex (16 Byte/Zeile), LineSplitter, LineReader    │
 │  level.rs / profile.rs   Level-Erkennung, Profile, Vorschlag          │
 │  fields.rs / timestamp.rs   Format, Felder je Zeile, Zeitstempel      │
+│  merge.rs      mehrere Dateien als eine Sitzung (Merger, Worker)      │
 │  filter.rs     gefilterte Liste (inkrementell), Textsuche             │
 │  encoding.rs / platform.rs   Encodings, ANSI; Share-Flags, Datei-ID   │
 │  model.rs / error.rs   DTOs (camelCase), AppError { code, message }   │
@@ -59,6 +60,7 @@ Entscheidungen, nicht Wünsche. Geplantes steht in `docs/roadmap.md` und in `pro
 | Spaltenansicht | Dieselbe Tabelle mit ihrer Kopfzeile: je Feld aus `get_columns` eine Spalte, Zellen aus den Spannen (`cellSegments` schneidet die Segmente der Zeile, Treffer und Tokens bleiben). Fortsetzungs- und nicht zerlegte Zeilen spannen per Colspan ab der ersten sichtbaren Spalte. Layout (Reihenfolge, Breiten, ausgeblendet) je Profil in den Settings, Rohansicht per `T` | Kein zweiter Viewport; Breite und Reihenfolge zieht die Tabelle selbst. Kein Sortieren: die Ansicht ist nach Datei und Zeit geordnet und wächst live. Prompt 009. |
 | Detail-Panel | Unter der Ansicht, per Splitter (`shared/splitter.ts`, wiederverwendbar) in der Höhe verstellbar. Zeigt den Eintrag von `selection().anchor`: `get_entry` liest Kopf und Fortsetzungen direkt aus dem Index (ohne Filter), höchstens 1 MiB, Schnitt an einer Zeichengrenze. Kopieren über `copy_lines` mit `view: all` liefert alles. JSON/XML formatiert ein eigener Tokenizer (`detail-format.ts`), der nur Einrückung und Farbe ändert. Neu geladen wird bei anderer Zeile, Tab, `epoch` oder `viewGeneration`, sonst nur ein Eintrag am Dateiende, höchstens ein Aufruf zugleich | Lange Zeilen und eingebettete Blöcke lesbar machen, ohne den Text im Frontend zusammenzusetzen (der `PageCache` hält nur gefilterte, gekürzte Zeilen). `JSON.parse` rundet 64-Bit-IDs, `DOMParser` scheitert an Fragmenten. Prompt 004. |
 | Seitenleiste | Links neben Log und Detail-Panel, Breite per vertikalem Splitter (min. 180 px, Log min. 360 px), darin Baum und Statistik per horizontalem Splitter (`sidebarTreeShare`). Baum = reine Funktion (`tree-model.ts`) aus Sitzungen und `savedFilters`, WAI-ARIA-Tree mit rovingem `tabindex`; Statistik „Alle“ = `counts`, „Ansicht“ = `viewCounts` aus `FilteredLines` (Zähler in `append`, Zwischenzähler je Eintrag, beides im Checkpoint). Gespeicherte Filter in den Settings, `applyPreset` = ein Filter-Job | Zweite Sicht auf denselben Zustand statt zweiter Quelle. Zähler im Backend, weil das Frontend die Level der gefilterten Zeilen nicht kennt; Mehrkosten im Filter ~0,35 ns je Zeile. Prompt 005. |
+| Merge | Eine Sitzung, ein Index für alle Quellen. Die Quelle steckt im virtuellen Offset (`offset >> 56`), die 16 Byte je Zeile bleiben; Filter, Suche, `entry_range`, Kopieren laufen unverändert, der Quellenfilter (`FilterSpec.sources`, `u16`) entscheidet am Kopf des Eintrags. `Merger` (rein) ordnet Einträge nach (Zeit, Quelle, Position); Laden streamt (die zeitlich hinterste Quelle wird gelesen, freigegeben wird unter dem kleinsten Stand aller unfertigen Quellen), eine ungeordnete Quelle startet das Laden neu und wird dann ganz gelesen und sortiert. Live nur Anhängen: Haltepuffer 1 s bis zum Wasserstand der aktiven Quellen, Verspätetes am Ende und gezählt, „Neu sortieren“ als neue Epoche. Truncation, Rotation ohne Behalten oder zu viele Segmente einer Quelle mischen alles neu. Spalten aus dem Format der ersten Datei | Einfügen in der Mitte würde Zeilennummern, gefilterte Liste und `PageCache` bei jedem Update ungültig machen. Eine Liste `(Sitzung, Zeile)` über offenen Sitzungen bräuchte eigene Wege für Filter und Suche. Messung 2 × 500 MB gegen 1 × 1000 MB: Spitzenspeicher +264 zu +259 MB, Filter und Suche gleich schnell, Öffnen 6,7 zu 4,3 s. Prompt 006. |
 | Gezeichnet wird, was da ist | `displayedLines` trennt den Stand der Ansicht vom Stand des Backends. Der Tail rückt erst vor, wenn das neue Ende im `PageCache` liegt | Sonst blitzt je Update die Fläche ohne Level-Farbe auf. Prompt 001. |
 | Virtuelle Offsets | Jede Datei einer Sitzung (vor und nach Rotation) belegt einen eigenen Offset-Bereich (`Segment`), der Handle bleibt offen, höchstens 32 Dateien | Zeilennummern bleiben bei „alte Zeilen behalten“ gültig, und das Lesen braucht keinen Pfad. |
 | Gefilterte Ansicht | `FilteredLines`: bei Identität keine Liste, sonst `Vec<u32>` der Zeilennummern. Im Tail inkrementell, bei Filterwechsel neu per Job | Positionen in der Ansicht sind Indizes in die Liste, Suche und Kopieren arbeiten darauf. |
@@ -77,7 +79,7 @@ Entscheidungen, nicht Wünsche. Geplantes steht in `docs/roadmap.md` und in `pro
 | Hintergrund | `backgroundThrottling: disabled` | Ein Live-Viewer muss auch hinter anderen Fenstern aktuell bleiben. |
 | CSP | strikte CSP mit `dangerousDisableAssetCspModification: ["style-src"]` | Sonst ergänzt Tauri Nonces, `'unsafe-inline'` gilt nicht mehr und Angulars Komponenten-Styles fehlen. `script-src 'self'` bleibt strikt. |
 | Capabilities | Nur für `main`: Events, Pfad-Auflösung, Fenstertitel, Öffnen-Dialog, Store, CLI. Kein `tauri-plugin-fs`, keine Shell | Alle Dateizugriffe laufen über eigene Commands, das Frontend kann keine beliebigen Pfade lesen. |
-| Öffnen | Dialog, Menü (`Cmd/Ctrl+O`, für einen Pfad `Cmd/Ctrl+Shift+O`), Datei-Drop, Kommandozeile (`tauri-plugin-cli`), zuletzt geöffnete Dateien | Ein Weg im Service (`tryOpen`), eine schon offene Datei aktiviert ihren Tab. |
+| Öffnen | Dialog, Menü (`Cmd/Ctrl+O`, für einen Pfad `Cmd/Ctrl+Shift+O`), Datei-Drop, Kommandozeile (`tauri-plugin-cli`), zuletzt geöffnete Dateien; Zusammenführen per Dialog (`Cmd/Ctrl+Shift+M`, Menü `menu-merge`, Tab-Leiste, Startseite) | Ein Weg im Service (`tryOpen`, für Merges `openMerged`), eine schon offene Datei aktiviert ihren Tab; ein Merge wird über seine sortierten Pfade erkannt und landet nicht in „zuletzt geöffnet“. |
 | Ende-zu-Ende | Debug-Build mit `e2e.rs`: Das Szenario aus `LC_E2E_SCRIPT` läuft im echten WebView gegen das echte Backend und meldet über stdout. Der Harness ändert die Datei auf Zuruf | Prüft Tail, Rotation und Truncation so, wie Nutzer sie erleben. Release-Builds enthalten das Modul nicht. |
 | Screenshots | Gebautes Frontend in Playwright-WebKit mit IPC-Mock (`scripts/e2e/mock-ipc.js`), Daten aus `samples/` | Gleiche Bilder auf jedem OS, ohne Rust-Build und ohne Fensterrechte. |
 
@@ -90,6 +92,10 @@ Entscheidungen, nicht Wünsche. Geplantes steht in `docs/roadmap.md` und in `pro
 - Detail-Panel: höchstens 1 MiB Text je Eintrag (Kopieren ohne diese Grenze), formatiert wird bis 256 KB.
 - `get_lines` liefert höchstens 5000 Zeilen je Aufruf. Kopieren höchstens 1 Mio. Zeilen bzw. 256 MB.
 - Mehrere Rotationen während eines Freeze: Zwischenstände fehlen.
+- Merge: höchstens 16 Dateien; verspätete Zeilen stehen am Ende bis „Neu sortieren“; keine Zeilennummer der Quelldatei
+  (das Detail-Panel zeigt Datei und Byte-Offset); ohne Zeitzone gilt die lokale Zone; eine Zeile ohne Ende wird nach 1 s
+  endgültig, ihr Rest eine eigene Zeile; Spalten nur nach dem Format der ersten Datei. Eine ungeordnete Quelle braucht
+  beim Laden zusätzlichen Speicher (sie wird ganz gelesen und sortiert).
 
 ## Abhängigkeiten
 

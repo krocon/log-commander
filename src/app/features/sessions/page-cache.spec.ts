@@ -5,6 +5,7 @@ import { PAGE_SIZE, PageCache } from './page-cache';
 const line = (n: number): LogLine => ({
   line: n,
   level: 'INFO',
+  source: 0,
   text: `line ${n}`,
   isContinuation: false,
   truncated: false,

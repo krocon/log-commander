@@ -13,8 +13,13 @@ import { LogSessionService } from '../sessions/log-session.service';
       <div class="actions">
         <button type="button" class="primary" (click)="openFile.emit()">Datei öffnen …</button>
         <button type="button" class="secondary" (click)="openPath.emit()">Pfad eingeben …</button>
+        <button type="button" class="secondary" (click)="merge.emit()">
+          Dateien zusammenführen …
+        </button>
       </div>
-      <p class="hint">oder Datei ins Fenster ziehen · ⌘/Strg+O · Pfad: ⌘/Strg+⇧+O</p>
+      <p class="hint">
+        oder Datei ins Fenster ziehen · ⌘/Strg+O · Pfad: ⌘/Strg+⇧+O · Zusammenführen: ⌘/Strg+⇧+M
+      </p>
       @if (settings().recentFiles.length) {
         <h2>Zuletzt geöffnet</h2>
         <ul>
@@ -127,6 +132,7 @@ export class StartScreenComponent {
   protected readonly baseName = baseName;
   readonly openFile = output<void>();
   readonly openPath = output<void>();
+  readonly merge = output<void>();
 
   protected forget(path: string): void {
     this.settingsService.removeRecentFile(path);

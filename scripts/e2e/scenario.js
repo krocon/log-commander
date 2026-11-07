@@ -742,6 +742,106 @@
       heads().length === 0 && !$('.lt-col') && columnsButton().disabled,
     );
 
+    // Merge (prompt 006): two files into one tab in time order, source in the gutter, source filter, live.
+    click(button('Pfad'));
+    await waitFor('path dialog for merge-a', () => $('app-open-path-dialog dialog')?.open);
+    typePath('~/merge-a.log').requestSubmit();
+    await waitFor('merge-a is open', () => tabOf('merge-a.log') && !$('app-open-path-dialog'));
+    click(button('Pfad'));
+    await waitFor('path dialog for merge-b', () => $('app-open-path-dialog dialog')?.open);
+    typePath('~/merge-b.log').requestSubmit();
+    await waitFor('merge-b is open', () => tabOf('merge-b.log') && !$('app-open-path-dialog'));
+    press('m', { metaKey: true, shiftKey: true });
+    await waitFor('merge dialog opens', () => $('app-merge-dialog dialog')?.open);
+    const mergeBox = (name) =>
+      $$('app-merge-dialog .open-tab').find((l) => l.textContent.includes(name))?.querySelector('input');
+    const submitMerge = () => $('app-merge-dialog button[type=submit]');
+    for (const name of ['merge-a.log', 'plain.log']) click(mergeBox(name));
+    await waitFor('a file without timestamps is refused at that file', () =>
+      $$('app-merge-dialog .entries li.failed').some((li) => li.textContent.includes('Keine Zeitstempel')) &&
+      submitMerge().disabled,
+    );
+    click($$('app-merge-dialog .entries li.failed')[0].querySelector('.remove'));
+    click(mergeBox('merge-b.log'));
+    await waitFor('both files with their profile and time span', () =>
+      $$('app-merge-dialog .entries li').length === 2 &&
+      $$('app-merge-dialog .times').every((t) => t.textContent.includes('2026-01-15')) &&
+      !submitMerge().disabled,
+    );
+    click(submitMerge());
+    await waitFor('merge tab opens', () => tabOf('Merge (2 Dateien)') && !$('app-merge-dialog'));
+    // Raw view: one text cell per row.
+    await waitFor('merge columns known', () => !columnsButton().disabled);
+    if (columnsButton().getAttribute('aria-pressed') === 'true') press('t');
+    await waitFor('raw view for the merge', () => !$('.lt-col'));
+    const merged = ['a1', 'b2', 'a3', 'b4', 'Traceback', 'ValueError', 'a5'];
+    await waitFor('entries in time order, the stack trace with its head', () =>
+      merged.every((word, i) => rowTexts()[i]?.includes(word)),
+    );
+    const gutters = () => inView($$('app-log-table-view .lt-gutter.lt-src')).map((g) => g.textContent);
+    await waitFor('the gutter names the source of each line', () =>
+      gutters()[0]?.startsWith('merge-a.log') && gutters()[1]?.startsWith('merge-b.log'),
+    );
+    await waitFor('status bar: mixed encoding', () => status().includes('gemischt'));
+    const sourceChip = (name) => $$('.chip.src').find((c) => c.textContent.includes(name));
+    click(sourceChip('merge-b.log'));
+    await waitFor('source filter: only merge-a', () =>
+      rowTexts().length === 3 && gutters().every((g) => g.startsWith('merge-a.log')),
+    );
+    click(sourceChip('merge-b.log'));
+    await waitFor('source filter lifted', () => rowTexts().length === 7);
+    await waitFor('the profile cannot be changed for a merge', () => $('select[aria-label=Profil]').disabled);
+
+    // Live: 5000 lines/s next to 20 lines/s, the busy file rotates every 20 000 lines.
+    let mergeId = null;
+    for (let id = 1; id < 30 && mergeId === null; id++) {
+      const stats = await invoke('get_stats', { sessionId: id }).catch(() => null);
+      if (stats?.sources?.length === 2) mergeId = id;
+    }
+    if (mergeId === null) throw new Error('merge session not found');
+    await act('genstart');
+    const start = Date.now();
+    let stats;
+    while (Date.now() - start < 20000) {
+      stats = await invoke('get_stats', { sessionId: mergeId });
+      if (stats.sources[0].lines > 25000 && stats.sources[1].lines > 20) break;
+      await sleep(200);
+    }
+    await act('genstop');
+    if (!(stats.sources[0].lines > 25000 && stats.sources[1].lines > 20)) {
+      throw new Error(`live merge stalled: ${JSON.stringify(stats.sources)}`);
+    }
+    await report(`PASS live merge: ${stats.sources.map((s) => s.lines).join(' + ')} lines, rotation kept the old lines`);
+    await sleep(1500);
+    stats = await invoke('get_stats', { sessionId: mergeId });
+    const lastLines = await invoke('get_lines', {
+      sessionId: mergeId,
+      view: 'all',
+      start: Math.max(0, stats.totalLines - 5000),
+      count: 5000,
+    });
+    const timeOf = (text) => {
+      const m = text.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})[.,](\d{3})(Z?)/);
+      if (!m) return null;
+      return Date.parse(`${m[1]}T${m[2]}.${m[3]}${m[4]}`);
+    };
+    let previous = -Infinity;
+    let inversions = 0;
+    for (const line of lastLines) {
+      if (line.isContinuation) continue;
+      const t = timeOf(line.text);
+      if (t === null) continue;
+      if (t < previous) inversions++;
+      previous = Math.max(previous, t);
+    }
+    const late = stats.sources.reduce((sum, s) => sum + s.lateLines, 0);
+    if (inversions > late) throw new Error(`merge out of order: ${inversions} inversions, ${late} late`);
+    if (!lastLines.some((l) => l.source === 1) || !lastLines.some((l) => l.source === 0)) {
+      throw new Error('the last lines miss a source');
+    }
+    await report(`PASS live merge in time order: ${inversions} inversions, ${late} late lines`);
+    await waitFor('the merge view follows the end', () => pill() === 'Live');
+
     await report('DONE');
   } catch (e) {
     await report(`FAIL ${e.message}`);

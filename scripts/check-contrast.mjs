@@ -56,6 +56,13 @@ const GRAPHIC_PAIRS = [
   ['lv-warn-fg', 'bg-panel'],
   ['lv-error-fg', 'bg-panel'],
   ['lv-error-edge', 'bg-panel'],
+  // Source colours of a merge (prompt 006): stripe in the gutter, chips in the toolbar.
+  ...[1, 2, 3, 4, 5, 6, 7, 8].flatMap((i) => [
+    [`src-${i}`, 'bg-gutter'],
+    [`src-${i}`, 'row-selected'],
+    [`src-${i}`, 'bg-panel'],
+    [`src-${i}`, 'bg-raised'],
+  ]),
 ];
 
 function luminance(hex) {

@@ -37,6 +37,7 @@ function line(text: string, fields: [number, number][], extra: Partial<LogLine> 
   return {
     line: 0,
     level: 'INFO',
+    source: 0,
     text,
     isContinuation: false,
     truncated: false,

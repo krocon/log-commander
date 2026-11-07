@@ -3,9 +3,10 @@
 use crate::error::{AppError, AppResult, ErrorCode};
 use crate::filter::{SearchMode, SearchQuery};
 use crate::level::Level;
+use crate::merge::MergeSource;
 use crate::model::{
-    ColumnSet, EntryDetail, EntryRange, FieldPreview, FilterInfo, FindHit, LogLine, SessionInfo,
-    SessionUpdate, Stats,
+    ColumnSet, EntryDetail, EntryRange, FieldPreview, FilterInfo, FindHit, LogLine, MergeCandidate,
+    SessionInfo, SessionUpdate, Stats,
 };
 use crate::profile::Profile;
 use crate::session::{LogSession, OpenOptions, SessionManager};
@@ -56,6 +57,56 @@ pub async fn open_log(
     .await
 }
 
+/// One file of a merge as the dialog sends it; without a profile the suggestion applies.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MergeSourceArg {
+    pub path: String,
+    pub profile_id: Option<String>,
+}
+
+/// Opens 2 to 16 files as one tab, their entries in time order (prompt 006).
+#[tauri::command]
+pub async fn open_merged(
+    app: AppHandle,
+    sources: Vec<MergeSourceArg>,
+    keep_on_rotate: Option<bool>,
+    on_update: Channel<SessionUpdate>,
+) -> AppResult<SessionInfo> {
+    blocking(move || {
+        let manager = app.state::<SessionManager>();
+        let sources = sources
+            .into_iter()
+            .map(|s| {
+                Ok(MergeSource {
+                    path: PathBuf::from(s.path),
+                    profile: s.profile_id.map(|id| manager.profile(&id)).transpose()?,
+                })
+            })
+            .collect::<AppResult<Vec<_>>>()?;
+        let options = OpenOptions {
+            keep_on_rotate: keep_on_rotate.unwrap_or(true),
+        };
+        let sink = Box::new(move |update: SessionUpdate| {
+            let _ = on_update.send(update);
+        });
+        manager.open_merged(sources, options, sink)
+    })
+    .await
+}
+
+/// Profile suggestion, encoding and first/last time of a file, for the merge dialog.
+#[tauri::command]
+pub async fn inspect_merge_source(path: String) -> AppResult<MergeCandidate> {
+    blocking(move || crate::merge::inspect(&PathBuf::from(path))).await
+}
+
+/// Merges all files of a merge again, late entries in their place (new epoch).
+#[tauri::command]
+pub async fn resort(state: State<'_, SessionManager>, session_id: u64) -> AppResult<()> {
+    session(&state, session_id)?.resort()
+}
+
 #[tauri::command]
 pub async fn close_log(app: AppHandle, session_id: u64) -> AppResult<()> {
     blocking(move || app.state::<SessionManager>().close(session_id)).await
@@ -74,6 +125,7 @@ pub async fn get_lines(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn set_filter(
     state: State<'_, SessionManager>,
     session_id: u64,
@@ -82,6 +134,7 @@ pub async fn set_filter(
     is_regex: bool,
     case_sensitive: bool,
     mode: SearchMode,
+    sources: Option<u16>,
 ) -> AppResult<FilterInfo> {
     let session = session(&state, session_id)?;
     let query = SearchQuery {
@@ -89,7 +142,7 @@ pub async fn set_filter(
         is_regex,
         case_sensitive,
     };
-    blocking(move || session.set_filter(&levels, &query, mode)).await
+    blocking(move || session.set_filter_with_sources(&levels, &query, mode, sources)).await
 }
 
 #[tauri::command]

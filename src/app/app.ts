@@ -21,6 +21,7 @@ import { SettingsService } from './core/settings/settings.service';
 import { DetailPanelComponent } from './features/detail/detail-panel';
 import { PANEL_MIN, panelHeight, panelMax } from './features/detail/detail-logic';
 import { LogTableViewComponent } from './features/log-table/log-table-view';
+import { MergeDialogComponent } from './features/merge/merge-dialog';
 import { OpenPathDialogComponent } from './features/open-path/open-path-dialog';
 import { LogSessionService } from './features/sessions/log-session.service';
 import { SettingsDialogComponent } from './features/settings/settings-dialog';
@@ -39,6 +40,7 @@ import { SplitterComponent } from './shared/splitter';
   imports: [
     DetailPanelComponent,
     LogTableViewComponent,
+    MergeDialogComponent,
     OpenPathDialogComponent,
     SettingsDialogComponent,
     SidebarComponent,
@@ -49,7 +51,11 @@ import { SplitterComponent } from './shared/splitter';
     ToolbarComponent,
   ],
   template: `
-    <app-tabs (openFile)="openFile()" (openPath)="pathDialogOpen.set(true)" />
+    <app-tabs
+      (openFile)="openFile()"
+      (openPath)="pathDialogOpen.set(true)"
+      (merge)="mergeDialogOpen.set(true)"
+    />
     <app-toolbar (openSettings)="settingsOpen.set(true)" />
     @if (active(); as session) {
       <div #workspace class="main workspace">
@@ -94,6 +100,7 @@ import { SplitterComponent } from './shared/splitter';
         class="main"
         (openFile)="openFile()"
         (openPath)="pathDialogOpen.set(true)"
+        (merge)="mergeDialogOpen.set(true)"
       />
     }
     <app-status-bar />
@@ -113,6 +120,9 @@ import { SplitterComponent } from './shared/splitter';
     }
     @if (pathDialogOpen()) {
       <app-open-path-dialog (closed)="pathDialogOpen.set(false)" />
+    }
+    @if (mergeDialogOpen()) {
+      <app-merge-dialog (closed)="mergeDialogOpen.set(false)" />
     }
   `,
   styles: `
@@ -182,6 +192,7 @@ export class App implements OnInit, OnDestroy {
   protected readonly active = computed(() => this.sessions.active());
   protected readonly settingsOpen = signal(false);
   protected readonly pathDialogOpen = signal(false);
+  protected readonly mergeDialogOpen = signal(false);
   protected readonly dropActive = signal(false);
 
   // Detail panel (prompt 004): visibility and height are global settings, the height is stored when a
@@ -242,6 +253,7 @@ export class App implements OnInit, OnDestroy {
     await this.sessions.refreshProfiles();
     this.cleanups.push(await listen('menu-open', () => this.openFile()));
     this.cleanups.push(await listen('menu-open-path', () => this.pathDialogOpen.set(true)));
+    this.cleanups.push(await listen('menu-merge', () => this.mergeDialogOpen.set(true)));
     this.cleanups.push(
       await getCurrentWebview().onDragDropEvent((event) => {
         const payload = event.payload;
@@ -307,6 +319,9 @@ export class App implements OnInit, OnDestroy {
       event.preventDefault();
       if (event.shiftKey) this.pathDialogOpen.set(true);
       else void this.openFile();
+    } else if (key === 'm' && event.shiftKey) {
+      event.preventDefault();
+      this.mergeDialogOpen.set(true);
     } else if (key === 'w') {
       event.preventDefault();
       const id = this.sessions.activeId();

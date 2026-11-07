@@ -14,13 +14,18 @@ export interface TreeSession {
   levels: ReadonlySet<Level>;
   query: SearchQuery;
   mode: SearchMode;
+  /** The files of a merge (prompt 006); they become child nodes. */
+  sources?: readonly { fileName: string; path: string }[];
 }
 
 export type TreeNodeKind =
-  'file' | 'active-filter' | 'filter-levels' | 'filter-query' | 'saved-group' | 'saved';
+  'file' | 'source' | 'active-filter' | 'filter-levels' | 'filter-query' | 'saved-group' | 'saved';
 
 export interface TreeNode {
-  /** Stable across updates: `file:3`, `filter:3`, `levels:3`, `query:3`, `saved`, `saved:<id>`. */
+  /**
+   * Stable across updates: `file:3`, `source:3:1`, `filter:3`, `levels:3`, `query:3`, `saved`,
+   * `saved:<id>`.
+   */
   id: string;
   kind: TreeNodeKind;
   label: string;
@@ -34,6 +39,8 @@ export interface TreeNode {
   setSize: number;
   sessionId: number | null;
   savedId: string | null;
+  /** A source node: its index in the merge. */
+  sourceIndex?: number;
   /** The file of the active tab, or the saved filter the active tab uses right now. */
   current: boolean;
 }
@@ -129,11 +136,13 @@ export function buildTree(
   const active = sessions.find((s) => s.id === activeId) ?? null;
   sessions.forEach((session, index) => {
     const filtered = hasActiveFilter(session.levels, session.query);
+    const sources = session.sources ?? [];
     const fileId = `file:${session.id}`;
-    const fileOpen = filtered && !collapsed.has(fileId);
+    const fileOpen = (filtered || sources.length > 0) && !collapsed.has(fileId);
+    const title = sources.length ? sources.map((s) => s.path).join('\n') : session.path;
     nodes.push({
-      ...base(fileId, 'file', session.fileName, session.path, 1, null),
-      expandable: filtered,
+      ...base(fileId, 'file', session.fileName, title, 1, null),
+      expandable: filtered || sources.length > 0,
       expanded: fileOpen,
       posInSet: index + 1,
       setSize: sessions.length + (saved.length ? 1 : 0),
@@ -141,12 +150,25 @@ export function buildTree(
       current: session.id === activeId,
     });
     if (!fileOpen) return;
+    const level2 = sources.length + (filtered ? 1 : 0);
+    sources.forEach((source, i) => {
+      nodes.push({
+        ...base(`source:${session.id}:${i}`, 'source', source.fileName, source.path, 2, fileId),
+        posInSet: i + 1,
+        setSize: level2,
+        sessionId: session.id,
+        sourceIndex: i,
+      });
+    });
+    if (!filtered) return;
     const filterId = `filter:${session.id}`;
     const filterOpen = !collapsed.has(filterId);
     nodes.push({
       ...base(filterId, 'active-filter', 'Aktiver Filter', 'Filter dieser Datei', 2, fileId),
       expandable: true,
       expanded: filterOpen,
+      posInSet: level2,
+      setSize: level2,
       sessionId: session.id,
     });
     if (!filterOpen) return;

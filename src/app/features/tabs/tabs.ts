@@ -15,7 +15,7 @@ import { LogSessionService } from '../sessions/log-session.service';
             class="title"
             role="tab"
             [attr.aria-selected]="session.id === sessions.activeId()"
-            [title]="session.path"
+            [title]="session.title"
             (click)="sessions.activate(session.id)"
           >
             <app-session-marks [session]="session" />
@@ -43,6 +43,14 @@ import { LogSessionService } from '../sessions/log-session.service';
       (click)="openPath.emit()"
     >
       Pfad …
+    </button>
+    <button
+      type="button"
+      class="open"
+      title="Mehrere Dateien nach Zeit zusammenführen (⌘/Strg+⇧+M)"
+      (click)="merge.emit()"
+    >
+      Zusammenführen …
     </button>
   `,
   styles: `
@@ -99,4 +107,5 @@ export class TabsComponent {
   protected readonly sessions = inject(LogSessionService);
   readonly openFile = output<void>();
   readonly openPath = output<void>();
+  readonly merge = output<void>();
 }

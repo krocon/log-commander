@@ -101,6 +101,19 @@ await dark.waitForTimeout(350);
 await dark.click('button[title=Einstellungen]');
 await dark.waitForTimeout(150);
 await shot(dark, 'settings');
+await dark.keyboard.press('Escape');
+await dark.waitForTimeout(150);
+
+// Merge (prompt 006): both open files ticked in the dialog, then one tab in time order, the source in the gutter.
+await dark.keyboard.press('Meta+Shift+M');
+await dark.waitForSelector('app-merge-dialog dialog[open]');
+for (const box of await dark.$$('app-merge-dialog .open-tab input')) await box.check();
+await dark.waitForTimeout(300);
+await shot(dark, 'merge-dialog');
+await dark.click('app-merge-dialog button[type=submit]');
+await dark.waitForSelector('.lt-gutter.lt-src');
+await dark.waitForTimeout(300);
+await shot(dark, 'merge');
 
 const light = await page(browser, { theme: 'light' });
 await light.click('.tab .title >> text=app.log');

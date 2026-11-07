@@ -5,15 +5,17 @@ use crate::encoding::{display_text, strip_ansi, Encoding};
 use crate::error::{AppError, AppResult, ErrorCode};
 use crate::fields::{self, FormatGuess};
 use crate::filter::{
-    FilterCheckpoint, FilterSpec, FilteredLines, LevelMask, SearchMode, SearchQuery, TextMatcher,
+    FilterCheckpoint, FilterSpec, FilteredLines, LevelMask, SearchMode, SearchQuery, SourceMask,
+    TextMatcher,
 };
 use crate::indexer::{
-    LineEntry, LineIndex, LineReader, Segment, MAX_DISPLAY_BYTES, MAX_SEARCH_BYTES,
+    segment_of, LineEntry, LineIndex, LineReader, Segment, MAX_DISPLAY_BYTES, MAX_SEARCH_BYTES,
 };
 use crate::level::{Level, LevelDetector, PrevLine};
+use crate::merge::{MergeSource, MergeWorker};
 use crate::model::{
     ColumnSet, EntryDetail, EntryRange, FilterInfo, FindHit, LogLine, SessionInfo, SessionUpdate,
-    Status,
+    SourceInfo, SourceUpdate, Status,
 };
 use crate::platform::open_shared;
 use crate::profile::{Profile, ProfileRegistry};
@@ -100,9 +102,53 @@ pub struct SessionData {
     pub frozen_stale: bool,
     /// Something changed that the frontend has not heard of.
     pub dirty: bool,
+    /// The sources of a merge (empty for a single file).
+    pub sources: Vec<SourceUpdate>,
+    /// The user asked to merge everything again ("Neu sortieren").
+    pub resort_requested: bool,
 }
 
 impl SessionData {
+    fn new(detector: Arc<LevelDetector>, profile_id: String, file_size: u64, keep: bool) -> Self {
+        let spec = FilterSpec::default();
+        Self {
+            index: LineIndex::default(),
+            filter: FilteredLines::new(spec.clone()),
+            requested_spec: spec,
+            segments: Vec::new(),
+            encoding: Encoding::Utf8,
+            detector,
+            profile_id,
+            chosen_profile: None,
+            profile_auto: true,
+            suggested_profile: None,
+            relevel_needed: false,
+            format: Arc::new(FormatGuess::none()),
+            requested_format: None,
+            columns_revision: 0,
+            sample: Arc::new(Vec::new()),
+            prev: PrevLine::default(),
+            provisional: None,
+            epoch: 0,
+            view_generation: 0,
+            filter_pending: false,
+            filter_progress: 0.0,
+            status: Status::Loading { progress: 0.0 },
+            file_size,
+            keep_on_rotate: keep,
+            frozen: false,
+            pending_bytes: 0,
+            frozen_stale: false,
+            dirty: true,
+            sources: Vec::new(),
+            resort_requested: false,
+        }
+    }
+
+    pub fn is_merge(&self) -> bool {
+        !self.sources.is_empty()
+    }
+
     /// Removes the provisional last line, if there is one.
     pub fn retract_provisional(&mut self) {
         if let Some(provisional) = self.provisional.take() {
@@ -157,6 +203,7 @@ impl SessionData {
             frozen: self.frozen,
             pending_bytes: self.pending_bytes,
             frozen_stale: self.frozen_stale,
+            sources: self.sources.clone(),
         }
     }
 }
@@ -174,6 +221,18 @@ pub struct Shared {
 }
 
 impl Shared {
+    fn new(data: SessionData, wake: Sender<()>, sink: UpdateSink) -> Self {
+        Self {
+            data: RwLock::new(data),
+            job_generation: AtomicU64::new(0),
+            view_counter: AtomicU64::new(0),
+            find_generation: AtomicU64::new(0),
+            shutdown: AtomicBool::new(false),
+            wake,
+            sink,
+        }
+    }
+
     pub fn next_view_generation(&self) -> u64 {
         self.view_counter.fetch_add(1, Ordering::SeqCst) + 1
     }
@@ -186,10 +245,12 @@ impl Shared {
 
 pub struct LogSession {
     pub id: u64,
+    /// Empty for a merge: its files are in `sources`.
     pub path: PathBuf,
+    sources: Vec<SourceInfo>,
     shared: Arc<Shared>,
     worker: Mutex<Option<JoinHandle<()>>>,
-    _watcher: Option<notify::RecommendedWatcher>,
+    _watchers: Vec<notify::RecommendedWatcher>,
 }
 
 impl LogSession {
@@ -212,47 +273,14 @@ impl LogSession {
         }
         let file = open_shared(&path).map_err(|e| AppError::from_io(&e, &path))?;
         let detector = Arc::new(default_profile.detector()?);
-        let spec = FilterSpec::default();
-        let data = SessionData {
-            index: LineIndex::default(),
-            filter: FilteredLines::new(spec.clone()),
-            requested_spec: spec,
-            segments: Vec::new(),
-            encoding: Encoding::Utf8,
+        let data = SessionData::new(
             detector,
-            profile_id: default_profile.id.clone(),
-            chosen_profile: None,
-            profile_auto: true,
-            suggested_profile: None,
-            relevel_needed: false,
-            format: Arc::new(FormatGuess::none()),
-            requested_format: None,
-            columns_revision: 0,
-            sample: Arc::new(Vec::new()),
-            prev: PrevLine::default(),
-            provisional: None,
-            epoch: 0,
-            view_generation: 0,
-            filter_pending: false,
-            filter_progress: 0.0,
-            status: Status::Loading { progress: 0.0 },
-            file_size: meta.len(),
-            keep_on_rotate: options.keep_on_rotate,
-            frozen: false,
-            pending_bytes: 0,
-            frozen_stale: false,
-            dirty: true,
-        };
+            default_profile.id.clone(),
+            meta.len(),
+            options.keep_on_rotate,
+        );
         let (wake, wake_rx): (Sender<()>, Receiver<()>) = channel();
-        let shared = Arc::new(Shared {
-            data: RwLock::new(data),
-            job_generation: AtomicU64::new(0),
-            view_counter: AtomicU64::new(0),
-            find_generation: AtomicU64::new(0),
-            shutdown: AtomicBool::new(false),
-            wake,
-            sink,
-        });
+        let shared = Arc::new(Shared::new(data, wake, sink));
         let mut tailer = Tailer::new(Arc::clone(&shared), path.clone(), file)
             .map_err(|e| AppError::from_io(&e, &path))?;
         tailer
@@ -266,27 +294,91 @@ impl LogSession {
         Ok(Self {
             id,
             path,
+            sources: Vec::new(),
             shared,
             worker: Mutex::new(Some(worker)),
-            _watcher: watcher,
+            _watchers: watcher.into_iter().collect(),
         })
+    }
+
+    /// Opens several files as one session, their entries in time order (prompt 006). Checks every
+    /// file first (exists, timestamps in the first lines), so an error names the file.
+    pub fn open_merged(
+        id: u64,
+        sources: Vec<MergeSource>,
+        options: OpenOptions,
+        sink: UpdateSink,
+    ) -> AppResult<Self> {
+        let worker = MergeWorker::prepare(sources)?;
+        let first = worker.first_profile();
+        let mut data = SessionData::new(
+            Arc::new(first.detector()?),
+            first.id.clone(),
+            worker.total_size(),
+            options.keep_on_rotate,
+        );
+        worker.init_data(&mut data);
+        let infos = worker.infos();
+        let paths = worker.paths();
+        let (wake, wake_rx): (Sender<()>, Receiver<()>) = channel();
+        let shared = Arc::new(Shared::new(data, wake, sink));
+        let watchers = paths
+            .iter()
+            .filter_map(|p| crate::tail::watch_parent(p, shared.wake.clone()))
+            .collect();
+        let worker_shared = Arc::clone(&shared);
+        let handle = thread::Builder::new()
+            .name(format!("merge-{id}"))
+            .spawn(move || worker.run(worker_shared, wake_rx))
+            .map_err(|e| AppError::new(ErrorCode::Io, e.to_string()))?;
+        Ok(Self {
+            id,
+            path: PathBuf::new(),
+            sources: infos,
+            shared,
+            worker: Mutex::new(Some(handle)),
+            _watchers: watchers,
+        })
+    }
+
+    fn is_merge(&self) -> bool {
+        !self.sources.is_empty()
     }
 
     pub fn info(&self) -> SessionInfo {
         let data = self.shared.data.read();
+        let file_name = if self.is_merge() {
+            self.sources
+                .iter()
+                .map(|s| s.file_name.as_str())
+                .collect::<Vec<_>>()
+                .join(" + ")
+        } else {
+            self.path
+                .file_name()
+                .map_or_else(String::new, |n| n.to_string_lossy().into_owned())
+        };
         SessionInfo {
             session_id: self.id,
             path: self.path.display().to_string(),
-            file_name: self
-                .path
-                .file_name()
-                .map_or_else(String::new, |n| n.to_string_lossy().into_owned()),
+            file_name,
             suggested_profile_id: data
                 .suggested_profile
                 .clone()
                 .unwrap_or_else(|| data.profile_id.clone()),
             update: data.update(),
+            sources: self.sources.clone(),
         }
+    }
+
+    /// Merges all sources again from the start (late entries in place), as a new epoch.
+    pub fn resort(&self) -> AppResult<()> {
+        if !self.is_merge() {
+            return Err(AppError::new(ErrorCode::InvalidMerge, "not a merge"));
+        }
+        self.shared.data.write().resort_requested = true;
+        self.shared.wake();
+        Ok(())
     }
 
     pub fn stats(&self) -> SessionUpdate {
@@ -356,6 +448,7 @@ impl LogSession {
             out.push(LogLine {
                 line,
                 level: entry.level(),
+                source: entry.source() as u8,
                 text,
                 is_continuation: entry.is_continuation(),
                 truncated,
@@ -374,6 +467,17 @@ impl LogSession {
         query: &SearchQuery,
         mode: SearchMode,
     ) -> AppResult<FilterInfo> {
+        self.set_filter_with_sources(levels, query, mode, None)
+    }
+
+    /// Like `set_filter`, plus the visible sources of a merge (bit = source index).
+    pub fn set_filter_with_sources(
+        &self,
+        levels: &[Level],
+        query: &SearchQuery,
+        mode: SearchMode,
+        sources: Option<u16>,
+    ) -> AppResult<FilterInfo> {
         let matcher = if query.text.is_empty() {
             None
         } else {
@@ -383,6 +487,18 @@ impl LogSession {
             levels: LevelMask::from_levels(levels),
             matcher,
             mode,
+            // Bits beyond the sources of the merge mean nothing: all of them set is no filter.
+            sources: match sources {
+                Some(mask) if self.is_merge() => {
+                    let all = (1u32 << self.sources.len()) - 1;
+                    if u32::from(mask) & all == all {
+                        SourceMask::ALL
+                    } else {
+                        SourceMask(mask)
+                    }
+                }
+                _ => SourceMask::ALL,
+            },
         };
         self.shared.data.write().requested_spec = spec;
         Ok(self.start_job())
@@ -403,6 +519,13 @@ impl LogSession {
     /// A chosen profile wins over the suggestion, for the levels and for the layout. The new
     /// columns apply when the levels are recomputed, together with a new view generation.
     pub fn set_profile(&self, profile: &Profile) -> AppResult<FilterInfo> {
+        if self.is_merge() {
+            // Every source has its own profile, chosen in the merge dialog.
+            return Err(AppError::new(
+                ErrorCode::InvalidMerge,
+                "the profiles of a merge are chosen per file when merging",
+            ));
+        }
         let detector = Arc::new(profile.detector()?);
         let sample = Arc::clone(&self.shared.data.read().sample);
         let refs: Vec<&str> = sample.iter().map(String::as_str).collect();
@@ -609,7 +732,7 @@ impl LogSession {
             let (first, last) = range_of(entries, line as usize);
             (first, entries[first..=last].to_vec(), data.segments.clone())
         };
-        let mut reader = LineReader::new(segments, SCAN_BLOCK);
+        let mut reader = LineReader::new(segments.clone(), SCAN_BLOCK);
         let mut text = String::new();
         let mut truncated = false;
         for (i, entry) in lines.iter().enumerate() {
@@ -642,6 +765,8 @@ impl LogSession {
             }
         }
         let first_entry = lines[0];
+        let byte_offset =
+            segment_of(&segments, first_entry.offset).map_or(0, |s| first_entry.offset - s.base);
         Ok(EntryDetail {
             first: first as u32,
             last: (first + lines.len() - 1) as u32,
@@ -650,6 +775,8 @@ impl LogSession {
             total_bytes: lines.iter().map(|e| u64::from(e.len)).sum(),
             text,
             truncated,
+            source: first_entry.source() as u8,
+            byte_offset,
         })
     }
 
@@ -944,15 +1071,20 @@ fn feed(
     matcher: Option<&TextMatcher>,
     needs_text: bool,
 ) {
-    builder.append(entry.level(), entry.is_continuation(), || {
-        if !needs_text {
-            return true;
-        }
-        let Some(matcher) = matcher else { return true };
-        reader
-            .raw(entry, MAX_SEARCH_BYTES)
-            .is_ok_and(|(raw, encoding)| matcher.is_match(&display_text(raw, encoding)))
-    });
+    builder.append_from(
+        entry.source(),
+        entry.level(),
+        entry.is_continuation(),
+        || {
+            if !needs_text {
+                return true;
+            }
+            let Some(matcher) = matcher else { return true };
+            reader
+                .raw(entry, MAX_SEARCH_BYTES)
+                .is_ok_and(|(raw, encoding)| matcher.is_match(&display_text(raw, encoding)))
+        },
+    );
 }
 
 /// The open sessions and the profiles they can use (Tauri state).
@@ -982,6 +1114,19 @@ impl SessionManager {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let default_profile = self.profiles.read().find(crate::profile::GENERIC_PROFILE)?;
         let session = LogSession::open(id, path, options, &default_profile, sink)?;
+        let info = session.info();
+        self.sessions.write().insert(id, Arc::new(session));
+        Ok(info)
+    }
+
+    pub fn open_merged(
+        &self,
+        sources: Vec<MergeSource>,
+        options: OpenOptions,
+        sink: UpdateSink,
+    ) -> AppResult<SessionInfo> {
+        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+        let session = LogSession::open_merged(id, sources, options, sink)?;
         let info = session.info();
         self.sessions.write().insert(id, Arc::new(session));
         Ok(info)

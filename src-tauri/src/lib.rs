@@ -7,6 +7,7 @@
 //! - `level`, `profile`: level detection
 //! - `fields`, `timestamp`: format detection, fields of a line, timestamps
 //! - `filter`: filtered line list, text search
+//! - `merge`: several files as one session, in time order
 //! - `commands`: the thin Tauri command layer; everything else is free of Tauri
 
 pub mod commands;
@@ -18,6 +19,7 @@ pub mod fields;
 pub mod filter;
 pub mod indexer;
 pub mod level;
+pub mod merge;
 pub mod model;
 pub mod platform;
 pub mod profile;
@@ -31,6 +33,7 @@ use tauri::Emitter;
 
 const MENU_OPEN: &str = "open-log";
 const MENU_OPEN_PATH: &str = "open-log-path";
+const MENU_MERGE: &str = "merge-logs";
 
 pub fn run() {
     let builder = tauri::Builder::default();
@@ -55,10 +58,15 @@ pub fn run() {
                 let _ = app.emit("menu-open", ());
             } else if event.id() == MENU_OPEN_PATH {
                 let _ = app.emit("menu-open-path", ());
+            } else if event.id() == MENU_MERGE {
+                let _ = app.emit("menu-merge", ());
             }
         })
         .invoke_handler(tauri::generate_handler![
             commands::open_log,
+            commands::open_merged,
+            commands::inspect_merge_source,
+            commands::resort,
             commands::close_log,
             commands::get_lines,
             commands::set_filter,
@@ -83,7 +91,7 @@ pub fn run() {
         .expect("error while running Log Commander");
 }
 
-/// The platform's default menu plus File → Open… and Open Path…
+/// The platform's default menu plus File → Open…, Open Path… and Merge Files…
 fn build_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<Menu<R>> {
     let menu = Menu::default(app)?;
     let open = MenuItem::with_id(app, MENU_OPEN, "Open…", true, Some("CmdOrCtrl+O"))?;
@@ -94,16 +102,24 @@ fn build_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<Men
         true,
         Some("CmdOrCtrl+Shift+O"),
     )?;
+    let merge = MenuItem::with_id(
+        app,
+        MENU_MERGE,
+        "Merge Files…",
+        true,
+        Some("CmdOrCtrl+Shift+M"),
+    )?;
     let file = menu.items()?.into_iter().find_map(|item| {
         let submenu = item.as_submenu()?;
         (submenu.text().ok()? == "File").then(|| submenu.clone())
     });
     match file {
-        Some(file) => file.insert_items(&[&open, &open_path], 0)?,
+        Some(file) => file.insert_items(&[&open, &open_path, &merge], 0)?,
         None => menu.append(
             &SubmenuBuilder::new(app, "File")
                 .item(&open)
                 .item(&open_path)
+                .item(&merge)
                 .build()?,
         )?,
     }
