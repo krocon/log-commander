@@ -1,3 +1,4 @@
+import { emptyTree } from '../../features/sessions/filter-tree';
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_SETTINGS, MAX_RECENT_FILES, addRecent, mergeSettings } from './settings.models';
 
@@ -130,6 +131,8 @@ describe('settings', () => {
         levels: ['ERROR'],
         query: { text: 'x', isRegex: false, caseSensitive: false },
         mode: 'filter',
+        version: 2,
+        tree: emptyTree(),
       },
       {
         id: 'c',
@@ -137,8 +140,50 @@ describe('settings', () => {
         levels: ['UNKNOWN', 'TRACE', 'DEBUG', 'INFO', 'WARN', 'ERROR', 'FATAL'],
         query: { text: '(', isRegex: true, caseSensitive: false },
         mode: 'highlight',
+        version: 2,
+        tree: emptyTree(),
       },
     ]);
+  });
+
+  it('turns saved filters of prompt 005 into version 2 with an empty tree and keeps a saved tree', () => {
+    const tree = {
+      kind: 'group',
+      id: 'root',
+      op: 'or',
+      negate: false,
+      enabled: true,
+      children: [
+        {
+          kind: 'cond',
+          id: 'x',
+          negate: true,
+          enabled: false,
+          cond: { type: 'text', text: 'retry', isRegex: false, caseSensitive: false },
+        },
+        { kind: 'cond', id: 'bad', cond: { type: 'nope' } },
+        { kind: 'cond', id: 'x', cond: { type: 'lines', first: 3 } },
+      ],
+    };
+    const [old, current] = mergeSettings({
+      savedFilters: [
+        { id: 'a', name: 'Alt', levels: ['ERROR'], query: { text: 'x' }, mode: 'filter' },
+        { id: 'b', name: 'Neu', levels: ['ERROR'], query: {}, mode: 'filter', version: 2, tree },
+      ] as never,
+    }).savedFilters;
+    expect(old.version).toBe(2);
+    expect(old.tree).toEqual(emptyTree());
+    // Nothing of prompt 005 is lost.
+    expect(old.levels).toEqual(['ERROR']);
+    expect(old.query.text).toBe('x');
+    expect(current.tree.op).toBe('or');
+    expect(current.tree.children.length).toBe(2);
+    expect(current.tree.children[0]).toMatchObject({ id: 'x', negate: true, enabled: false });
+    // A duplicate id gets a new one.
+    expect(current.tree.children[1].id).not.toBe('x');
+    expect(current.tree.children[1]).toMatchObject({
+      cond: { type: 'lines', first: 3, last: null },
+    });
   });
 
   it('shows the overview ruler unless it was switched off', () => {

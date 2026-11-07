@@ -54,12 +54,33 @@
       });
   }
 
+  // Filter tree (prompt 010), simplified for the screenshots: per line, not per entry; text, level and
+  // line numbers, everything else counts as fulfilled.
+  function holds(expr, line) {
+    if (!expr) return true;
+    let value;
+    if (expr.kind === 'group') {
+      value =
+        expr.op === 'and'
+          ? expr.children.every((c) => holds(c, line))
+          : expr.children.some((c) => holds(c, line));
+    } else {
+      const c = expr.cond;
+      if (c.type === 'text') value = line.text.toLowerCase().includes(c.text.toLowerCase());
+      else if (c.type === 'level') value = c.levels.includes(line.level);
+      else if (c.type === 'lines') value = line.line >= (c.first ?? 0) && line.line <= (c.last ?? Infinity);
+      else value = true;
+    }
+    return value !== !!expr.negate;
+  }
+
   function visible(session) {
-    const { levels, search, mode } = session.filter;
+    const { levels, search, mode, expr } = session.filter;
     return session.lines.filter(
       (l) =>
         levels.includes(l.level) &&
-        (mode !== 'filter' || !search || l.text.toLowerCase().includes(search.toLowerCase())),
+        (mode !== 'filter' || !search || l.text.toLowerCase().includes(search.toLowerCase())) &&
+        holds(expr, l),
     );
   }
 
@@ -237,9 +258,9 @@
         .slice(start, start + count)
         .map((line) => withMatches(line, search));
     },
-    set_filter({ sessionId, levels, search, mode }) {
+    set_filter({ sessionId, levels, search, mode, expr }) {
       const session = sessions.get(sessionId);
-      session.filter = { levels, search, mode };
+      session.filter = { levels, search, mode, expr: expr ?? null };
       session.generation++;
       callbacks.get(session.channel)?.({ message: update(session), index: session.sent++ });
       return { viewGeneration: session.generation, pending: false, filteredLines: 0 };

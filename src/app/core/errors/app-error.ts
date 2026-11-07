@@ -18,6 +18,8 @@ export interface AppError {
   code: ErrorCode;
   message: string;
   path?: string;
+  /** The node of a filter expression the error is about (prompt 010). */
+  nodeId?: string;
 }
 
 export function toAppError(e: unknown): AppError {

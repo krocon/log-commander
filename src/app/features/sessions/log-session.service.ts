@@ -1,6 +1,7 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { LogApi } from '../../core/log/log-api';
 import {
+  FilterCond,
   FilterInfo,
   Level,
   MergeSourceSpec,
@@ -15,6 +16,18 @@ import { AppError, describeError, toAppError } from '../../core/errors/app-error
 import { SettingsService } from '../../core/settings/settings.service';
 import { SessionState } from './session-state';
 import { fullLogOf, nextBookmark, toggleBookmark } from './navigation-logic';
+import {
+  FilterGroupNode,
+  ROOT_ID,
+  addNode,
+  compileTree,
+  condNode,
+  emptyTree,
+  sanitizeTree,
+} from './filter-tree';
+
+/** Changes of the filter tree in a row are bundled into one filter job. */
+export const TREE_DEBOUNCE_MS = 150;
 
 /** Levels `E` and `W` jump to: errors, or warnings and worse. */
 const ERROR_LEVELS: readonly Level[] = ['ERROR', 'FATAL'];
@@ -107,6 +120,8 @@ export class LogSessionService {
       else early.push(update);
     });
     state = new SessionState(info, this.api);
+    const created = state;
+    created.onColumnsChanged = () => void this.applyFilter(created, true);
     for (const update of early) state.applyUpdate(update);
     this.sessions.update((all) => [...all, state as SessionState]);
     this.activate(state.id);
@@ -178,11 +193,18 @@ export class LogSessionService {
    */
   async applyPreset(
     session: SessionState,
-    preset: { levels: Iterable<Level>; query: SearchQuery; mode: SearchMode },
+    preset: {
+      levels: Iterable<Level>;
+      query: SearchQuery;
+      mode: SearchMode;
+      tree?: FilterGroupNode;
+    },
   ): Promise<void> {
     session.levels.set(new Set(preset.levels));
     session.query.set({ ...preset.query });
     session.searchMode.set(preset.mode);
+    // A copy: editing the tree of the tab must not change the saved one.
+    session.filterTree.set(preset.tree ? sanitizeTree(structuredClone(preset.tree)) : emptyTree());
     session.currentHitLine.set(null);
     session.presetRevision.update((r) => r + 1);
     await this.applyFilter(session);
@@ -205,6 +227,8 @@ export class LogSessionService {
    */
   private async applyFilter(session: SessionState, keep = false): Promise<FilterInfo | null> {
     if (!keep) session.keptFilter.set(null);
+    this.cancelTreeTimer(session);
+    const expr = compileTree(session.filterTree());
     try {
       const info = await this.api.setFilter(
         session.id,
@@ -212,15 +236,104 @@ export class LogSessionService {
         session.query(),
         session.searchMode(),
         maskForBackend(session.sourceMask(), session.sources.length),
+        expr,
       );
       session.searchError.set(null);
+      session.treeError.set(null);
       return info;
     } catch (e) {
       const err = toAppError(e);
-      if (err.code === 'invalid_search') session.searchError.set(err.message);
-      else this.showError(err);
+      if (err.code === 'invalid_search' && err.nodeId) {
+        session.treeError.set({ nodeId: err.nodeId, message: err.message });
+      } else if (err.code === 'invalid_search') {
+        session.searchError.set(err.message);
+      } else {
+        this.showError(err);
+      }
       return null;
     }
+  }
+
+  // ---------------------------------------------------------------- filter tree (prompt 010)
+
+  private readonly treeTimers = new Map<SessionState, ReturnType<typeof setTimeout>>();
+
+  private cancelTreeTimer(session: SessionState): void {
+    const timer = this.treeTimers.get(session);
+    if (timer !== undefined) clearTimeout(timer);
+    this.treeTimers.delete(session);
+  }
+
+  /**
+   * A new tree for the tab. Changes in a row (typing in the form, several clicks) start one filter job
+   * after `TREE_DEBOUNCE_MS`; a running job is cancelled by the backend's generation anyway.
+   */
+  setTree(session: SessionState, tree: FilterGroupNode): void {
+    session.filterTree.set(tree);
+    session.keptFilter.set(null);
+    this.cancelTreeTimer(session);
+    this.treeTimers.set(
+      session,
+      setTimeout(() => {
+        this.treeTimers.delete(session);
+        void this.applyFilter(session);
+      }, TREE_DEBOUNCE_MS),
+    );
+  }
+
+  /** Adds a condition to the group `parentId` (default the top) and returns the new node's id. */
+  addCondition(
+    session: SessionState,
+    cond: FilterCond,
+    options: { parentId?: string; negate?: boolean } = {},
+  ): string {
+    const node = condNode(cond, options.negate ?? false);
+    this.setTree(session, addNode(session.filterTree(), options.parentId ?? ROOT_ID, node));
+    return node.id;
+  }
+
+  /** Quick way: text marked in a line (context menu, `I`). Literal, ignoring case. */
+  filterOnText(session: SessionState, text: string, negate = false): void {
+    // A selection over several rows: the first line of it (a condition looks at one line).
+    const first = text.split(/\r?\n/).find((l) => l.trim()) ?? '';
+    const trimmed = first.trim().slice(0, 4096);
+    if (!trimmed) {
+      this.showFindMessage(session, 'Kein Text markiert');
+      return;
+    }
+    this.addCondition(
+      session,
+      { type: 'text', text: trimmed, isRegex: false, caseSensitive: false },
+      { negate },
+    );
+    this.showFindMessage(session, `Gefiltert auf „${trimmed.slice(0, 40)}“`);
+  }
+
+  /** Quick way: the section from the selected entry on, or up to its end (line numbers). */
+  filterSection(session: SessionState, edge: 'from' | 'to'): void {
+    const selection = session.selection();
+    if (!selection) {
+      this.showFindMessage(session, 'Keine Zeile gewählt');
+      return;
+    }
+    this.addCondition(
+      session,
+      edge === 'from'
+        ? { type: 'lines', first: selection.first, last: null }
+        : { type: 'lines', first: null, last: selection.last },
+    );
+  }
+
+  /** Quick way with columns (prompt 009): the value of a cell. */
+  filterByValue(session: SessionState, column: string, value: string): void {
+    this.addCondition(session, {
+      type: 'field',
+      column,
+      op: 'eq',
+      value: value.trim().slice(0, 4096),
+      value2: null,
+      caseSensitive: false,
+    });
   }
 
   /**
@@ -243,6 +356,7 @@ export class LogSessionService {
       query: session.query(),
       mode: session.searchMode(),
       sourceMask: session.sourceMask(),
+      tree: session.filterTree(),
     };
     await this.switchFilter(session, fullLogOf(kept), selection.anchor);
     session.keptFilter.set(kept);
@@ -269,6 +383,7 @@ export class LogSessionService {
       query: SearchQuery;
       mode: SearchMode;
       sourceMask: number;
+      tree: FilterGroupNode;
     },
     reveal: number | null,
   ): Promise<void> {
@@ -276,6 +391,7 @@ export class LogSessionService {
     session.query.set(filter.query);
     session.searchMode.set(filter.mode);
     session.sourceMask.set(filter.sourceMask);
+    session.filterTree.set(filter.tree);
     session.presetRevision.update((r) => r + 1);
     if (reveal !== null) {
       session.setFollow(false);

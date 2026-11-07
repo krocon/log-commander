@@ -3,10 +3,10 @@ import { signal } from '@angular/core';
 import { describe, expect, it, vi } from 'vitest';
 import { AppError } from '../../core/errors/app-error';
 import { LogApi } from '../../core/log/log-api';
-import { SessionInfo, SessionUpdate } from '../../core/log/log.models';
+import { FilterExpr, SessionInfo, SessionUpdate } from '../../core/log/log.models';
 import { DEFAULT_SETTINGS } from '../../core/settings/settings.models';
 import { SettingsService } from '../../core/settings/settings.service';
-import { LogSessionService } from './log-session.service';
+import { LogSessionService, TREE_DEBOUNCE_MS } from './log-session.service';
 import { SessionState } from './session-state';
 import { ALL_LEVELS } from './filter-logic';
 
@@ -51,7 +51,7 @@ describe('LogSessionService.applyPreset', () => {
     const query = { text: 'timeout', isRegex: false, caseSensitive: true };
     await service.applyPreset(session, { levels: ['WARN', 'ERROR'], query, mode: 'highlight' });
     expect(setFilter).toHaveBeenCalledTimes(1);
-    expect(setFilter).toHaveBeenCalledWith(1, ['WARN', 'ERROR'], query, 'highlight', null);
+    expect(setFilter).toHaveBeenCalledWith(1, ['WARN', 'ERROR'], query, 'highlight', null, null);
     expect([...session.levels()]).toEqual(['WARN', 'ERROR']);
     expect(session.query()).toEqual(query);
     expect(session.searchMode()).toBe('highlight');
@@ -144,7 +144,14 @@ describe('LogSessionService.openMerged', () => {
     await service.openMerged([{ path: '/a.log' }, { path: '/b.log' }]);
     const tab = service.active()!;
     await service.setSources(tab, 0b10);
-    expect(setFilter).toHaveBeenLastCalledWith(7, expect.any(Array), tab.query(), 'filter', 0b10);
+    expect(setFilter).toHaveBeenLastCalledWith(
+      7,
+      expect.any(Array),
+      tab.query(),
+      'filter',
+      0b10,
+      null,
+    );
   });
 });
 
@@ -159,14 +166,14 @@ describe('LogSessionService full log and back (prompt 007)', () => {
 
     await service.toggleFullLog(session);
     expect(setFilter).toHaveBeenCalledTimes(1);
-    expect(setFilter).toHaveBeenLastCalledWith(1, [...ALL_LEVELS], query, 'highlight', null);
+    expect(setFilter).toHaveBeenLastCalledWith(1, [...ALL_LEVELS], query, 'highlight', null, null);
     expect(session.keptFilter()?.mode).toBe('filter');
     expect(session.pendingReveal).toBe(12);
     expect(session.selection()?.anchor).toBe(12);
     expect(session.filterActive()).toBe(false);
 
     await service.toggleFullLog(session);
-    expect(setFilter).toHaveBeenLastCalledWith(1, ['ERROR'], query, 'filter', null);
+    expect(setFilter).toHaveBeenLastCalledWith(1, ['ERROR'], query, 'filter', null, null);
     expect(session.keptFilter()).toBeNull();
     expect(session.selection()?.anchor).toBe(12);
   });
@@ -199,5 +206,75 @@ describe('LogSessionService full log and back (prompt 007)', () => {
     expect([...session.bookmarks()]).toEqual([8]);
     service.toggleBookmark(session);
     expect(session.bookmarks().size).toBe(0);
+  });
+});
+
+/** The expression of the last (or n-th) `setFilter` call. */
+const exprOf = (setFilter: { mock: { calls: unknown[][] } }, call = -1): FilterExpr | null =>
+  setFilter.mock.calls.at(call)?.[5] as FilterExpr | null;
+
+describe('LogSessionService filter tree (prompt 010)', () => {
+  it('bundles changes in a row into one filter job with the expression', async () => {
+    vi.useFakeTimers();
+    try {
+      const { service, session, setFilter } = setup();
+      service.filterOnText(session, 'req-42\nsecond line');
+      service.filterOnText(session, 'timeout', true);
+      expect(setFilter).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(TREE_DEBOUNCE_MS);
+      expect(setFilter).toHaveBeenCalledTimes(1);
+      const expr = exprOf(setFilter, 0);
+      expect(expr).toMatchObject({
+        kind: 'group',
+        children: [
+          { negate: false, cond: { type: 'text', text: 'req-42' } },
+          { negate: true, cond: { type: 'text', text: 'timeout' } },
+        ],
+      });
+      expect(session.filterActive()).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('puts an error that names a node at the tree, not at the search field', async () => {
+    const error: AppError = { code: 'invalid_search', message: 'bad regex', nodeId: 'n1' };
+    const { service, session } = setup(vi.fn(() => Promise.reject(error)));
+    await service.setLevels(session, ALL_LEVELS);
+    expect(session.treeError()).toEqual({ nodeId: 'n1', message: 'bad regex' });
+    expect(session.searchError()).toBeNull();
+  });
+
+  it('sections from the selection use its first and last line', async () => {
+    vi.useFakeTimers();
+    try {
+      const { service, session, setFilter } = setup();
+      service.filterSection(session, 'from');
+      expect(service.error()).toBeNull();
+      session.selection.set({ anchor: 10, first: 10, last: 14 });
+      service.filterSection(session, 'from');
+      service.filterSection(session, 'to');
+      await vi.advanceTimersByTimeAsync(TREE_DEBOUNCE_MS);
+      const expr = exprOf(setFilter);
+      expect(expr).toMatchObject({
+        children: [
+          { cond: { type: 'lines', first: 10, last: null } },
+          { cond: { type: 'lines', first: null, last: 14 } },
+        ],
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('G lifts the tree too and brings it back', async () => {
+    const { service, session, setFilter } = setup();
+    service.filterOnText(session, 'x');
+    session.selection.set({ anchor: 3, first: 3, last: 3 });
+    await service.toggleFullLog(session);
+    expect(exprOf(setFilter)).toBeNull();
+    expect(session.filterTree().children.length).toBe(0);
+    await service.toggleFullLog(session);
+    expect(exprOf(setFilter)).toMatchObject({ children: [{ cond: { text: 'x' } }] });
   });
 });

@@ -15,7 +15,7 @@
 use crate::encoding::Encoding;
 use crate::error::{AppError, AppResult, ErrorCode};
 use crate::fields::{self, MAX_PARSE_BYTES};
-use crate::filter::TextMatcher;
+use crate::filter::{Probe, TextTest};
 use crate::indexer::{
     insert_segment, read_at, source_base, LineEntry, LineReader, LineSplitter, Segment,
     MAX_SEARCH_BYTES, MAX_SOURCES,
@@ -26,8 +26,8 @@ use crate::platform::{file_id, open_file_id, open_shared, FileId};
 use crate::profile::{Profile, ProfileRegistry};
 use crate::session::{detection_bytes, SessionData, Shared};
 use crate::tail::{
-    suggest, text_matches, Sample, ACTIVE_FOR, ACTIVE_POLL_INTERVAL, BLOCK_SIZE, EMIT_INTERVAL,
-    MAX_SEGMENTS, MIN_TICK, PARTIAL_COMMIT_AFTER, POLL_INTERVAL, SAMPLE_LINES,
+    suggest, Sample, ACTIVE_FOR, ACTIVE_POLL_INTERVAL, BLOCK_SIZE, EMIT_INTERVAL, MAX_SEGMENTS,
+    MIN_TICK, PARTIAL_COMMIT_AFTER, POLL_INTERVAL, SAMPLE_LINES,
 };
 use crate::timestamp::TimestampParser;
 use std::collections::VecDeque;
@@ -50,11 +50,12 @@ const WRITE_BATCH: usize = 16 * 1024;
 // The pure merge
 // ------------------------------------------------------------------------------------------------
 
-/// A line on its way into the index; `matched` was computed with the matcher numbered `matcher`.
+/// A line on its way into the index; `probe` was computed with the filter's text test numbered
+/// `matcher`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MergedLine {
     pub entry: LineEntry,
-    pub matched: bool,
+    pub probe: Probe,
     pub matcher: u32,
 }
 
@@ -208,7 +209,7 @@ impl Merger {
         offset: u64,
         len: u32,
         text: &[u8],
-        matched: bool,
+        probe: Probe,
         matcher: u32,
         now: Instant,
     ) -> Fed {
@@ -219,7 +220,7 @@ impl Merger {
         let (level, continuation) = s.detector.classify(text, &mut s.prev);
         let line = MergedLine {
             entry: LineEntry::new(offset, len, level, continuation),
-            matched,
+            probe,
             matcher,
         };
         if continuation {
@@ -379,11 +380,11 @@ impl Merger {
     }
 
     /// Changes the matcher number of every waiting line, after the worker checked them again.
-    pub fn rematch(&mut self, mut check: impl FnMut(&LineEntry) -> bool, matcher: u32) {
+    pub fn rematch(&mut self, mut check: impl FnMut(&LineEntry) -> Probe, matcher: u32) {
         for s in &mut self.sources {
             for p in &mut s.queue {
                 for line in std::iter::once(&mut p.head).chain(p.rest.iter_mut()) {
-                    line.matched = check(&line.entry);
+                    line.probe = check(&line.entry);
                     line.matcher = matcher;
                 }
             }
@@ -779,7 +780,7 @@ impl MergeWorker {
             merger: self.merger,
             loading: true,
             load_total: 0,
-            matcher: None,
+            test: TextTest::default(),
             matcher_id: 0,
             out: Vec::new(),
             buf: vec![0; BLOCK_SIZE],
@@ -830,8 +831,8 @@ struct Runner {
     loading: bool,
     /// Bytes the current load has to read.
     load_total: u64,
-    /// The filter's matcher the lines are checked with, and its number.
-    matcher: Option<Arc<TextMatcher>>,
+    /// The filter's text test the lines are checked with, and its number.
+    test: TextTest,
     matcher_id: u32,
     out: Vec<MergedLine>,
     buf: Vec<u8>,
@@ -1072,7 +1073,7 @@ impl Runner {
         let file = &mut self.files[source];
         file.read_pos += n as u64;
         let encoding = file.encoding();
-        let matcher = self.matcher.clone();
+        let test = &self.test;
         let matcher_id = self.matcher_id;
         let merger = &mut self.merger;
         let mut fed = Fed::Ok;
@@ -1081,15 +1082,14 @@ impl Runner {
                 return;
             }
             let text = detection_bytes(raw, encoding);
-            let matched = matcher
-                .as_ref()
-                .is_some_and(|m| text_matches(m, raw, encoding));
+            // The merger classifies the line; field and time leaves are read on every line here.
+            let probe = test.probe_raw(raw, encoding, true);
             fed = merger.line(
                 source,
                 offset,
                 raw.len() as u32,
                 &text,
-                matched,
+                probe,
                 matcher_id,
                 now,
             );
@@ -1128,16 +1128,13 @@ impl Runner {
         };
         let encoding = file.encoding();
         let text = detection_bytes(&raw, encoding);
-        let matched = self
-            .matcher
-            .as_ref()
-            .is_some_and(|m| text_matches(m, &raw, encoding));
+        let probe = self.test.probe_raw(&raw, encoding, true);
         let fed = self.merger.line(
             source,
             offset,
             raw.len() as u32,
             &text,
-            matched,
+            probe,
             self.matcher_id,
             Instant::now(),
         );
@@ -1149,35 +1146,22 @@ impl Runner {
 
     /// A new filter: lines still waiting are checked against it, later ones right away.
     fn refresh_matcher(&mut self) {
-        let now = self
-            .shared
-            .data
-            .read()
-            .filter
-            .spec
-            .filtering_matcher()
-            .cloned();
-        let same = match (&now, &self.matcher) {
-            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
-            (None, None) => true,
-            _ => false,
-        };
-        if same {
+        let now = self.shared.data.read().filter.spec.text_test();
+        if now.same(&self.test) {
             return;
         }
-        self.matcher = now;
+        self.test = now;
         self.matcher_id = self.matcher_id.wrapping_add(1);
         if self.merger.waiting() > 0 {
             let segments = self.shared.data.read().segments.clone();
             let mut reader = LineReader::new(segments, BLOCK_SIZE);
-            let matcher = self.matcher.clone();
+            let test = &self.test;
             self.merger.rematch(
                 |entry| {
-                    matcher.as_ref().is_some_and(|m| {
-                        reader
-                            .raw(entry, MAX_SEARCH_BYTES)
-                            .is_ok_and(|(raw, enc)| text_matches(m, raw, enc))
-                    })
+                    reader.raw(entry, MAX_SEARCH_BYTES).map_or_else(
+                        |_| Probe::default(),
+                        |(raw, enc)| test.probe_raw(raw, enc, !entry.is_continuation()),
+                    )
                 },
                 self.matcher_id,
             );
@@ -1193,32 +1177,29 @@ impl Runner {
                 break;
             }
             let mut data = self.shared.data.write();
-            let filter_matcher = data.filter.spec.filtering_matcher().cloned();
-            let same = match (&filter_matcher, &self.matcher) {
-                (Some(a), Some(b)) => Arc::ptr_eq(a, b),
-                (None, None) => true,
-                _ => false,
-            };
+            let now = data.filter.spec.text_test();
+            let same = now.same(&self.test);
             let mut reader: Option<LineReader> = None;
             for line in &self.out {
                 let entry = line.entry;
-                let matched = if same && line.matcher == self.matcher_id {
-                    line.matched
-                } else if let Some(now) = &filter_matcher {
+                let probe = if same && line.matcher == self.matcher_id {
+                    line.probe
+                } else if now.is_empty() {
+                    Probe::default()
+                } else {
                     // The filter changed since the line was read: look at the text again.
                     let reader = reader
                         .get_or_insert_with(|| LineReader::new(data.segments.clone(), BLOCK_SIZE));
-                    reader
-                        .raw(&entry, MAX_SEARCH_BYTES)
-                        .is_ok_and(|(raw, enc)| text_matches(now, raw, enc))
-                } else {
-                    true
+                    reader.raw(&entry, MAX_SEARCH_BYTES).map_or_else(
+                        |_| Probe::default(),
+                        |(raw, enc)| now.probe_raw(raw, enc, !entry.is_continuation()),
+                    )
                 };
                 data.filter.append_from(
                     entry.source(),
                     entry.level(),
                     entry.is_continuation(),
-                    || matched,
+                    || probe,
                 );
                 data.index.push(entry);
             }
@@ -1461,6 +1442,7 @@ impl Runner {
             }
             data.dirty = false;
             let update = data.update();
+            data.filter.take_retracted();
             // One-shot states: the next update says what comes after.
             if matches!(data.status, Status::Truncated | Status::Rotated) {
                 data.status = if self.loading {
@@ -1521,7 +1503,7 @@ mod tests {
                 base + i as u64,
                 line.len() as u32,
                 line.as_bytes(),
-                false,
+                Probe::default(),
                 0,
                 now,
             );
@@ -1700,13 +1682,21 @@ mod tests {
         let mut m = merger(2);
         m.set_strict(false);
         let now = Instant::now();
-        m.line(0, 0, 1, b"2024-01-01 10:00:05 INFO a", false, 0, now);
+        m.line(
+            0,
+            0,
+            1,
+            b"2024-01-01 10:00:05 INFO a",
+            Probe::default(),
+            0,
+            now,
+        );
         m.line(
             1,
             source_base(1),
             1,
             b"2024-01-01 10:00:09 INFO b",
-            false,
+            Probe::default(),
             0,
             now,
         );

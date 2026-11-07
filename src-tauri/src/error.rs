@@ -31,6 +31,9 @@ pub struct AppError {
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
+    /// The node of a filter expression the error is about (prompt 010).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
 }
 
 impl AppError {
@@ -39,7 +42,13 @@ impl AppError {
             code,
             message: message.into(),
             path: None,
+            node_id: None,
         }
+    }
+
+    pub fn with_node(mut self, id: &str) -> Self {
+        self.node_id = Some(id.into());
+        self
     }
 
     pub fn from_io(err: &io::Error, path: &Path) -> Self {
@@ -53,6 +62,7 @@ impl AppError {
             code,
             message: err.to_string(),
             path: Some(path.display().to_string()),
+            node_id: None,
         }
     }
 

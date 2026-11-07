@@ -4,6 +4,7 @@ import { LogSessionService } from '../sessions/log-session.service';
 import { statusPill } from './status-pill';
 import { formatSummary, partlyRecognised } from '../sessions/format-logic';
 import { lateLines, sourceProblems } from '../merge/merge-logic';
+import { countConditions } from '../sessions/filter-tree';
 
 @Component({
   selector: 'app-status-bar',
@@ -42,6 +43,9 @@ import { lateLines, sourceProblems } from '../merge/merge-logic';
           {{ count }} verspätet ·
           <button type="button" class="link" (click)="resort()">Neu sortieren</button>
         </span>
+      }
+      @if (s.treeError(); as error) {
+        <span class="stale" role="alert" [title]="error.message">Bedingung ungültig</span>
       }
       @if (s.update().filterPending) {
         <span>Filter {{ percent(s.update().filterProgress) }}</span>
@@ -180,9 +184,14 @@ export class StatusBarComponent {
     const update = this.session()?.update();
     if (!update) return '';
     const total = formatCount(update.totalLines);
-    return update.filteredLines === update.totalLines
-      ? `${total} Zeilen`
-      : `${formatCount(update.filteredLines)} von ${total} Zeilen`;
+    const lines =
+      update.filteredLines === update.totalLines
+        ? `${total} Zeilen`
+        : `${formatCount(update.filteredLines)} von ${total} Zeilen`;
+    // Prompt 010: how many conditions of the tree take part.
+    const conditions = countConditions(this.session()?.filterTree() ?? null);
+    if (!conditions) return lines;
+    return `${conditions} Bedingung${conditions === 1 ? '' : 'en'} · ${lines}`;
   });
 
   protected percent(progress: number): string {

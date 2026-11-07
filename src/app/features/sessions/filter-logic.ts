@@ -24,3 +24,13 @@ export function levelAndSevere(level: Level): Set<Level> {
 export function sameLevels(a: ReadonlySet<Level>, b: ReadonlySet<Level>): boolean {
   return a.size === b.size && [...a].every((level) => b.has(level));
 }
+
+const UNKNOWN_LABEL = 'Ohne Level';
+
+/** Severity order, unknown last: `WARN, ERROR, FATAL`. */
+export function describeLevels(levels: ReadonlySet<Level>): string {
+  if (levels.size === 0) return 'Keine Level';
+  const names: string[] = SEVERITIES.filter((level) => levels.has(level));
+  if (levels.has('UNKNOWN')) names.push(UNKNOWN_LABEL);
+  return names.join(', ');
+}

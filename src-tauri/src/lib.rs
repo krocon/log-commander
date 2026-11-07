@@ -17,6 +17,7 @@ pub mod encoding;
 pub mod error;
 pub mod fields;
 pub mod filter;
+pub mod filter_expr;
 pub mod indexer;
 pub mod level;
 pub mod merge;

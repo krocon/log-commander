@@ -1,7 +1,11 @@
 //! Backend filter: active levels plus optional text search yield a sorted list of line numbers.
-//! New lines extend the list incrementally; a multi-line entry stays together.
+//! New lines extend the list incrementally; a multi-line entry stays together. A filter expression
+//! (prompt 010, `filter_expr.rs`) is one more AND term, decided per entry.
 
+use crate::encoding::{display_text, Encoding};
 use crate::error::AppResult;
+use crate::filter_expr::{CompiledExpr, LeafProbe};
+use crate::indexer::MAX_SEARCH_BYTES;
 use crate::level::Level;
 use crate::overview::{level_bit, LevelSummary, SummaryMark};
 use regex::{Regex, RegexBuilder};
@@ -116,6 +120,8 @@ pub struct FilterSpec {
     pub mode: SearchMode,
     /// Sources of a merge; decided at the head of an entry, the entry stays whole.
     pub sources: SourceMask,
+    /// The filter tree of the sidebar (prompt 010), an AND term below levels and search.
+    pub expr: Option<Arc<CompiledExpr>>,
 }
 
 impl Default for FilterSpec {
@@ -125,6 +131,60 @@ impl Default for FilterSpec {
             matcher: None,
             mode: SearchMode::Filter,
             sources: SourceMask::ALL,
+            expr: None,
+        }
+    }
+}
+
+/// What the text of a line says for a filter: the search hit and the leaves of an expression.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Probe {
+    pub matched: bool,
+    pub leaves: LeafProbe,
+}
+
+/// Everything of a filter that reads the text of a line. Prepared before the write lock (tail, merge)
+/// and compared by pointer: a different one means the filter changed and the text is read again.
+#[derive(Debug, Clone, Default)]
+pub struct TextTest {
+    matcher: Option<Arc<TextMatcher>>,
+    expr: Option<Arc<CompiledExpr>>,
+}
+
+impl TextTest {
+    /// Nothing to read.
+    pub fn is_empty(&self) -> bool {
+        self.matcher.is_none() && !self.expr.as_ref().is_some_and(|e| e.needs_text())
+    }
+
+    pub fn same(&self, other: &TextTest) -> bool {
+        fn eq<T>(a: &Option<Arc<T>>, b: &Option<Arc<T>>) -> bool {
+            match (a, b) {
+                (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+                (None, None) => true,
+                _ => false,
+            }
+        }
+        eq(&self.matcher, &other.matcher) && eq(&self.expr, &other.expr)
+    }
+
+    /// Reads a raw line (at most the search limit); `head`: the line starts an entry.
+    pub fn probe_raw(&self, raw: &[u8], encoding: Encoding, head: bool) -> Probe {
+        if self.is_empty() {
+            return Probe::default();
+        }
+        let raw = &raw[..raw.len().min(MAX_SEARCH_BYTES)];
+        self.probe_text(&display_text(raw, encoding), head)
+    }
+
+    pub fn probe_text(&self, text: &str, head: bool) -> Probe {
+        Probe {
+            matched: self.matcher.as_ref().is_some_and(|m| m.is_match(text)),
+            leaves: self
+                .expr
+                .as_ref()
+                .filter(|e| e.needs_text())
+                .map_or_else(LeafProbe::default, |e| e.probe(text, head)),
         }
     }
 }
@@ -143,10 +203,19 @@ impl FilterSpec {
         self.levels == LevelMask::ALL
             && self.filtering_matcher().is_none()
             && self.sources == SourceMask::ALL
+            && self.expr.is_none()
     }
 
     pub fn needs_text(&self) -> bool {
-        self.filtering_matcher().is_some()
+        self.filtering_matcher().is_some() || self.expr.as_ref().is_some_and(|e| e.needs_text())
+    }
+
+    /// What reads the text of a line for this filter.
+    pub fn text_test(&self) -> TextTest {
+        TextTest {
+            matcher: self.filtering_matcher().cloned(),
+            expr: self.expr.clone(),
+        }
     }
 }
 
@@ -173,6 +242,56 @@ pub struct FilteredLines {
     entry_pending: bool,
     /// Levels per chunk of positions in `list`, for the overview ruler (prompt 007).
     summary: LevelSummary,
+    /// The entry being decided by an expression (prompt 010).
+    expr: ExprState,
+    /// Lowest list length an expression went back to since the last update (`take_retracted`).
+    retracted_from: Option<u64>,
+}
+
+/// Per-entry state of an expression: what a retraction goes back to, and the leaves so far.
+#[derive(Debug, Clone, Copy)]
+struct ExprState {
+    /// Leaves some line of the entry fulfils.
+    mask: u64,
+    /// Some line of the entry passed levels and search (the implicit AND above the tree).
+    base_hit: bool,
+    /// Sections (range leaves) open after the last line; in file order, across entries.
+    open: u64,
+    /// List length, counts and summary before the head of the entry.
+    list_len: usize,
+    counts: Counts,
+    summary: SummaryMark,
+    /// Lines of the entry per level, the head included.
+    levels: Counts,
+}
+
+impl Default for ExprState {
+    fn default() -> Self {
+        Self::new(&LevelSummary::new())
+    }
+}
+
+impl ExprState {
+    fn new(summary: &LevelSummary) -> Self {
+        Self {
+            mask: 0,
+            base_hit: false,
+            open: 0,
+            list_len: 0,
+            counts: [0; Level::COUNT],
+            summary: summary.mark(),
+            levels: [0; Level::COUNT],
+        }
+    }
+}
+
+/// Bits of all levels with a count.
+fn levels_mask(counts: &Counts) -> u8 {
+    counts
+        .iter()
+        .enumerate()
+        .filter(|(_, n)| **n > 0)
+        .fold(0, |mask, (i, _)| mask | level_bit(Level::ALL[i]))
 }
 
 /// State to restore when a provisional last line is withdrawn.
@@ -188,11 +307,13 @@ pub struct FilterCheckpoint {
     entry_counts: Counts,
     entry_pending: bool,
     summary: SummaryMark,
+    expr: ExprState,
 }
 
 impl FilteredLines {
     pub fn new(spec: FilterSpec) -> Self {
         let list = (!spec.is_identity()).then(Vec::new);
+        let summary = LevelSummary::new();
         Self {
             spec,
             list,
@@ -204,7 +325,9 @@ impl FilteredLines {
             entry_head: Level::Unknown,
             entry_counts: [0; Level::COUNT],
             entry_pending: false,
-            summary: LevelSummary::new(),
+            expr: ExprState::new(&summary),
+            summary,
+            retracted_from: None,
         }
     }
 
@@ -268,6 +391,18 @@ impl FilteredLines {
         self.entry_counts = [0; Level::COUNT];
         self.entry_pending = false;
         self.summary.clear();
+        self.expr = ExprState::new(&self.summary);
+        self.retracted_from = None;
+    }
+
+    /// An expression took lines out of the end of the list since the last call: the view from
+    /// this position on may differ although the count does not (frontend: `invalidateTail`).
+    pub fn take_retracted(&mut self) -> Option<u64> {
+        self.retracted_from.take()
+    }
+
+    pub fn retracted(&self) -> Option<u64> {
+        self.retracted_from
     }
 
     pub fn checkpoint(&self) -> FilterCheckpoint {
@@ -282,6 +417,7 @@ impl FilteredLines {
             entry_counts: self.entry_counts,
             entry_pending: self.entry_pending,
             summary: self.summary.mark(),
+            expr: self.expr,
         }
     }
 
@@ -294,20 +430,25 @@ impl FilteredLines {
         self.entry_head = checkpoint.entry_head;
         self.entry_counts = checkpoint.entry_counts;
         self.entry_pending = checkpoint.entry_pending;
+        self.expr = checkpoint.expr;
         self.summary.restore(checkpoint.summary);
         if let Some(list) = &mut self.list {
-            list.truncate(checkpoint.list_len);
+            if list.len() >= checkpoint.list_len {
+                list.truncate(checkpoint.list_len);
+            } else {
+                // The withdrawn line made an expression take its entry out: the entry was the end of
+                // the list, contiguous up to the line before the withdrawn one.
+                let missing = checkpoint.list_len - list.len();
+                list.extend(checkpoint.next_line - missing as u32..checkpoint.next_line);
+                self.summary
+                    .push_run(levels_mask(&checkpoint.expr.levels), missing as u64);
+            }
         }
     }
 
-    /// Takes the next line. `text_matches` is only called when the answer matters.
-    pub fn append(
-        &mut self,
-        level: Level,
-        continuation: bool,
-        text_matches: impl FnOnce() -> bool,
-    ) {
-        self.append_from(0, level, continuation, text_matches);
+    /// Takes the next line. `probe` reads its text and is only called when the answer matters.
+    pub fn append(&mut self, level: Level, continuation: bool, probe: impl FnOnce() -> Probe) {
+        self.append_from(0, level, continuation, probe);
     }
 
     /// Takes the next line of a source (merge). The source of the head decides for the entry.
@@ -316,10 +457,18 @@ impl FilteredLines {
         source: usize,
         level: Level,
         continuation: bool,
-        text_matches: impl FnOnce() -> bool,
+        probe: impl FnOnce() -> Probe,
     ) {
         let line = self.next_line;
         self.next_line += 1;
+        if self.list.is_none() {
+            return;
+        }
+        if let Some(expr) = self.spec.expr.take() {
+            self.append_expr(&expr, line, source, level, continuation, probe);
+            self.spec.expr = Some(expr);
+            return;
+        }
         let Some(list) = &mut self.list else {
             return;
         };
@@ -341,7 +490,7 @@ impl FilteredLines {
         }
         if self.entry_excluded
             || !self.spec.levels.contains(level)
-            || self.spec.filtering_matcher().is_some() && !text_matches()
+            || self.spec.filtering_matcher().is_some() && !probe().matched
         {
             // A later hit in the entry brings this line in; its level is gone by then. The head
             // keeps its level apart, so a single-line entry costs no array.
@@ -381,6 +530,90 @@ impl FilteredLines {
         self.entry_included = true;
     }
 
+    /// The expression path: the entry is in while levels/search hit some line of it and the tree
+    /// holds on its leaves. With a negation the tree can turn false again; then the entry, which is
+    /// the end of the list, goes out again.
+    fn append_expr(
+        &mut self,
+        expr: &CompiledExpr,
+        line: u32,
+        source: usize,
+        level: Level,
+        continuation: bool,
+        probe: impl FnOnce() -> Probe,
+    ) {
+        let Some(list) = &mut self.list else {
+            return;
+        };
+        let head = !continuation || line == 0;
+        if head {
+            self.entry_start = line;
+            self.entry_included = false;
+            self.entry_excluded = !self.spec.sources.contains(source);
+            self.entry_head = level;
+            self.expr = ExprState {
+                mask: 0,
+                base_hit: false,
+                open: self.expr.open,
+                list_len: list.len(),
+                counts: self.counts,
+                summary: self.summary.mark(),
+                levels: [0; Level::COUNT],
+            };
+        }
+        let state = &mut self.expr;
+        state.levels[level as usize] += 1;
+        let level_ok = self.spec.levels.contains(level);
+        let searching = self.spec.mode == SearchMode::Filter && self.spec.matcher.is_some();
+        // Field and time leaves come from a real head (probes of continuations may carry them).
+        let text_leaves = expr.text_leaves(!continuation);
+        // Text is read only while it can change something; sections always move on, line by line.
+        let need = expr.has_ranges()
+            || !self.entry_excluded
+                && (!state.base_hit && level_ok && searching
+                    || text_leaves & !state.mask != 0
+                        && !(self.entry_included && expr.is_monotone()));
+        let probe = if need { probe() } else { Probe::default() };
+        let inside = expr.advance_ranges(&mut state.open, probe.leaves);
+        if self.entry_excluded {
+            return;
+        }
+        state.mask |= expr.static_bits(level, line) | inside | probe.leaves.leaves & text_leaves;
+        state.base_hit |= level_ok && (!searching || probe.matched);
+        let ok = state.base_hit && expr.eval(state.mask);
+        match (self.entry_included, ok) {
+            (true, true) => {
+                list.push(line);
+                self.counts[level as usize] += 1;
+                self.summary.push(level);
+            }
+            (false, true) => {
+                list.extend(self.entry_start..=line);
+                for (count, taken) in self.counts.iter_mut().zip(state.levels) {
+                    *count += taken;
+                }
+                self.summary.push(self.entry_head);
+                let rest = u64::from(line - self.entry_start);
+                if rest > 0 {
+                    let mut others = state.levels;
+                    others[self.entry_head as usize] -= 1;
+                    self.summary.push_run(levels_mask(&others), rest);
+                }
+                self.entry_included = true;
+            }
+            (true, false) => {
+                list.truncate(state.list_len);
+                self.counts = state.counts;
+                self.summary.restore(state.summary);
+                self.summary.truncate(state.list_len as u64);
+                self.entry_included = false;
+                let from = state.list_len as u64;
+                self.retracted_from = Some(self.retracted_from.map_or(from, |r| r.min(from)));
+            }
+            (false, false) => {}
+        }
+    }
+
     /// Number of lines taken so far.
     pub fn next_line(&self) -> u32 {
         self.next_line
@@ -406,6 +639,7 @@ mod tests {
             }),
             mode: SearchMode::Filter,
             sources: SourceMask::ALL,
+            expr: None,
         }
     }
 
@@ -425,7 +659,7 @@ mod tests {
             (1, Level::Info, false),
         ];
         for (source, level, continuation) in lines {
-            filter.append_from(source, level, continuation, || true);
+            filter.append_from(source, level, continuation, Probe::default);
         }
         assert_eq!(filter.len(6), 3);
         assert_eq!(
@@ -437,9 +671,9 @@ mod tests {
 
     fn feed(filter: &mut FilteredLines, lines: &[(Level, bool, &str)]) {
         for (level, continuation, text) in lines {
-            let matcher = filter.spec.filtering_matcher().cloned();
+            let test = filter.spec.text_test();
             filter.append(*level, *continuation, || {
-                matcher.is_some_and(|m| m.is_match(text))
+                test.probe_text(text, !continuation)
             });
         }
     }
@@ -716,5 +950,295 @@ mod tests {
         assert!(FilteredLines::new(FilterSpec::default())
             .summary()
             .is_none());
+    }
+
+    // ---------------------------------------------------------------- expressions (prompt 010)
+
+    use crate::fields::FormatGuess;
+    use crate::filter_expr::{Cond, ExprContext, FilterExpr, GroupOp};
+
+    fn q(text: &str) -> SearchQuery {
+        SearchQuery {
+            text: text.into(),
+            is_regex: false,
+            case_sensitive: false,
+        }
+    }
+
+    fn t(id: &str, negate: bool, text: &str) -> FilterExpr {
+        FilterExpr::Cond {
+            id: id.into(),
+            negate,
+            cond: Cond::Text(q(text)),
+        }
+    }
+
+    fn g(op: GroupOp, children: Vec<FilterExpr>) -> FilterExpr {
+        FilterExpr::Group {
+            id: "g".into(),
+            op,
+            negate: false,
+            children,
+        }
+    }
+
+    fn range(start: &str, end: Option<&str>) -> FilterExpr {
+        FilterExpr::Cond {
+            id: "r".into(),
+            negate: false,
+            cond: Cond::Range {
+                start: q(start),
+                end: end.map(q),
+                inclusive: true,
+            },
+        }
+    }
+
+    fn expr_spec(levels: &[Level], expr: &FilterExpr) -> FilterSpec {
+        let ctx = ExprContext {
+            format: Arc::new(FormatGuess::none()),
+            sample: &[],
+            reference: std::time::SystemTime::now(),
+        };
+        FilterSpec {
+            expr: Some(Arc::new(CompiledExpr::compile(expr, &ctx).unwrap())),
+            ..spec(levels, None)
+        }
+    }
+
+    fn shown(filter: &FilteredLines, total: usize) -> Vec<u32> {
+        (0..filter.len(total))
+            .map(|p| filter.line_at(p, total).unwrap())
+            .collect()
+    }
+
+    /// Lines as `(level, continuation, text)`; `E` head, `  ` continuation.
+    fn entries(lines: &[&str]) -> Vec<(Level, bool, String)> {
+        lines
+            .iter()
+            .map(|l| (Level::Info, l.starts_with(' '), l.to_string()))
+            .collect()
+    }
+
+    fn feed_owned(filter: &mut FilteredLines, lines: &[(Level, bool, String)]) {
+        for (level, continuation, text) in lines {
+            let test = filter.spec.text_test();
+            filter.append(*level, *continuation, || {
+                test.probe_text(text, !continuation)
+            });
+        }
+    }
+
+    #[test]
+    fn conditions_hold_for_the_entry_head_or_stack_trace() {
+        let lines = entries(&[
+            "Timeout calling billing",
+            "  at OrderService.run",
+            "Timeout elsewhere",
+            "OrderService fine",
+        ]);
+        let and = g(
+            GroupOp::And,
+            vec![t("a", false, "timeout"), t("b", false, "orderservice")],
+        );
+        let mut filter = FilteredLines::new(expr_spec(&Level::ALL, &and));
+        feed_owned(&mut filter, &lines);
+        assert_eq!(shown(&filter, 4), vec![0, 1]);
+        let or = g(
+            GroupOp::Or,
+            vec![t("a", false, "billing"), t("b", false, "fine")],
+        );
+        let mut filter = FilteredLines::new(expr_spec(&Level::ALL, &or));
+        feed_owned(&mut filter, &lines);
+        assert_eq!(shown(&filter, 4), vec![0, 1, 3]);
+        let nested = g(
+            GroupOp::And,
+            vec![
+                t("a", false, "timeout"),
+                g(
+                    GroupOp::Or,
+                    vec![t("b", false, "billing"), t("c", false, "elsewhere")],
+                ),
+            ],
+        );
+        let mut filter = FilteredLines::new(expr_spec(&Level::ALL, &nested));
+        feed_owned(&mut filter, &lines);
+        assert_eq!(shown(&filter, 4), vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn a_late_hit_under_not_takes_the_entry_out_again() {
+        let not = g(
+            GroupOp::And,
+            vec![t("a", false, "timeout"), t("b", true, "retry")],
+        );
+        let mut filter = FilteredLines::new(expr_spec(&Level::ALL, &not));
+        feed_owned(
+            &mut filter,
+            &entries(&["ok timeout", "Timeout head", "  at a"]),
+        );
+        assert_eq!(shown(&filter, 3), vec![0, 1, 2]);
+        assert_eq!(filter.take_retracted(), None);
+        // The stack trace says retry: the entry, the end of the list, goes out.
+        feed_owned(&mut filter, &entries(&["  at retry"]));
+        assert_eq!(shown(&filter, 4), vec![0]);
+        assert_eq!(filter.take_retracted(), Some(1));
+        assert_eq!(filter.take_retracted(), None);
+        assert_eq!(view_counts(&filter).iter().sum::<u64>(), 1);
+        assert_eq!(filter.summary().unwrap().len(), 1);
+        feed_owned(&mut filter, &entries(&["  at b", "timeout again"]));
+        assert_eq!(shown(&filter, 6), vec![0, 5]);
+    }
+
+    #[test]
+    fn not_or_other_brings_a_retracted_entry_back() {
+        let expr = g(
+            GroupOp::Or,
+            vec![t("a", true, "retry"), t("b", false, "fatal")],
+        );
+        let mut filter = FilteredLines::new(expr_spec(&Level::ALL, &expr));
+        feed_owned(
+            &mut filter,
+            &entries(&["head", "  retry", "  fatal", "  more"]),
+        );
+        assert_eq!(shown(&filter, 4), vec![0, 1, 2, 3]);
+        assert_eq!(view_counts(&filter).iter().sum::<u64>(), 4);
+    }
+
+    #[test]
+    fn levels_and_search_stay_an_and_above_the_tree() {
+        let expr = t("a", false, "x");
+        let mut filter = FilteredLines::new(FilterSpec {
+            matcher: spec(&Level::ALL, Some("needle")).matcher,
+            ..expr_spec(&[Level::Error], &expr)
+        });
+        let lines = vec![
+            (Level::Error, false, "x needle".to_string()),
+            (Level::Info, false, "x needle".to_string()),
+            (Level::Error, false, "x".to_string()),
+            (Level::Error, false, "needle".to_string()),
+        ];
+        feed_owned(&mut filter, &lines);
+        assert_eq!(shown(&filter, 4), vec![0]);
+    }
+
+    #[test]
+    fn ranges_in_and_or_or() {
+        let lines = entries(&["a", "BEGIN", "b", "END", "c", "BEGIN", "d", "zzz"]);
+        let mut filter = FilteredLines::new(expr_spec(&Level::ALL, &range("begin", Some("end"))));
+        feed_owned(&mut filter, &lines);
+        // Opened, closed, opened again and open at the end.
+        assert_eq!(shown(&filter, 8), vec![1, 2, 3, 5, 6, 7]);
+        // In an OR the section moves on even where the other side already decided.
+        let or = g(
+            GroupOp::Or,
+            vec![t("x", false, "a"), range("begin", Some("end"))],
+        );
+        let mut filter = FilteredLines::new(expr_spec(&Level::ALL, &or));
+        feed_owned(&mut filter, &lines);
+        assert_eq!(shown(&filter, 8), vec![0, 1, 2, 3, 5, 6, 7]);
+        let and = g(
+            GroupOp::And,
+            vec![t("x", false, "zzz"), range("begin", None)],
+        );
+        let mut filter = FilteredLines::new(expr_spec(&Level::ALL, &and));
+        feed_owned(&mut filter, &lines);
+        assert_eq!(shown(&filter, 8), vec![7]);
+    }
+
+    /// For each kind: a provisional line taken and withdrawn leaves the same state as never seen.
+    #[test]
+    fn checkpoint_withdraws_a_provisional_line_for_every_kind() {
+        let level = FilterExpr::Cond {
+            id: "l".into(),
+            negate: false,
+            cond: Cond::Level {
+                levels: vec![Level::Error],
+            },
+        };
+        let lines_cond = FilterExpr::Cond {
+            id: "n".into(),
+            negate: false,
+            cond: Cond::Lines {
+                first: Some(2),
+                last: None,
+            },
+        };
+        let kinds = [
+            t("a", false, "hit"),
+            t("a", true, "hit"),
+            g(GroupOp::Or, vec![t("a", false, "hit"), t("b", true, "x")]),
+            range("hit", Some("stop")),
+            level,
+            lines_cond,
+        ];
+        let base = vec![
+            (Level::Error, false, "head hit".to_string()),
+            (Level::Error, true, "  at a".to_string()),
+        ];
+        let provisional = [
+            (Level::Error, true, "  at hit stop".to_string()),
+            (Level::Info, false, "hit".to_string()),
+            (Level::Error, true, "  x".to_string()),
+        ];
+        for expr in &kinds {
+            for line in &provisional {
+                let mut filter = FilteredLines::new(expr_spec(&Level::ALL, expr));
+                feed_owned(&mut filter, &base);
+                let before = (shown(&filter, 2), view_counts(&filter));
+                let checkpoint = filter.checkpoint();
+                feed_owned(&mut filter, std::slice::from_ref(line));
+                filter.restore(checkpoint);
+                assert_eq!(
+                    (shown(&filter, 2), view_counts(&filter)),
+                    before,
+                    "{expr:?} {line:?}"
+                );
+                assert_eq!(filter.summary().unwrap().len() as usize, before.0.len());
+                // And the real line after it gives what a fresh run gives.
+                let next = (Level::Error, true, "  at b".to_string());
+                feed_owned(&mut filter, std::slice::from_ref(&next));
+                let mut fresh = FilteredLines::new(expr_spec(&Level::ALL, expr));
+                feed_owned(&mut fresh, &[base.clone(), vec![next]].concat());
+                assert_eq!(shown(&filter, 3), shown(&fresh, 3), "{expr:?} {line:?}");
+                assert_eq!(view_counts(&filter), view_counts(&fresh));
+            }
+        }
+    }
+
+    #[test]
+    fn retraction_by_a_provisional_line_is_undone_by_the_checkpoint() {
+        let not = g(
+            GroupOp::And,
+            vec![t("a", false, "head"), t("b", true, "retry")],
+        );
+        let mut filter = FilteredLines::new(expr_spec(&Level::ALL, &not));
+        feed_owned(&mut filter, &entries(&["x", "head", "  at a"]));
+        assert_eq!(shown(&filter, 3), vec![1, 2]);
+        let checkpoint = filter.checkpoint();
+        feed_owned(&mut filter, &entries(&["  retry"]));
+        assert_eq!(shown(&filter, 4), Vec::<u32>::new());
+        filter.restore(checkpoint);
+        assert_eq!(shown(&filter, 3), vec![1, 2]);
+        assert_eq!(view_counts(&filter).iter().sum::<u64>(), 2);
+        assert_eq!(filter.summary().unwrap().len(), 2);
+        feed_owned(&mut filter, &entries(&["  fine", "head 2"]));
+        assert_eq!(shown(&filter, 5), vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn a_tree_without_text_reads_no_text() {
+        let expr = FilterExpr::Cond {
+            id: "l".into(),
+            negate: false,
+            cond: Cond::Level {
+                levels: vec![Level::Warn],
+            },
+        };
+        let mut filter = FilteredLines::new(expr_spec(&Level::ALL, &expr));
+        for level in [Level::Info, Level::Warn, Level::Error] {
+            filter.append(level, false, || panic!("text read"));
+        }
+        assert_eq!(shown(&filter, 3), vec![1]);
     }
 }

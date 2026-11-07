@@ -6,6 +6,7 @@ import {
   EntryDetail,
   EntryRange,
   FieldPreview,
+  FilterExpr,
   FilterInfo,
   FindHit,
   Level,
@@ -68,6 +69,7 @@ export class LogApi {
     query: SearchQuery,
     mode: SearchMode,
     sources: number | null = null,
+    expr: FilterExpr | null = null,
   ): Promise<FilterInfo> {
     return call('set_filter', {
       sessionId,
@@ -77,6 +79,7 @@ export class LogApi {
       caseSensitive: query.caseSensitive,
       mode,
       sources,
+      expr,
     });
   }
 

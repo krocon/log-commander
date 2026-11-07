@@ -18,6 +18,11 @@ export type Status =
 export interface SessionUpdate {
   totalLines: number;
   filteredLines: number;
+  /**
+   * A filter expression took lines out of the end of the view since the last update (prompt 010): from this
+   * position on the view may hold other lines, even if the count did not change.
+   */
+  retractedFrom?: number | null;
   counts: LevelCounts;
   /** Lines per level in the view (after the filter); while `filterPending` still the old filter's. */
   viewCounts: LevelCounts;
@@ -202,3 +207,33 @@ export interface Profile {
   layouts?: string[];
   structure?: ProfileStructure;
 }
+
+// ------------------------------------------------------------------ filter expressions (prompt 010)
+
+/** A text pattern of a condition (same shape as the search). */
+export type TextPattern = SearchQuery;
+
+export type FieldOp = 'eq' | 'contains' | 'regex' | 'gt' | 'lt' | 'between';
+
+/** A condition; mirrors `Cond` in src-tauri/src/filter_expr.rs. */
+export type FilterCond =
+  | ({ type: 'text' } & SearchQuery)
+  | { type: 'level'; levels: Level[] }
+  | {
+      type: 'field';
+      column: string;
+      op: FieldOp;
+      value: string;
+      value2?: string | null;
+      caseSensitive?: boolean;
+    }
+  | { type: 'time'; from?: string | null; to?: string | null }
+  | { type: 'range'; start: TextPattern; end?: TextPattern | null; inclusive: boolean }
+  | { type: 'lines'; first?: number | null; last?: number | null };
+
+export type FilterCondType = FilterCond['type'];
+
+/** What `set_filter` takes as `expr`; mirrors `FilterExpr` in src-tauri/src/filter_expr.rs. */
+export type FilterExpr =
+  | { kind: 'group'; id: string; op: 'and' | 'or'; negate: boolean; children: FilterExpr[] }
+  | { kind: 'cond'; id: string; negate: boolean; cond: FilterCond };

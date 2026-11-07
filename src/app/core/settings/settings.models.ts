@@ -1,4 +1,5 @@
 import { LEVELS, Level, Profile, SearchMode, SearchQuery } from '../log/log.models';
+import { FilterGroupNode, sanitizeTree } from '../../features/sessions/filter-tree';
 
 export type ThemeChoice = 'system' | 'dark' | 'light';
 /** Column view (prompt 009) or the raw line. */
@@ -18,7 +19,14 @@ export interface SavedFilter {
   levels: Level[];
   query: SearchQuery;
   mode: SearchMode;
+  /** Format of the entry: 1 = prompt 005 (no tree), 2 = with `tree` (prompt 010). */
+  version: number;
+  /** The filter tree (prompt 010); an entry of prompt 005 gets an empty one when loaded. */
+  tree: FilterGroupNode;
 }
+
+/** Current format of a saved filter. */
+export const SAVED_FILTER_VERSION = 2;
 
 export interface Settings {
   theme: ThemeChoice;
@@ -169,6 +177,9 @@ export function mergeSavedFilters(saved: unknown): SavedFilter[] {
         caseSensitive: query.caseSensitive === true,
       },
       mode: SEARCH_MODES.includes(entry.mode as SearchMode) ? (entry.mode as SearchMode) : 'filter',
+      // Entries of prompt 005 have no tree: levels and search stay, the tree is empty. Nothing is lost.
+      version: SAVED_FILTER_VERSION,
+      tree: sanitizeTree(entry.tree),
     });
     if (result.length >= MAX_SAVED_FILTERS) break;
   }

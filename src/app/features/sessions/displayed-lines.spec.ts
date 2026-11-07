@@ -41,6 +41,19 @@ describe('nextDisplayedLines', () => {
     });
   });
 
+  describe('a view that shrinks (prompt 010: a negation takes an entry out of the end)', () => {
+    it('goes down at once while following, nothing to wait for', () => {
+      expect(nextDisplayedLines({ ...base, displayed: 150, target: 147, loaded: pages() })).toBe(
+        147,
+      );
+    });
+
+    it('goes down at once while reading', () => {
+      const input = { ...base, follow: false, top: 140, displayed: 150, target: 141 };
+      expect(nextDisplayedLines({ ...input, loaded: pages() })).toBe(141);
+    });
+  });
+
   describe('reading', () => {
     const reading = { ...base, follow: false };
 

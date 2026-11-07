@@ -93,6 +93,22 @@ await dark.fill('input[type=search]', '');
 await dark.waitForTimeout(350);
 await dark.click('button:text-is("Alle")');
 
+// Filter tree (prompt 010): two conditions joined with OR, added through the form.
+const addCondition = async (button, text) => {
+  await dark.click(button);
+  await dark.waitForSelector('app-condition-dialog dialog[open]');
+  await dark.fill('app-condition-dialog #cond-text', text);
+  await dark.click('app-condition-dialog button[type=submit]:not([disabled])');
+  await dark.waitForTimeout(300);
+};
+await addCondition('app-log-tree [role=treeitem].kind-file.current button.add', 'order');
+await addCondition('app-log-tree [role=treeitem].kind-expr-group button.add', 'Pool usage');
+await dark.click('app-log-tree [role=treeitem].kind-expr-group button.op');
+await dark.waitForTimeout(300);
+await shot(dark, 'filter-tree');
+await dark.click('app-log-tree [role=treeitem].kind-expr-group button[aria-label$="entfernen"]');
+await dark.waitForTimeout(300);
+
 await dark.selectOption('select[aria-label=Suchmodus]', 'highlight');
 await dark.fill('input[type=search]', 'order');
 await dark.waitForTimeout(350);
