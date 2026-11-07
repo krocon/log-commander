@@ -29,6 +29,10 @@ Like <code>tail -f</code> with a GUI: millions of lines, instant filters, no wai
   to move it; right click on the header or `Shift+F10` opens a menu to show, hide, move and resize columns or reset
   them. The layout is remembered per format. `T` or the toolbar switch goes back to the raw lines. No sorting: the
   view stays in file order.
+- **Detail panel** – the whole entry of the selected line below the log: head line and stack trace, without the
+  cut at the screen edge and whatever the filter hides. Embedded JSON or XML is indented and coloured by its own
+  tokenizer, so 64-bit ids stay exact and fragments work. Double click a line (or `D`) to open it, click other lines
+  to browse, drag or use the arrow keys on the bar above it to change its height.
 - **Search** – filter or highlight, regular expressions, case sensitivity, jump between matches.
 - **Follow** – stays at the end while you are there; scroll up and it pauses and counts the new lines.
 - **Freeze** – holds a tab to read in peace: lines, counts and the position stay put while filters and search keep
@@ -40,6 +44,7 @@ Like <code>tail -f</code> with a GUI: millions of lines, instant filters, no wai
 | | |
 |---|---|
 | ![Search](docs/screenshots/search.png) | ![Light theme](docs/screenshots/light.png) |
+| ![Detail panel](docs/screenshots/detail.png) | |
 
 ## Install
 
@@ -60,10 +65,12 @@ log-commander /var/log/app.log /var/log/other.log
 | `Space` | Pause or resume following |
 | `P` | Freeze: hold or resume reading the file of this tab |
 | `T` | Columns or raw lines |
+| `D`, double click on a line | Detail panel with the whole entry; in it the arrows scroll the panel |
+| `↑`, `↓` on the panel's bar | Panel height (`Shift`: bigger steps, `Home`/`End`, double click: default) |
 | `Shift+F10` | Column menu (show, hide, move, resize, reset) |
 | `Home`, `PageUp`, `PageDown`, `↑`, `↓` | Move through the file |
 | `Cmd/Ctrl+F` | Search; `Enter` next match, `Shift+Enter` previous, `Esc` clear |
-| Click, `Shift`+click | Select an entry, or a range |
+| Click, `Shift`+click | Select an entry, or a range (an open detail panel follows) |
 | `Cmd/Ctrl+C` | Copy the selected lines |
 | `Cmd/Ctrl+W`, `Ctrl+Tab` | Close a tab, next tab |
 | `Cmd/Ctrl+,` | Settings |

@@ -92,3 +92,16 @@ export function scrollTopToTop(
   if (range <= 0) return 0;
   return Math.round((Math.min(scrollTop, range) / range) * maxTop(count, viewportH, rowH));
 }
+
+/**
+ * The position that brings a row hidden below the viewport (e.g. by a panel that opened) back to the
+ * bottom edge, or null if it is visible or above. Fixed row height.
+ */
+export function revealBelow(pos: ScrollPos, row: number, m: ViewMetrics): ScrollPos | null {
+  const top = pos.top * m.rowH + pos.subPx;
+  const rowBottom = (row + 1) * m.rowH;
+  if (row < pos.top || rowBottom <= top + m.viewportH) return null;
+  const wanted = Math.max(0, rowBottom - m.viewportH);
+  const line = Math.floor(wanted / m.rowH);
+  return { top: line, subPx: wanted - line * m.rowH };
+}

@@ -3,10 +3,12 @@ import {
   Component,
   OnDestroy,
   OnInit,
+  ElementRef,
   computed,
   effect,
   inject,
   signal,
+  viewChild,
 } from '@angular/core';
 import { isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
@@ -14,7 +16,10 @@ import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { getMatches } from '@tauri-apps/plugin-cli';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
+import { DEFAULT_SETTINGS } from './core/settings/settings.models';
 import { SettingsService } from './core/settings/settings.service';
+import { DetailPanelComponent } from './features/detail/detail-panel';
+import { PANEL_MIN, panelHeight, panelMax } from './features/detail/detail-logic';
 import { LogTableViewComponent } from './features/log-table/log-table-view';
 import { OpenPathDialogComponent } from './features/open-path/open-path-dialog';
 import { LogSessionService } from './features/sessions/log-session.service';
@@ -23,15 +28,18 @@ import { StartScreenComponent } from './features/start/start-screen';
 import { StatusBarComponent } from './features/statusbar/status-bar';
 import { TabsComponent } from './features/tabs/tabs';
 import { ToolbarComponent } from './features/toolbar/toolbar';
+import { SplitterComponent } from './shared/splitter';
 
 @Component({
   selector: 'app-root',
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
+    DetailPanelComponent,
     LogTableViewComponent,
     OpenPathDialogComponent,
     SettingsDialogComponent,
     StartScreenComponent,
+    SplitterComponent,
     StatusBarComponent,
     TabsComponent,
     ToolbarComponent,
@@ -40,7 +48,25 @@ import { ToolbarComponent } from './features/toolbar/toolbar';
     <app-tabs (openFile)="openFile()" (openPath)="pathDialogOpen.set(true)" />
     <app-toolbar (openSettings)="settingsOpen.set(true)" />
     @if (active(); as session) {
-      <app-log-table-view class="main" [session]="session" />
+      <div #workspace class="main workspace">
+        <app-log-table-view class="log" [session]="session" />
+        @if (panelH() > 0) {
+          <app-splitter
+            orientation="horizontal"
+            pane="after"
+            label="Höhe des Detail-Panels"
+            title="Höhe ziehen, Pfeiltasten verschieben, Doppelklick: Standardhöhe"
+            controls="detail-panel"
+            [size]="panelH()"
+            [min]="panelMin"
+            [max]="panelMaxH()"
+            [defaultSize]="defaultDetailHeight"
+            (sizeChange)="dragHeight.set($event)"
+            (sizeCommit)="commitHeight($event)"
+          />
+          <app-detail-panel id="detail-panel" [session]="session" [style.height.px]="panelH()" />
+        }
+      </div>
     } @else {
       <app-start-screen
         class="main"
@@ -76,6 +102,17 @@ import { ToolbarComponent } from './features/toolbar/toolbar';
     .main {
       flex: 1;
       min-height: 0;
+    }
+    .workspace {
+      display: flex;
+      flex-direction: column;
+    }
+    .log {
+      flex: 1 1 0;
+      min-height: 0;
+    }
+    app-detail-panel {
+      flex: none;
     }
     .error {
       position: fixed;
@@ -115,10 +152,34 @@ export class App implements OnInit, OnDestroy {
   protected readonly settingsOpen = signal(false);
   protected readonly pathDialogOpen = signal(false);
   protected readonly dropActive = signal(false);
+
+  // Detail panel (prompt 004): visibility and height are global settings, the height is stored when a
+  // drag ends; in between `dragHeight` holds it.
+  protected readonly panelMin = PANEL_MIN;
+  protected readonly defaultDetailHeight = DEFAULT_SETTINGS.detailHeight;
+  protected readonly dragHeight = signal<number | null>(null);
+  private readonly workspace = viewChild<ElementRef<HTMLElement>>('workspace');
+  private readonly workspaceH = signal(0);
+  protected readonly panelMaxH = computed(() => panelMax(this.workspaceH()));
+  protected readonly panelH = computed(() =>
+    this.settings.settings().detailVisible
+      ? panelHeight(this.dragHeight() ?? this.settings.settings().detailHeight, this.workspaceH())
+      : 0,
+  );
+  private workspaceObserver: ResizeObserver | null = null;
   private dialogOpen = false;
   private readonly cleanups: (() => void)[] = [];
 
   constructor() {
+    effect(() => {
+      const element = this.workspace()?.nativeElement;
+      this.workspaceObserver?.disconnect();
+      this.workspaceObserver = null;
+      if (!element) return;
+      this.workspaceH.set(element.clientHeight);
+      this.workspaceObserver = new ResizeObserver(() => this.workspaceH.set(element.clientHeight));
+      this.workspaceObserver.observe(element);
+    });
     if (isTauri()) {
       effect(() => {
         const name = this.active()?.fileName;
@@ -153,8 +214,14 @@ export class App implements OnInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.workspaceObserver?.disconnect();
     document.removeEventListener('keydown', this.onKey);
     for (const cleanup of this.cleanups) cleanup();
+  }
+
+  protected commitHeight(height: number): void {
+    this.dragHeight.set(null);
+    this.settings.update({ detailHeight: height });
   }
 
   protected async openFile(): Promise<void> {

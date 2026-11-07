@@ -55,4 +55,23 @@ describe('settings', () => {
     const many = Array.from({ length: 30 }, (_, i) => `f${i}`);
     expect(addRecent(many, 'new')).toHaveLength(MAX_RECENT_FILES);
   });
+
+  it('defaults the detail panel and keeps valid values', () => {
+    const fresh = mergeSettings({});
+    expect([fresh.detailVisible, fresh.detailHeight, fresh.detailWrap]).toEqual([false, 240, true]);
+    const kept = mergeSettings({ detailVisible: true, detailHeight: 311.6, detailWrap: false });
+    expect([kept.detailVisible, kept.detailHeight, kept.detailWrap]).toEqual([true, 312, false]);
+    const broken = mergeSettings({
+      detailVisible: 'yes' as never,
+      detailHeight: 'x' as never,
+      detailWrap: 1 as never,
+    });
+    expect([broken.detailVisible, broken.detailHeight, broken.detailWrap]).toEqual([
+      false,
+      240,
+      true,
+    ]);
+    expect(mergeSettings({ detailHeight: 5 }).detailHeight).toBe(80);
+    expect(mergeSettings({ detailHeight: 1e9 }).detailHeight).toBe(4000);
+  });
 });

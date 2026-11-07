@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  revealBelow,
   MAX_SCROLL_RANGE,
   bottomAnchor,
   maxTop,
@@ -66,5 +67,18 @@ describe('viewport logic', () => {
 
   it('renders enough rows to cover partial ones', () => {
     expect(visibleRowCount(200, 20)).toBe(12);
+  });
+
+  it('brings a row hidden below the viewport back to the bottom edge', () => {
+    const m = { count: 1000, viewportH: 200, rowH: 20 };
+    // Rows 100..109 are visible from top 100.
+    expect(revealBelow({ top: 100, subPx: 0 }, 105, m)).toBeNull();
+    expect(revealBelow({ top: 100, subPx: 0 }, 109, m)).toBeNull();
+    expect(revealBelow({ top: 100, subPx: 0 }, 99, m)).toBeNull();
+    expect(revealBelow({ top: 100, subPx: 0 }, 110, m)).toEqual({ top: 101, subPx: 0 });
+    expect(revealBelow({ top: 100, subPx: 0 }, 130, { ...m, viewportH: 190 })).toEqual({
+      top: 121,
+      subPx: 10,
+    });
   });
 });

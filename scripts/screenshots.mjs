@@ -63,6 +63,16 @@ await dark.click('.tab .title >> text=app.log');
 await dark.waitForTimeout(150);
 await shot(dark, 'dark');
 
+// Detail panel (prompt 004): double click on the stack trace shows the whole entry below the log.
+await dark.dblclick('.lt-cell >> text=Caused by');
+await dark.waitForTimeout(300);
+await dark.evaluate(() => getSelection()?.removeAllRanges());
+await dark.waitForTimeout(100);
+await shot(dark, 'detail');
+await dark.keyboard.press('d');
+await dark.keyboard.press('Escape');
+await dark.waitForTimeout(150);
+
 await dark.click('button:text-is("ERROR+")');
 await dark.waitForTimeout(150);
 await shot(dark, 'filter-error');

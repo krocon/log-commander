@@ -210,6 +210,15 @@ export class LogSessionService {
     }
   }
 
+  /** The lines of an entry whatever the filter hides (detail panel), complete also beyond its display cut. */
+  async copyEntry(session: SessionState, first: number, last: number): Promise<void> {
+    try {
+      await writeClipboard(await this.api.copyLines(session.id, first, last, 'all'));
+    } catch (e) {
+      this.showError(toAppError(e));
+    }
+  }
+
   showError(error: AppError | string): void {
     this.error.set(typeof error === 'string' ? error : describeError(error));
     if (this.errorTimer) clearTimeout(this.errorTimer);

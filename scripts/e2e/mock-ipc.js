@@ -96,6 +96,28 @@
     return { ...line, matches };
   }
 
+  // Head line and continuations around a line, from all lines (the detail panel ignores the filter).
+  function entryOf(session, line) {
+    const lines = session.lines;
+    let first = Math.min(line, lines.length - 1);
+    while (first > 0 && lines[first].isContinuation) first--;
+    let last = first;
+    while (last + 1 < lines.length && lines[last + 1].isContinuation) last++;
+    const text = lines
+      .slice(first, last + 1)
+      .map((l) => l.text)
+      .join('\n');
+    return {
+      first,
+      last,
+      level: lines[first].level,
+      lineCount: last - first + 1,
+      totalBytes: new TextEncoder().encode(text).length - (last - first),
+      text,
+      truncated: false,
+    };
+  }
+
   const PROFILES = [
     { id: 'generic', name: 'Generic (keywords, JSON)', builtin: true, patterns: [] },
     { id: 'log4j', name: 'Log4j / Logback / Spring Boot', builtin: true, patterns: [] },
@@ -174,7 +196,17 @@
       matched: false,
     }),
     get_position: ({ line }) => line,
-    get_entry_range: ({ line }) => ({ first: line, last: line }),
+    get_entry_range: ({ sessionId, line }) => {
+      const { first, last } = entryOf(sessions.get(sessionId), line);
+      return { first, last };
+    },
+    get_entry: ({ sessionId, line }) => entryOf(sessions.get(sessionId), line),
+    copy_lines: ({ sessionId, first, last }) =>
+      sessions
+        .get(sessionId)
+        .lines.slice(first, last + 1)
+        .map((l) => `${l.text}\n`)
+        .join(''),
     list_profiles: () => PROFILES,
     set_custom_profiles: () => null,
     'plugin:store|load': () => 1,

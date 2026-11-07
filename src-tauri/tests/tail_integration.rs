@@ -900,3 +900,173 @@ fn empty_binary_and_cut_lines_give_fields_without_errors() {
     let end = got.text.encode_utf16().count() as u32;
     assert_eq!(got.fields.iter().map(|f| f[1]).max(), Some(end));
 }
+
+// ---------------------------------------------------------------- detail panel (prompt 004)
+
+const STACK: &str = "2024-01-01 INFO before\n\
+2024-01-01 ERROR boom\n\
+\tat a.B.c(B.java:1)\n\
+\tat a.B.d(B.java:2)\n\
+Caused by: java.io.IOException: gone\n\
+\t... 3 more\n\
+2024-01-01 INFO after\n";
+
+#[test]
+fn entry_of_a_line_in_the_middle_of_a_stack_trace_ignores_the_filter() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("app.log");
+    fs::write(&path, STACK).unwrap();
+    let fx = open(&path, true);
+    fx.wait("loaded", |s| s.total_lines == 7);
+    // A filter that hides the whole entry: the panel still gets it from the index.
+    fx.session
+        .set_filter(
+            &[Level::Info],
+            &SearchQuery {
+                text: String::new(),
+                is_regex: false,
+                case_sensitive: false,
+            },
+            SearchMode::Filter,
+        )
+        .unwrap();
+    fx.wait("filtered", |s| !s.filter_pending && s.filtered_lines == 2);
+    let entry = fx.session.get_entry(3).unwrap();
+    assert_eq!((entry.first, entry.last, entry.line_count), (1, 5, 5));
+    assert_eq!(entry.level, Level::Error);
+    assert!(!entry.truncated);
+    assert_eq!(
+        entry.text,
+        "2024-01-01 ERROR boom\n\tat a.B.c(B.java:1)\n\tat a.B.d(B.java:2)\n\
+         Caused by: java.io.IOException: gone\n\t... 3 more"
+    );
+    let bytes: u64 = STACK.lines().skip(1).take(5).map(|l| l.len() as u64).sum();
+    assert_eq!(entry.total_bytes, bytes);
+    // A single line is an entry of its own.
+    // Copying the entry ignores the filter as well; the filtered copy has none of it.
+    assert_eq!(
+        fx.session.copy_all_lines(1, 5).unwrap(),
+        format!("{}\n", entry.text)
+    );
+    assert_eq!(fx.session.copy_lines(1, 5).unwrap(), "");
+    let single = fx.session.get_entry(0).unwrap();
+    assert_eq!(
+        (single.first, single.last, single.text.as_str()),
+        (0, 0, "2024-01-01 INFO before")
+    );
+}
+
+#[test]
+fn entry_at_the_end_of_the_file_grows() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("app.log");
+    fs::write(&path, "2024-01-01 INFO one\n2024-01-01 ERROR boom\n").unwrap();
+    let fx = open(&path, true);
+    fx.wait("loaded", |s| s.total_lines == 2 && s.status == Status::Live);
+    let entry = fx.session.get_entry(1).unwrap();
+    assert_eq!((entry.first, entry.last), (1, 1));
+    append(&path, "\tat a.B.c(B.java:1)\n\tat a.B.d(B.java:2)\n");
+    fx.wait("trace arrived", |s| s.total_lines == 4);
+    let grown = fx.session.get_entry(1).unwrap();
+    assert_eq!((grown.first, grown.last, grown.line_count), (1, 3, 3));
+    assert!(grown.text.ends_with("\tat a.B.d(B.java:2)"));
+}
+
+#[test]
+fn entry_text_stops_at_the_limit_on_a_character_boundary() {
+    let dir = tempfile::tempdir().unwrap();
+    let limit = log_commander_lib::session::MAX_DETAIL_BYTES;
+
+    // UTF-8: "ä" has two bytes; the prefix makes the limit fall in the middle of one.
+    let path = dir.path().join("utf8.log");
+    let long = format!("2024-01-01 ERROR x{}\n", "ä".repeat(limit));
+    fs::write(&path, format!("{long}\tat more\n")).unwrap();
+    let fx = open(&path, true);
+    fx.wait("loaded", |s| s.total_lines == 2);
+    let entry = fx.session.get_entry(1).unwrap();
+    assert!(entry.truncated);
+    assert_eq!((entry.first, entry.last), (0, 1));
+    assert!(entry.text.len() <= limit && entry.text.len() > limit - 4);
+    assert!(entry.text.ends_with('ä'), "no broken character at the end");
+    assert!(!entry.text.contains('\u{FFFD}'));
+    // Copying is not limited.
+    let copied = fx.session.copy_lines(0, 1).unwrap();
+    assert!(copied.ends_with("\tat more\n") && copied.len() > limit);
+
+    // UTF-16 with emoji (surrogate pairs, four bytes in UTF-8).
+    let path = dir.path().join("utf16.log");
+    let text = format!("2024-01-01 ERROR {}\r\n", "😀".repeat(limit / 3));
+    let mut bytes = vec![0xFF, 0xFE];
+    bytes.extend(text.encode_utf16().flat_map(u16::to_le_bytes));
+    fs::write(&path, bytes).unwrap();
+    let fx = open(&path, true);
+    fx.wait("loaded", |s| s.total_lines == 1);
+    let entry = fx.session.get_entry(0).unwrap();
+    assert!(entry.truncated);
+    assert!(entry.text.len() <= limit && entry.text.len() > limit - 4);
+    assert!(entry.text.starts_with("2024-01-01 ERROR 😀"));
+    assert!(entry.text.ends_with('😀'));
+    assert!(!entry.text.contains('\u{FFFD}'));
+
+    // Short lines in plenty: the limit cuts between lines as well.
+    let path = dir.path().join("many.log");
+    let mut many = String::from("2024-01-01 ERROR head\n");
+    for i in 0..30_000 {
+        many.push_str(&format!("\tat frame number {i:06} of a long trace\n"));
+    }
+    fs::write(&path, many).unwrap();
+    let fx = open(&path, true);
+    fx.wait("loaded", |s| s.total_lines == 30_001);
+    let entry = fx.session.get_entry(0).unwrap();
+    assert_eq!((entry.first, entry.last), (0, 30_000));
+    assert!(entry.truncated && entry.text.len() <= limit);
+}
+
+#[test]
+fn entry_from_the_file_before_a_rotation() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("app.log");
+    fs::write(&path, "2024-01-01 ERROR old\n\tat old.Frame\n").unwrap();
+    let fx = open(&path, true);
+    fx.wait("old lines", |s| s.total_lines == 2);
+    fs::rename(&path, dir.path().join("app.log.1")).unwrap();
+    fs::write(&path, "2024-01-01 ERROR new\n\tat new.Frame\n").unwrap();
+    fx.wait("both files", |s| s.total_lines == 4);
+    let old = fx.session.get_entry(1).unwrap();
+    assert_eq!((old.first, old.last), (0, 1));
+    assert_eq!(old.text, "2024-01-01 ERROR old\n\tat old.Frame");
+    let new = fx.session.get_entry(2).unwrap();
+    assert_eq!(new.text, "2024-01-01 ERROR new\n\tat new.Frame");
+}
+
+#[test]
+fn entry_of_a_file_that_shrank_is_shorter_but_no_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("app.log");
+    fs::write(&path, STACK).unwrap();
+    let fx = open(&path, true);
+    fx.wait("loaded", |s| s.total_lines == 7 && s.status == Status::Live);
+    // Frozen, the index keeps the lines while the file loses its end.
+    fx.session.set_frozen(true);
+    std::thread::sleep(SETTLE);
+    let cut = STACK.find("\tat a.B.d").unwrap() as u64;
+    FsOptions::new()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_len(cut)
+        .unwrap();
+    fx.wait("stale", |s| s.frozen_stale);
+    let entry = fx.session.get_entry(1).unwrap();
+    assert_eq!((entry.first, entry.last), (1, 5));
+    assert_eq!(
+        entry.text,
+        "2024-01-01 ERROR boom\n\tat a.B.c(B.java:1)\n\n\n"
+    );
+    // An empty log has no entry.
+    let empty = dir.path().join("empty.log");
+    fs::write(&empty, "").unwrap();
+    let fx = open(&empty, true);
+    fx.wait("live", |s| s.status == Status::Live);
+    assert!(fx.session.get_entry(0).is_err());
+}

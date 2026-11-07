@@ -4,8 +4,8 @@ use crate::error::{AppError, AppResult, ErrorCode};
 use crate::filter::{SearchMode, SearchQuery};
 use crate::level::Level;
 use crate::model::{
-    ColumnSet, EntryRange, FieldPreview, FilterInfo, FindHit, LogLine, SessionInfo, SessionUpdate,
-    Stats,
+    ColumnSet, EntryDetail, EntryRange, FieldPreview, FilterInfo, FindHit, LogLine, SessionInfo,
+    SessionUpdate, Stats,
 };
 use crate::profile::Profile;
 use crate::session::{LogSession, OpenOptions, SessionManager};
@@ -162,15 +162,32 @@ pub async fn get_entry_range(
     Ok(session(&state, session_id)?.entry_range(line))
 }
 
+/// The whole entry of a line for the detail panel, without filter and cut after 1 MiB.
+#[tauri::command]
+pub async fn get_entry(
+    state: State<'_, SessionManager>,
+    session_id: u64,
+    line: u32,
+) -> AppResult<EntryDetail> {
+    let session = session(&state, session_id)?;
+    blocking(move || session.get_entry(line)).await
+}
+
+/// The lines between two line numbers as text; `view: all` ignores the filter (default: filtered).
 #[tauri::command]
 pub async fn copy_lines(
     state: State<'_, SessionManager>,
     session_id: u64,
     first: u32,
     last: u32,
+    view: Option<LogView>,
 ) -> AppResult<String> {
     let session = session(&state, session_id)?;
-    blocking(move || session.copy_lines(first, last)).await
+    blocking(move || match view {
+        Some(LogView::All) => session.copy_all_lines(first, last),
+        _ => session.copy_lines(first, last),
+    })
+    .await
 }
 
 #[tauri::command]

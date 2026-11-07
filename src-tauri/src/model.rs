@@ -154,3 +154,19 @@ pub struct EntryRange {
     pub first: u32,
     pub last: u32,
 }
+
+/// The whole entry of a line for the detail panel: head and continuations, unfiltered.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EntryDetail {
+    pub first: u32,
+    pub last: u32,
+    pub level: Level,
+    pub line_count: u32,
+    /// Bytes of the lines in the file, without line ends.
+    pub total_bytes: u64,
+    /// The lines joined by `\n`, decoded and without ANSI, at most `MAX_DETAIL_BYTES`.
+    pub text: String,
+    /// The text stops early; copying (`copy_lines`) still returns everything.
+    pub truncated: bool,
+}

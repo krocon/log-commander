@@ -37,6 +37,8 @@ src/                         Angular 22 (zoneless, Signals, OnPush, Standalone)
   app/features/log-table/    LogTableViewComponent (GuiExpert Table), LogAreaModel, viewport-logic (reines
                              Scroll-Modell), table-logic, highlight (Inline-Tokens, cellSegments), columns-logic
                              (Spaltenansicht: Layout, Breiten, Spannen), column-menu (Spaltenmenü)
+  app/features/detail/       DetailPanel (Prompt 004), detail-format (JSON/XML-Tokenizer), detail-logic (Layout, Neuladen)
+  app/shared/splitter.ts     wiederverwendbarer Splitter (Pointer Events, Tastatur), Rechnung in splitter-logic.ts
   app/features/toolbar|statusbar|tabs|start|settings/   UI
 src-tauri/src/               Rust; alles außer commands.rs und lib.rs ist frei von Tauri
   session.rs                 LogSession, Abfragen, Hintergrund-Jobs (Filter, Level neu), SessionManager
@@ -85,6 +87,13 @@ samples/                     Beispiel-Logs
   verliert nichts (Handle bleibt offen), bei mehreren fehlen die Zwischenstände. Der Text liegt nicht im Speicher: Wird die
   Datei geleert, kann die eingefrorene Anzeige lückenhaft oder falsch sein. Das meldet die Statusleiste, zurückgesetzt
   wird erst beim Fortsetzen.
+- **Detail-Panel (Prompt 004):** zeigt `selection().anchor` (kein eigenes Auswahl-Signal), Text per `get_entry` direkt
+  aus dem Index (ohne Filter, bis 1 MiB, Schnitt an Zeichengrenze), Kopieren per `copy_lines` mit `view: all`.
+  Formatieren mit eigenem Tokenizer (`detail-format.ts`), **kein `JSON.parse`** (rundet 64-Bit-IDs) und **kein
+  `DOMParser`** (scheitert an Fragmenten); er ändert nur Einrückung und Farbe, über 256 KB bleibt der Text roh. Neu
+  geladen wird nur bei anderer Zeile/Tab/`epoch`/`viewGeneration` oder wenn der Eintrag am Dateiende liegt, höchstens
+  ein Aufruf zugleich. Sichtbarkeit, Höhe und Umbruch global in den Settings, gespeichert am Ende des Ziehens.
+  `onKey` der Tabelle nimmt `.detail` und `[role=separator]` aus (außer `D`).
 - **Fortsetzungszeilen:** Einrücken, `at `, `Caused by:`, `Traceback`, `... ` wird vor der Regex geprüft
   (`at com.acme.error.Handler` ist keine ERROR-Zeile). Zeilen mit Zeitstempel ohne Level beginnen einen neuen Eintrag.
 - **Felder beim Ausliefern, nicht beim Indexieren (Prompt 008):** `get_lines` zerlegt jede Zeile mit dem `FieldParser`
@@ -100,7 +109,7 @@ samples/                     Beispiel-Logs
   gilt nicht mehr und Angulars Komponenten-Styles fehlen.
 - **`backgroundThrottling: disabled`:** Ein Live-Viewer muss auch hinter anderen Fenstern aktuell bleiben.
 - **Grenzen:** höchstens 2³² Zeilen je Sitzung (Index dann 64 GB), Anzeige 128 KB je Zeile, Suche 1 MB je Zeile, Zeile ohne
-  Ende wird bei 16 MB geteilt. Felder: höchstens 12 Spalten aus JSON-/logfmt-Schlüsseln bzw. FIX-Tags, zerlegt werden 16 KB. Truncation wird über die kleinere Größe erkannt; wird eine Datei geleert und zwischen zwei
+  Ende wird bei 16 MB geteilt, Detail-Panel 1 MiB je Eintrag (Formatieren bis 256 KB). Felder: höchstens 12 Spalten aus JSON-/logfmt-Schlüsseln bzw. FIX-Tags, zerlegt werden 16 KB. Truncation wird über die kleinere Größe erkannt; wird eine Datei geleert und zwischen zwei
   Prüfungen über die alte Größe hinaus neu beschrieben, bleibt das unbemerkt.
 
 ## Arbeitsweise

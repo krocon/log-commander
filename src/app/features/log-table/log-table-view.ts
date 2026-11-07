@@ -32,6 +32,7 @@ import {
   ViewMetrics,
   bottomAnchor,
   clampToBottom,
+  revealBelow,
   scrollBy,
   visibleRowCount,
 } from './viewport-logic';
@@ -217,7 +218,7 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
   });
 
   /** What the table drew last; a hard repaint only when count or height changed. */
-  private drawn = { count: -1, rowH: -1, top: -1, left: -1 };
+  private drawn = { count: -1, rowH: -1, top: -1, left: -1, height: -1 };
   private expectedScrollTop = -1;
   /** The table `draw()` placed last; a new one reports its first scroll position before it is drawn. */
   private drawnConfig: TableConfig | null = null;
@@ -233,6 +234,8 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
   private headerBusy = false;
   private holds = 0;
   private resizeObserver: ResizeObserver | null = null;
+  /** When a click last selected an entry: the double click that follows shows that one. */
+  private clickedAt = -Infinity;
 
   /** Frame times of `draw()`, for measurements (`window.__lcTable`, `scripts/e2e/spike-003.js`). */
   private readonly drawTimes: number[] = [];
@@ -255,6 +258,14 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
     });
     effect(() => {
       this.session().visibleRows.set(visibleRowCount(this.bodyH(), this.rowH()));
+    });
+    // A panel that opens (or grows) below must not hide the selected line; following takes care of itself.
+    let lastBodyH = 0;
+    effect(() => {
+      const bodyH = this.bodyH();
+      const shrunk = bodyH < lastBodyH;
+      lastBodyH = bodyH;
+      if (shrunk) untracked(() => this.keepSelectionVisible());
     });
     effect(() => {
       const session = this.session();
@@ -288,7 +299,7 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
         api.setHeaderVisible(this.config().area.columnView);
         api.setColumnVisible(COL_NUMBER, lineNumbers);
         // A new table (or gutter) draws everything at its place again.
-        this.drawn = { count: -1, rowH: -1, top: -1, left: -1 };
+        this.drawn = { count: -1, rowH: -1, top: -1, left: -1, height: -1 };
         this.filled = null;
         this.redraw.update((r) => r + 1);
       });
@@ -320,6 +331,7 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
     host.addEventListener('wheel', this.onWheel, { passive: false, capture: true });
     host.addEventListener('mousedown', this.onHeaderMouseDown, { capture: true });
     host.addEventListener('dblclick', this.onHeaderDblClick, { capture: true });
+    host.addEventListener('dblclick', this.onBodyDblClick);
     window.addEventListener('mouseup', this.onMouseUp, { capture: true });
     document.addEventListener('mousedown', this.onOutsideMouseDown, { capture: true });
     this.resizeObserver = new ResizeObserver(() => {
@@ -344,6 +356,20 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
     document.removeEventListener('mousedown', this.onOutsideMouseDown, { capture: true });
     document.removeEventListener('keydown', this.onKey);
     document.removeEventListener('selectionchange', this.onSelectionChange);
+  }
+
+  private keepSelectionVisible(): void {
+    const session = this.session();
+    const anchor = session.selection()?.anchor;
+    if (anchor === undefined || session.follow()) return;
+    const pos = session.scroll();
+    const end = pos.top + visibleRowCount(this.viewportH(), this.rowH());
+    for (let row = pos.top; row < end; row++) {
+      if (session.cache.line(row)?.line !== anchor) continue;
+      const next = revealBelow(pos, row, this.metrics());
+      if (next) session.scroll.set(next);
+      return;
+    }
   }
 
   protected jumpToEnd(): void {
@@ -449,7 +475,11 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
     this.heldForSelection = false;
     const start = performance.now();
     const area = this.config().area;
-    let hard = state.count !== this.drawn.count || state.rowH !== this.drawn.rowH;
+    // A new height (window, detail panel) as well: the table follows its host only after a 500 ms debounce.
+    let hard =
+      state.count !== this.drawn.count ||
+      state.rowH !== this.drawn.rowH ||
+      this.viewportH() !== this.drawn.height;
     const gutter = this.lineNumbers() ? this.gutterWidth() : 0;
     const free = Math.max(0, this.viewportW() - gutter);
     let spanMoved = false;
@@ -487,7 +517,13 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
     }
     this.expectedScrollTop = this.scrollViewport()?.scrollTop ?? scrollTop;
     this.drawnConfig = this.config();
-    this.drawn = { count: state.count, rowH: state.rowH, top, left: state.left };
+    this.drawn = {
+      count: state.count,
+      rowH: state.rowH,
+      top,
+      left: state.left,
+      height: this.viewportH(),
+    };
     this.measureText(area);
     this.drawTimes.push(performance.now() - start);
     if (this.drawTimes.length > 5000) this.drawTimes.splice(0, 1000);
@@ -803,8 +839,27 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
     if (window.getSelection()?.toString()) return;
     const line = this.session().cache.line(event.rowIndex);
     if (!line) return;
+    this.clickedAt = performance.now();
     void this.sessions.selectEntry(this.session(), line.line, !!event.originalEvent?.shiftKey);
   }
+
+  /**
+   * Double click opens the detail panel. Its first click already chose the entry (in a running tail another
+   * line may lie under the pointer by now), so only without a selection does the target count. The second
+   * click marks a word and `onTableClick` returns early on it, which is right here.
+   */
+  private readonly onBodyDblClick = (event: MouseEvent): void => {
+    const target = event.target as HTMLElement;
+    if (!target.closest?.('[data-area="body"]') && !target.closest?.('.lt-cell, .lt-gutter'))
+      return;
+    const session = this.session();
+    const clickPending = performance.now() - this.clickedAt < 1000;
+    if (!session.selection() && !clickPending) {
+      const line = Number(target.closest?.<HTMLElement>('[data-line]')?.dataset['line']);
+      if (Number.isFinite(line)) void this.sessions.selectEntry(session, line, false);
+    }
+    if (!this.settings().detailVisible) this.settingsService.update({ detailVisible: true });
+  };
 
   private readonly onWheel = (event: WheelEvent): void => {
     if ((event.target as HTMLElement).closest?.('.lt-colmenu')) return;
@@ -842,6 +897,9 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
   private readonly onKey = (event: KeyboardEvent): void => {
     const target = event.target as HTMLElement;
     if (target.closest?.('input, textarea, select, dialog, .lt-colmenu')) return;
+    // The detail panel and splitters scroll and move with their own keys; only D closes the panel there.
+    const inPanel = !!target.closest?.('.detail, [role=separator]');
+    if (inPanel && event.key !== 'd' && event.key !== 'D') return;
     const session = this.session();
     const mod = event.metaKey || event.ctrlKey;
     if (mod && event.key.toLowerCase() === 'c') {
@@ -877,6 +935,10 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
       case 't':
       case 'T':
         this.toggleColumnMode();
+        break;
+      case 'd':
+      case 'D':
+        this.settingsService.update({ detailVisible: !this.settings().detailVisible });
         break;
       case 'Home':
         session.setFollow(false);

@@ -3,6 +3,7 @@ import { Channel } from '@tauri-apps/api/core';
 import { call } from '../backend/call';
 import {
   ColumnSet,
+  EntryDetail,
   EntryRange,
   FieldPreview,
   FilterInfo,
@@ -83,8 +84,19 @@ export class LogApi {
     return call('get_entry_range', { sessionId, line });
   }
 
-  copyLines(sessionId: number, first: number, last: number): Promise<string> {
-    return call('copy_lines', { sessionId, first, last });
+  /** The whole entry of a line straight from the index, for the detail panel. */
+  getEntry(sessionId: number, line: number): Promise<EntryDetail> {
+    return call('get_entry', { sessionId, line });
+  }
+
+  /** The lines between two line numbers; `all` ignores the filter. */
+  copyLines(
+    sessionId: number,
+    first: number,
+    last: number,
+    view: LogViewKind = 'filtered',
+  ): Promise<string> {
+    return call('copy_lines', { sessionId, first, last, view });
   }
 
   setKeepOnRotate(sessionId: number, keep: boolean): Promise<void> {

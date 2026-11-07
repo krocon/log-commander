@@ -13,13 +13,16 @@ Architektur verbaut nichts davon.
 - Log-Ansicht auf der GuiExpert Table (Prompt 003), feste Zeilenhöhe, kein Umbruch
 - Spaltenansicht mit Kopfzeile (Prompt 009) auf der GuiExpert Table: Breite ziehen und per Doppelklick anpassen,
   Reihenfolge ziehen, Spaltenmenü (`Shift+F10`, Rechtsklick), Layout je Profil, Rohansicht per `T`
+- Detail-Panel (Prompt 004): ganzer Eintrag der gewählten Zeile ohne Filter und Kürzung, JSON/XML formatiert (eigener
+  Tokenizer), Höhe per Splitter, `D` und Doppelklick
 
 ## Offen
 
 **Dateien:** Rotierte Archive als durchgehende Timeline, `.gz`/`.zip`/`.zst` lesen, Merge-View nach Zeitstempel, Ordner/Glob
 beobachten, Remote-Logs über SSH, `stdin`/Pipe-Modus.
 
-**Struktur:** Filtern aus der Kopfzeile (010), fixierte Spalten, eigene Felder aus der Nachricht (011),
+**Struktur:** Im Detail-Panel vorheriger/nächster Eintrag, Felder eines Eintrags als Tabelle, YAML/SQL formatieren;
+Filtern aus der Kopfzeile (010), fixierte Spalten, eigene Felder aus der Nachricht (011),
 Layout je Quelle beim Merge (006), einklappbare Stacktraces, Zeilenumbruch als Folgezeilen fester Höhe (eine Logzeile belegt
 mehrere Tabellenzeilen; braucht eine Zeilen-zu-Bildschirmzeilen-Liste im Backend, neu je Breite und Schrift).
 
