@@ -6,10 +6,12 @@ use crate::encoding::{display_text, Encoding};
 use crate::fields::{self, MIN_CONFIDENCE};
 use crate::filter::{Probe, TextTest};
 use crate::indexer::{read_at, LineEntry, LineSplitter, Segment};
+use crate::merge::time_of;
 use crate::model::Status;
 use crate::platform::{file_id, open_file_id, open_shared, FileId};
 use crate::profile::{suggest_profile, Profile, ProfileRegistry};
-use crate::session::{detection_bytes, Fresh, Shared};
+use crate::session::{detection_bytes, reference_time, Fresh, Shared};
+use crate::timestamp::TimestampParser;
 use notify::{EventKind, RecursiveMode, Watcher};
 use std::fs::File;
 use std::io;
@@ -61,7 +63,21 @@ pub struct Tailer {
     /// The file got smaller during a freeze. It may have grown past the old size again by the time
     /// the freeze ends, so this has to be remembered.
     shrunk_while_frozen: bool,
+    /// Times for the timeline (prompt 014), decided once from the sample: `None` without times.
+    clock: Clock,
+    /// The last entry head (virtual offset, length) and whether its time was asked for already.
+    last_head: Option<(u64, u32, bool)>,
 }
+
+/// The timestamp parser of the timeline, once the sample is known.
+enum Clock {
+    Undecided,
+    Off,
+    On(TimestampParser),
+}
+
+/// Bytes of a head read back for its time when a chunk ends inside its continuations.
+const HEAD_TIME_BYTES: usize = 4096;
 
 impl Tailer {
     pub fn new(shared: Arc<Shared>, path: PathBuf, file: File) -> io::Result<Self> {
@@ -92,6 +108,8 @@ impl Tailer {
             last_emit: None,
             last_data: Instant::now(),
             shrunk_while_frozen: false,
+            clock: Clock::Undecided,
+            last_head: None,
         })
     }
 
@@ -303,23 +321,54 @@ impl Tailer {
     }
 
     fn ingest(&mut self, skip: usize, n: usize) {
-        let (detector, mut prev, (ids, tests), encoding) = {
+        self.decide_clock();
+        let (detector, mut prev, (ids, tests), encoding, mut cursor) = {
             let data = self.shared.data.read();
             (
                 Arc::clone(&data.detector),
                 data.prev,
                 data.text_tests(),
                 data.encoding,
+                data.index.time.cursor(),
             )
         };
         // Prepared before the lock: the probe of every view per line, the text decoded once.
         let views = tests.len();
         let mut entries: Vec<LineEntry> = Vec::with_capacity(n / 80);
         let mut probes: Vec<Probe> = Vec::with_capacity(n / 80 * views);
+        // Times of a few heads per chunk of the timeline (prompt 014): `(line in batch, time)`.
+        let mut times: Vec<(usize, i64)> = Vec::new();
+        // Chunks ending inside continuations: the time of their last head is read back below.
+        let mut late: Vec<(usize, u64, u32)> = Vec::new();
+        let mut clock = match &mut self.clock {
+            Clock::On(parser) => Some(parser),
+            _ => None,
+        };
+        let last_head = &mut self.last_head;
         let block = &self.buf[skip..n];
         self.splitter.feed(block, |offset, raw| {
             let text = detection_bytes(raw, encoding);
             let (level, continuation) = detector.classify(&text, &mut prev);
+            if let Some(clock) = clock.as_deref_mut() {
+                let line = entries.len();
+                let step = cursor.next(!continuation);
+                let asked = step.want || (step.closes && !continuation);
+                if asked {
+                    if let Some(ts) = time_of(clock, &text) {
+                        times.push((line, ts));
+                        if step.want {
+                            cursor.found();
+                        }
+                    }
+                }
+                if !continuation {
+                    *last_head = Some((offset, raw.len() as u32, asked));
+                } else if step.closes {
+                    if let Some((head, len, false)) = *last_head {
+                        late.push((line, head, len));
+                    }
+                }
+            }
             if views == 1 {
                 probes.push(tests[0].probe_raw(raw, encoding, !continuation));
             } else {
@@ -332,15 +381,78 @@ impl Tailer {
                 continuation,
             ));
         });
+        // The open chunk ends with the last head of the batch: the live end of the timeline.
+        if let (Clock::On(_), Some((head, len, false)), Some(line)) =
+            (&self.clock, self.last_head, entries.len().checked_sub(1))
+        {
+            if late.last().is_none_or(|l| l.0 != line) {
+                late.push((line, head, len));
+            }
+            self.last_head = Some((head, len, true));
+        }
+        if !late.is_empty() {
+            self.read_late_times(&late, encoding, &mut times);
+        }
+        let mut times = times.into_iter().peekable();
         let mut data = self.shared.data.write();
         // The write lock is held for the whole batch: no filter or view can change in between.
         let mut fresh = Fresh::new(&data, &ids, &tests);
         for (i, entry) in entries.into_iter().enumerate() {
             let prepared = &probes[i * views..(i + 1) * views];
+            let ts = times.next_if(|t| t.0 == i).map(|t| t.1);
             let mut current = fresh.line(entry);
-            data.push_line(entry, |v| current.probe(v, prepared));
+            data.push_line(entry, ts, |v| current.probe(v, prepared));
         }
         data.prev = prev;
+    }
+
+    /// The timeline's parser, once the first lines are known: on if a line of the sample has a
+    /// time (a file without times parses nothing).
+    fn decide_clock(&mut self) {
+        if !matches!(self.clock, Clock::Undecided) {
+            return;
+        }
+        let data = self.shared.data.read();
+        if data.sample.is_empty() {
+            return;
+        }
+        let parser = TimestampParser::detect(
+            data.sample.iter().map(String::as_str),
+            reference_time(&data),
+        );
+        let timed = data
+            .sample
+            .iter()
+            .any(|line| time_of(&mut parser.clone(), line.as_bytes()).is_some());
+        self.clock = if timed { Clock::On(parser) } else { Clock::Off };
+    }
+
+    /// Times of heads whose chunk ended in their continuations, read back from the current file.
+    /// Sorted into `times` by line.
+    fn read_late_times(
+        &mut self,
+        late: &[(usize, u64, u32)],
+        encoding: crate::encoding::Encoding,
+        times: &mut Vec<(usize, i64)>,
+    ) {
+        let Clock::On(clock) = &mut self.clock else {
+            return;
+        };
+        let mut buf = vec![0u8; HEAD_TIME_BYTES];
+        for &(line, offset, len) in late {
+            let Some(at) = offset.checked_sub(self.current.base) else {
+                continue;
+            };
+            let want = (len as usize).min(HEAD_TIME_BYTES);
+            let Ok(got) = read_at(&self.current.file, &mut buf[..want], at) else {
+                continue;
+            };
+            let text = detection_bytes(&buf[..got], encoding);
+            if let Some(ts) = time_of(clock, &text) {
+                times.push((line, ts));
+            }
+        }
+        times.sort_unstable_by_key(|t| t.0);
     }
 
     /// The path names another file: finish the old one, then follow the new one.
@@ -389,6 +501,7 @@ impl Tailer {
         };
         self.splitter = LineSplitter::new(encoding, base);
         self.missing = false;
+        self.last_head = None;
     }
 
     fn check_truncation(&mut self) {
@@ -415,6 +528,7 @@ impl Tailer {
         self.current.read_pos = 0;
         self.current.started = false;
         self.splitter = LineSplitter::new(encoding, 0);
+        self.last_head = None;
     }
 
     /// Shows a line that has no end yet, after a pause of the writer.
@@ -446,9 +560,15 @@ impl Tailer {
         let (_, tests) = data.text_tests();
         let mut probes = Vec::with_capacity(tests.len());
         TextTest::probe_many(&tests, raw, encoding, !continuation, &mut probes);
+        // The timeline (prompt 014): the last line, so its time is the live end.
+        let ts = match &mut self.clock {
+            Clock::On(clock) if !continuation => time_of(clock, &text),
+            _ => None,
+        };
         data.mark_provisional(before);
         data.push_line(
             LineEntry::new(offset, raw.len() as u32, level, continuation),
+            ts,
             |v| probes[v],
         );
         data.prev = prev;

@@ -1090,8 +1090,8 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
   private readonly onKey = (event: KeyboardEvent): void => {
     const target = event.target as HTMLElement;
     if (target.closest?.('input, textarea, select, dialog, .lt-colmenu, .lt-rowmenu')) return;
-    // The detail panel, splitters, sidebar tree and statistics have their own keys; only D closes the panel there.
-    const inPanel = !!target.closest?.('.detail, [role=separator], [role=tree], .stats');
+    // The detail panel, splitters, sidebar tree, statistics and timeline have their own keys; only D closes the panel there.
+    const inPanel = !!target.closest?.('.detail, [role=separator], [role=tree], .stats, .timeline');
     if (inPanel && event.key !== 'd' && event.key !== 'D') return;
     const session = this.session();
     // Prompt 012: the dashboard lies over the log; its keys are its own.
@@ -1134,6 +1134,11 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
       case 'd':
       case 'D':
         this.settingsService.update({ detailVisible: !this.settings().detailVisible });
+        break;
+      // Prompt 014: the timeline above the log.
+      case 'z':
+      case 'Z':
+        this.settingsService.update({ showTimeline: !this.settings().showTimeline });
         break;
       case 'Home':
         session.setFollow(false);

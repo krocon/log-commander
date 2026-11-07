@@ -6,6 +6,8 @@
 //   node scripts/gen-log.mjs /tmp/app.log --rotate-every 50000 --truncate-every 0
 //   node scripts/gen-log.mjs /tmp/big.log --lines 5000000 --rate 0      (as fast as possible)
 //   node scripts/gen-log.mjs /tmp/metrics.log --metrics                  (cpu=, mem=, took … for prompt 011)
+//   node scripts/gen-log.mjs /tmp/gap.log --lines 600 --rate 0 --start 2026-01-15T09:00:00Z --pause-after 300 --pause 47
+//                                     (synthetic clock, one entry a second, 47 minutes of silence: prompt 014)
 import { appendFileSync, renameSync, truncateSync, existsSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
@@ -105,6 +107,11 @@ export function parseArgs(argv) {
     truncateEvery: 0,
     stack: 0.3,
     metrics: false,
+    // Prompt 014: a synthetic clock (`--start`, `--interval` ms per entry) and pauses in time.
+    start: null,
+    interval: 1000,
+    pauseAfter: 0,
+    pause: 0,
   };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -117,14 +124,31 @@ export function parseArgs(argv) {
     else if (arg === '--truncate-every') options.truncateEvery = Number(next());
     else if (arg === '--stack') options.stack = Number(next());
     else if (arg === '--metrics') options.metrics = true;
+    else if (arg === '--start') options.start = Date.parse(next());
+    else if (arg === '--interval') options.interval = Number(next());
+    else if (arg === '--pause-after') options.pauseAfter = Number(next());
+    else if (arg === '--pause') options.pause = Number(next());
     else if (arg.startsWith('--')) throw new Error(`unknown option ${arg}`);
     else options.file = arg;
   }
   if (!options.file)
     throw new Error(
-      'usage: gen-log.mjs <file> [--rate N] [--format spring|python|json|nginx] [--lines N] [--rotate-every N] [--truncate-every N] [--stack 0..1] [--metrics]',
+      'usage: gen-log.mjs <file> [--rate N] [--format spring|python|json|nginx] [--lines N] [--rotate-every N] [--truncate-every N] [--stack 0..1] [--metrics] [--start ISO] [--interval MS] [--pause-after N] [--pause MINUTES]',
     );
+  if (options.start !== null && Number.isNaN(options.start))
+    throw new Error('--start needs a date');
   return options;
+}
+
+/**
+ * The time of entry `index`: the real clock, or with `start` a synthetic one (`interval` ms per entry). Every
+ * `pauseAfter` entries the clock jumps `pause` minutes ahead, a known outage for the timeline (prompt 014).
+ */
+export function entryTime(options, index, now = Date.now()) {
+  const pauses = options.pauseAfter > 0 ? Math.floor(index / options.pauseAfter) : 0;
+  const offset = pauses * options.pause * 60_000;
+  const base = options.start === null ? now : options.start + index * options.interval;
+  return new Date(base + offset);
 }
 
 function rotate(file) {
@@ -150,8 +174,8 @@ async function main() {
     const count = Math.min(perTick, options.lines - written);
     let chunk = '';
     for (let i = 0; i < count; i++) {
-      chunk +=
-        makeEntry(options.format, new Date(), Math.random, options.stack, options.metrics) + '\n';
+      const time = entryTime(options, written + i);
+      chunk += makeEntry(options.format, time, Math.random, options.stack, options.metrics) + '\n';
     }
     appendFileSync(options.file, chunk);
     written += count;

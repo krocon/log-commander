@@ -654,6 +654,26 @@ export class LogSessionService {
     }
   }
 
+  /**
+   * Timeline (prompt 014): to the first entry at or after `ts` (microseconds, UTC) in the tab's view; the
+   * selection stays, following stops.
+   */
+  async jumpToTime(session: SessionState, ts: number): Promise<void> {
+    try {
+      const hit = await this.api.positionAtTime(session.sessionId, ts, session.viewId);
+      if (hit) session.jumpTo(hit.position, hit.line);
+      else this.showFindMessage(session, 'Keine Zeitstempel im Log');
+    } catch (e) {
+      this.showError(toAppError(e));
+    }
+  }
+
+  /** Timeline: a time window as a condition of the tab's own filter tree (texts as the log writes times). */
+  filterTimeWindow(session: SessionState, from: string, to: string): void {
+    this.addCondition(session, { type: 'time', from, to });
+    this.showFindMessage(session, `Gefiltert auf Zeit ${from} – ${to}`);
+  }
+
   /** `M`: bookmark on the head of the selected entry, or off again. */
   toggleBookmark(session: SessionState): void {
     const selection = session.selection();

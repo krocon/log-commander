@@ -18,7 +18,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
-import { makeEntry } from '../gen-log.mjs';
+import { entryTime, makeEntry, parseArgs } from '../gen-log.mjs';
 
 const root = new URL('../..', import.meta.url).pathname;
 const exe = process.platform === 'win32' ? 'log-commander.exe' : 'log-commander';
@@ -73,6 +73,25 @@ writeFileSync(
       localHour(9),
     ),
 );
+// Timeline (prompt 014): one entry a second from 09:00:00Z, after 300 entries 47 minutes of silence (09:04:59 to
+// 09:52:00), 600 entries; the same on every run.
+{
+  let state = 1414;
+  const random = () => (state = (state * 16807) % 2147483647) / 2147483647;
+  const options = parseArgs([
+    'gap.log',
+    '--start',
+    '2026-01-15T09:00:00Z',
+    '--pause-after',
+    '300',
+    '--pause',
+    '47',
+  ]);
+  let text = '';
+  for (let i = 0; i < 600; i++)
+    text += `${makeEntry('spring', entryTime(options, i), random, 0.3)}\n`;
+  writeFileSync(join(dir, 'gap.log'), text);
+}
 // Dashboard (prompt 012): the Spring Boot sample once more, opened by the scenario through the path dialog.
 const dash = join(dir, 'dash.log');
 writeFileSync(dash, readFileSync(join(root, 'samples/spring-boot.log')));

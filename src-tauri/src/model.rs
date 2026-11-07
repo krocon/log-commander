@@ -223,6 +223,70 @@ pub struct Overview {
     pub marks: Vec<OverviewMark>,
 }
 
+/// What the timeline draws (prompt 014): entries of the whole file over time. Times in
+/// microseconds since the epoch, UTC.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Timeline {
+    pub epoch: u64,
+    /// Lines of the index; anchors belong to this count.
+    pub total_lines: u64,
+    /// Entries (heads) of the file.
+    pub entries: u64,
+    /// Whether any head had a time; without, there is nothing to draw.
+    pub has_times: bool,
+    /// The axis: the requested range, or for the whole file the 1st–99th percentile widened.
+    pub from: i64,
+    pub to: i64,
+    /// Entries per bucket from `from` to `to`, approximate where a chunk spreads over buckets.
+    pub buckets: Vec<TimelineBucket>,
+    /// Stretches without entries between chunks, at least a bucket long.
+    pub gaps: Vec<TimeRange>,
+    /// Earliest and latest time in the file, outliers included.
+    pub min: Option<i64>,
+    pub max: Option<i64>,
+    /// Entries before / after the axis.
+    pub before: u64,
+    pub after: u64,
+    /// Entries in chunks without any time, placed by their neighbours.
+    pub untimed: u64,
+    /// Line → time at chunk boundaries (at most 1024), for the band of the visible lines.
+    pub anchors: Vec<TimeAnchor>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineBucket {
+    pub all: f32,
+    pub warn: f32,
+    pub error: f32,
+    pub fatal: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimeRange {
+    pub from: i64,
+    pub to: i64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimeAnchor {
+    pub line: u32,
+    pub ts: i64,
+}
+
+/// Where a time is in a view: the first entry head at or after it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimeHit {
+    pub line: u32,
+    pub position: u32,
+    /// A head with this time or later was found; otherwise the start of the nearest chunk.
+    pub exact: bool,
+}
+
 /// Where a line (selection, bookmark) is in the view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]

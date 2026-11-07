@@ -8,6 +8,7 @@
 use crate::encoding::Encoding;
 use crate::level::Level;
 use crate::overview::LevelSummary;
+use crate::timeline::TimeSummary;
 use memchr::memchr_iter;
 use std::fs::File;
 use std::io;
@@ -83,6 +84,8 @@ pub struct LineIndex {
     /// Levels per chunk of lines for the overview ruler while the view is the identity (prompt 007).
     /// `replace` leaves it alone: a re-levelling builds a new one and swaps it in.
     pub summary: LevelSummary,
+    /// Times and entry counts per chunk of lines for the timeline (prompt 014).
+    pub time: TimeSummary,
 }
 
 impl LineIndex {
@@ -95,8 +98,16 @@ impl LineIndex {
     }
 
     pub fn push(&mut self, entry: LineEntry) {
+        self.push_timed(entry, None);
+    }
+
+    /// Appends a line; `ts` is its time if it was parsed (see `timeline::TimeCursor`).
+    pub fn push_timed(&mut self, entry: LineEntry, ts: Option<i64>) {
         self.counts[entry.level() as usize] += 1;
         self.summary.push(entry.level());
+        // The first line starts an entry even if it looks like a continuation.
+        let head = !entry.is_continuation() || self.entries.is_empty();
+        self.time.push(entry.level(), head, ts);
         self.entries.push(entry);
     }
 
@@ -104,6 +115,8 @@ impl LineIndex {
         let entry = self.entries.pop()?;
         self.counts[entry.level() as usize] -= 1;
         self.summary.pop();
+        let head = !entry.is_continuation() || self.entries.is_empty();
+        self.time.pop(entry.level(), head);
         Some(entry)
     }
 
@@ -118,6 +131,7 @@ impl LineIndex {
         self.entries.clear();
         self.counts = [0; Level::COUNT];
         self.summary.clear();
+        self.time.clear();
     }
 }
 

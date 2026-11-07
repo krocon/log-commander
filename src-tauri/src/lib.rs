@@ -30,6 +30,7 @@ pub mod profile;
 pub mod report_db;
 pub mod session;
 pub mod tail;
+pub mod timeline;
 pub mod timestamp;
 pub mod views;
 
@@ -108,6 +109,8 @@ pub fn run() {
             commands::get_entry_range,
             commands::get_overview,
             commands::find_level,
+            commands::get_timeline,
+            commands::position_at_time,
             commands::get_entry,
             commands::copy_lines,
             commands::set_keep_on_rotate,

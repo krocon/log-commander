@@ -212,6 +212,40 @@ await shot(metrics, 'extracted');
   }
 }
 
+// Timeline (prompt 014): three hours of a shop with a busy hour, a burst of errors and 40 minutes of silence; dark
+// with a dragged window (its buttons show), light as it is.
+{
+  let state = 2024;
+  const random = () => (state = (state * 16807) % 2147483647) / 2147483647;
+  const start = Date.UTC(2026, 0, 15, 8);
+  let text = '';
+  let t = start;
+  while (t < start + 3 * 3_600_000) {
+    const minute = (t - start) / 60_000;
+    if (minute >= 95 && minute < 135) {
+      t += 40 * 60_000;
+      continue;
+    }
+    const busy = minute > 30 && minute < 70 ? 4 : 1;
+    const burst = minute >= 52 && minute < 56;
+    const entry = makeEntry('spring', new Date(t), random, 0.2);
+    text += `${burst && random() < 0.5 ? entry.replace(/ (INFO|DEBUG|TRACE) /, 'ERROR ') : entry}\n`;
+    t += Math.floor((random() * 6000) / busy) + 200;
+  }
+  for (const theme of ['dark', 'light']) {
+    const p = await page(browser, { theme, only: { 'shop.log': text } });
+    await p.waitForSelector('app-timeline[data-buckets]:not([data-buckets="0"])');
+    if (theme === 'dark') {
+      const box = await p.locator('app-timeline .track').boundingBox();
+      await p.mouse.move(box.x + box.width * 0.36, box.y + 20);
+      await p.mouse.down();
+      await p.mouse.move(box.x + box.width * 0.47, box.y + 20, { steps: 4 });
+      await p.mouse.up();
+    }
+    await shot(p, theme === 'dark' ? 'timeline' : 'timeline-light');
+  }
+}
+
 // Dashboard (prompt 012): two hours of a shop with measurements, the default panels.
 {
   let state = 4711;

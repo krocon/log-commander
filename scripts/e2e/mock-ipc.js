@@ -533,6 +533,66 @@
         marks,
       };
     },
+    // Timeline (prompt 014): exact over the heads with an ISO time (the backend spreads chunks evenly).
+    get_timeline({ sessionId, from, to, buckets }) {
+      const session = sessions.get(sessionId);
+      const heads = reportHeads(session).map((h) => ({ ...h, us: h.ts === null ? null : h.ts * 1000 }));
+      const timed = heads.filter((h) => h.us !== null);
+      const base = {
+        epoch: 0,
+        totalLines: session.lines.length,
+        entries: heads.length,
+        hasTimes: timed.length > 0,
+        buckets: [],
+        gaps: [],
+        min: null,
+        max: null,
+        before: 0,
+        after: 0,
+        untimed: heads.length - timed.length,
+        anchors: [],
+        from: 0,
+        to: 0,
+      };
+      if (!timed.length) return base;
+      const times = timed.map((h) => h.us);
+      const min = Math.min(...times);
+      const max = Math.max(...times);
+      const lo = from ?? min;
+      const hi = to ?? (max > min ? max : min + 60_000_000);
+      const width = (hi - lo) / buckets;
+      const out = Array.from({ length: buckets }, () => ({ all: 0, warn: 0, error: 0, fatal: 0 }));
+      let before = 0;
+      let after = 0;
+      for (const h of timed) {
+        if (h.us < lo) before++;
+        else if (h.us > hi) after++;
+        else {
+          const b = out[Math.min(buckets - 1, Math.floor((h.us - lo) / width))];
+          b.all++;
+          if (h.level === 'WARN') b.warn++;
+          if (h.level === 'ERROR') b.error++;
+          if (h.level === 'FATAL') b.fatal++;
+        }
+      }
+      const sorted = [...times].sort((a, b) => a - b);
+      const gaps = [];
+      for (let i = 1; i < sorted.length; i++) {
+        const [a, b] = [Math.max(sorted[i - 1], lo), Math.min(sorted[i], hi)];
+        if (b - a >= width) gaps.push({ from: a, to: b });
+      }
+      const step = Math.max(1, Math.ceil(timed.length / 1024));
+      const anchors = timed.filter((_, i) => i % step === 0).map((h) => ({ line: h.line - 1, ts: h.us }));
+      return { ...base, from: lo, to: hi, buckets: out, gaps, min, max, before, after, anchors };
+    },
+    position_at_time({ sessionId, ts, viewId }) {
+      const session = target(sessionId, viewId);
+      const shown = visible(session);
+      const head = reportHeads(sessions.get(sessionId)).find((h) => h.ts !== null && h.ts * 1000 >= ts);
+      if (!head || !shown.length) return null;
+      const position = Math.max(0, shown.findIndex((l) => l.line >= head.line - 1));
+      return { line: shown[position].line, position, exact: true };
+    },
     find_level({ sessionId, fromPosition, forward, levels, viewId }) {
       const shown = visible(target(sessionId, viewId));
       const heads = shown

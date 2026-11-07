@@ -223,6 +223,62 @@ export interface Overview {
   marks: OverviewMark[];
 }
 
+/**
+ * What the timeline draws (prompt 014): entries of the whole file over time, from a running summary per chunk
+ * of lines. Times are microseconds since the epoch (UTC).
+ */
+export interface Timeline {
+  epoch: number;
+  /** Lines of the file; `anchors` belong to this count. */
+  totalLines: number;
+  /** Entries (heads) of the file. */
+  entries: number;
+  /** Whether any entry has a time; without, there is nothing to draw. */
+  hasTimes: boolean;
+  /** The axis: the requested range, or for the whole file the 1st–99th percentile, widened. */
+  from: number;
+  to: number;
+  /** Entries per bucket, approximate (a chunk spreads evenly over its time). */
+  buckets: TimelineBucket[];
+  /** Stretches without entries, at least a bucket long. */
+  gaps: TimeRange[];
+  /** Earliest and latest time of the file, outliers included. */
+  min: number | null;
+  max: number | null;
+  /** Entries before / after the axis (outliers, or outside the zoom). */
+  before: number;
+  after: number;
+  /** Entries without any time, placed by their neighbours. */
+  untimed: number;
+  /** Line → time at chunk boundaries, for the band of the visible lines. */
+  anchors: TimeAnchor[];
+}
+
+export interface TimelineBucket {
+  all: number;
+  warn: number;
+  error: number;
+  fatal: number;
+}
+
+export interface TimeRange {
+  from: number;
+  to: number;
+}
+
+export interface TimeAnchor {
+  line: number;
+  ts: number;
+}
+
+/** The first entry at or after a time in a view. */
+export interface TimeHit {
+  line: number;
+  position: number;
+  /** A head with this time or later was found (otherwise the start of the nearest chunk). */
+  exact: boolean;
+}
+
 /** Where a line (selection, bookmark) is in the view. */
 export interface OverviewMark {
   line: number;

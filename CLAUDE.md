@@ -23,7 +23,7 @@
 | Messung Merge 2 × 500 MB | `cd src-tauri && cargo test --release --test merge_integration -- --ignored --nocapture measure_merge` |
 | Kontrast WCAG AA | `npm run contrast` (prüft `src/styles.css`) |
 | Screenshots für die Doku | `npm run build`, dann `node scripts/screenshots.mjs` (WebKit + IPC-Mock) |
-| Log-Generator | `node scripts/gen-log.mjs /tmp/app.log --rate 5000 [--format …] [--rotate-every N] [--truncate-every N] [--metrics]` (`--metrics`: `cpu= mem= took` für Prompt 011) |
+| Log-Generator | `node scripts/gen-log.mjs /tmp/app.log --rate 5000 [--format …] [--rotate-every N] [--truncate-every N] [--metrics]` (`--metrics`: `cpu= mem= took` für Prompt 011); Lücken (014): `--start ISO --pause-after N --pause MIN` |
 | Icons neu | `npx tauri icon src-tauri/icons/source/app-icon.svg -o src-tauri/icons` (danach `android/`, `ios/` löschen) |
 
 ## Layout
@@ -50,6 +50,7 @@ src/                         Angular 22 (zoneless, Signals, OnPush, Standalone)
   app/shared/splitter.ts     wiederverwendbarer Splitter (Pointer Events, Tastatur), Rechnung in splitter-logic.ts
   app/features/sidebar/      Seitenleiste: Baum (tree-model, log-tree), Statistik (stats-panel), Layout (sidebar-logic/-state)
   app/shared/                splitter (wiederverwendbar), session-marks (Tabs und Baum), format
+  app/features/timeline/     Zeitstrahl über dem Log (014): timeline.ts zeichnet, timeline-logic.ts rein (Säulen, Lücken, Ticks)
   app/features/toolbar|statusbar|tabs|start|settings/   UI
 src-tauri/src/               Rust; alles außer commands.rs und lib.rs ist frei von Tauri
   session.rs                 LogSession, Ansichten (ViewState), Abfragen, Hintergrund-Jobs (Filter, Level neu), SessionManager
@@ -60,7 +61,8 @@ src-tauri/src/               Rust; alles außer commands.rs und lib.rs ist frei 
   fields.rs                  Formaterkennung, Felder je Zeile (Spannen in UTF-16), JSON/logfmt/FIX/W3C-Scanner, Inferenz
   extract.rs                 extrahierte Felder (Prompt 011): ExtractRule, RuleBook je Profil, Extractors, parse_value, suggest
   timestamp.rs               Zeitstempel erkennen und nach µs UTC wandeln (auch für den Merge, Prompt 006)
-  filter.rs                  gefilterte Zeilenliste (inkrementell), Textsuche, Ausdruck je Eintrag
+  filter.rs                  gefilterte Zeilenliste (inkrementell), Textsuche
+  timeline.rs                TimeSummary (014): Zeiten und Einträge je 256 Zeilen, Zeit-Eimer, Achse, Lücken, Ausdruck je Eintrag
   filter_expr.rs             Filterbaum: FilterExpr (UND/ODER/NICHT, Text, Level, Feld, Zeit, Abschnitt, Zeilen) kompiliert, Quellenmaske
   overview.rs                LevelSummary: Level-Bits je Abschnitt für Overview Ruler und find_level (max. 64 KB)
   merge.rs                   mehrere Dateien als eine Sitzung: Merger (rein), Worker (Folgen, Rotation, Haltepuffer)
@@ -155,6 +157,13 @@ samples/                     Beispiel-Logs
   bleiben je Sitzung fest (Rotation behält sie, fremde Zeilen landen in `message`); ein Profilwechsel tauscht sie erst mit
   der neuen `viewGeneration` (`columnsRevision` steigt mit). Fortsetzungszeilen sind ganz `message`. Nur die ersten 16 KB
   werden zerlegt, der Rest gehört zum letzten Feld. SOH (`\x01`, FIX) zeigt `display_text` als `|`.
+- **Zeitstrahl (014):** `TimeSummary` im `LineIndex` neben der `LevelSummary`: je Abschnitt (256 Zeilen, verdichtet
+  bis 64 K Abschnitte) erste/letzte Zeit, größter Sprung, Einträge je Level, höchstens 4 MB; der Index bleibt bei
+  16 Byte. Geparst werden beim Einlesen nur wenige Köpfe je Abschnitt (`TimeCursor`: erster mit Zeit, jeder 32., der
+  letzte; endet ein Abschnitt in einem Stacktrace, wird der Kopf vor der Sperre nachgelesen), ohne Zeiten im Sample
+  gar keiner. Ein Merge gibt seine Zeiten mit. Zeigt immer die ganze Datei, auch im Filter-Tab; „Als Filter“ legt eine
+  Zeit-Bedingung im Baum des Tabs an. Abfragen nur unter der Lesesperre, `position_at_time` liest die Köpfe eines
+  Abschnitts (`blocking`).
 - **Datei-Identität unter Windows** über `GetFileInformationByHandle`, nicht Erstellzeit (File Tunneling).
 - **CSP:** `dangerousDisableAssetCspModification: ["style-src"]` ist nötig. Sonst ergänzt Tauri Nonces, `'unsafe-inline'`
   gilt nicht mehr und Angulars Komponenten-Styles fehlen.
@@ -194,7 +203,9 @@ samples/                     Beispiel-Logs
   1 KB gekürzt, 24 Panels, 24 Reihen je Diagramm, über 5000 Punkte wird ein größeres `bucket` vorgeschlagen. Nur die
   ganze Datei, nicht die gefilterte Ansicht.
 - **Grenzen:** höchstens 2³² Zeilen je Sitzung (Index dann 64 GB), Anzeige 128 KB je Zeile, Suche 1 MB je Zeile, Zeile ohne
-  Ende wird bei 16 MB geteilt, Detail-Panel 1 MiB je Eintrag (Formatieren bis 256 KB). Felder: höchstens 12 Spalten aus JSON-/logfmt-Schlüsseln bzw. FIX-Tags, zerlegt werden 16 KB. Truncation wird über die kleinere Größe erkannt; wird eine Datei geleert und zwischen zwei
+  Ende wird bei 16 MB geteilt, Detail-Panel 1 MiB je Eintrag (Formatieren bis 256 KB). Felder: höchstens 12 Spalten aus JSON-/logfmt-Schlüsseln bzw. FIX-Tags, zerlegt werden 16 KB. Zeitstrahl: Zahlen je Eimer
+  angenähert (gleichverteilt im Abschnitt), Ausfälle innerhalb eines Abschnitts nur auf eine Probe genau.
+  Truncation wird über die kleinere Größe erkannt; wird eine Datei geleert und zwischen zwei
   Prüfungen über die alte Größe hinaus neu beschrieben, bleibt das unbemerkt.
 
 - **Dashboard (012):** SQLite (`rusqlite` bundled, +1,8 MiB; DuckDB wäre +43 MiB) in

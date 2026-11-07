@@ -1364,6 +1364,98 @@
     await report('PASS closing the filter tab leaves the parent live, without error');
     if ($('[role=alert]')?.textContent.trim()) throw new Error(`error shown: ${$('[role=alert]').textContent}`);
 
+    // Timeline (prompt 014): gap.log has one entry a second from 09:00:00Z and 47 minutes of silence after
+    // 09:04:59. The outage is there, a click jumps to the right time, a dragged window filters the tab.
+    click(button('Pfad'));
+    await waitFor('path dialog for the timeline file', () => $('app-open-path-dialog dialog')?.open);
+    typePath('~/gap.log').requestSubmit();
+    await waitFor('gap.log is open', () => tabOf('gap.log') && !$('app-open-path-dialog'));
+    const tlStrip = () => $('app-timeline');
+    const tlAt = (iso) => Date.parse(iso) * 1000;
+    await waitFor('the timeline counts every entry', () => Number(tlStrip()?.dataset.entries) === 600);
+    const tlOutage = await waitFor('the outage is found', () => {
+      const list = (tlStrip().dataset.outages ?? '').split(',').filter(Boolean).map((g) => g.split(':').map(Number));
+      return list.length === 1 ? list[0] : null;
+    });
+    // Inside a chunk of lines the backend knows the outage to its sampled heads (every 32 lines).
+    if (tlOutage[0] < tlAt('2026-01-15T09:04:00Z') || tlOutage[0] > tlAt('2026-01-15T09:06:30Z') ||
+      tlOutage[1] < tlAt('2026-01-15T09:50:30Z') || tlOutage[1] > tlAt('2026-01-15T09:52:01Z')) {
+      throw new Error(`outage at the wrong time: ${tlOutage.map((t) => new Date(t / 1000).toISOString())}`);
+    }
+    const tlTrack = $('app-timeline .track');
+    if (!/Lücke/.test(tlTrack.getAttribute('aria-label'))) {
+      throw new Error(`summary without the gap: ${tlTrack.getAttribute('aria-label')}`);
+    }
+    await report(`PASS outage ${new Date(tlOutage[0] / 1000).toISOString()} – ${new Date(tlOutage[1] / 1000).toISOString()}`);
+    const tlAxis = () => [Number(tlStrip().dataset.from), Number(tlStrip().dataset.to)];
+    const tlXOfTime = (ts) => {
+      const [from, to] = tlAxis();
+      return Math.round(((ts - from) / (to - from)) * tlTrack.clientWidth);
+    };
+    const tlTimeOfX = (x) => {
+      const [from, to] = tlAxis();
+      return from + (x / tlTrack.clientWidth) * (to - from);
+    };
+    const tlMouse = (type, x, target = tlTrack) =>
+      target.dispatchEvent(new MouseEvent(type, {
+        bubbles: true,
+        button: 0,
+        clientX: tlTrack.getBoundingClientRect().left + x,
+        clientY: tlTrack.getBoundingClientRect().top + 10,
+      }));
+    const tlRowTime = (text) => {
+      const m = text.match(/2026-01-15T\d\d:\d\d:\d\d\.\d{3}Z/);
+      return m ? Date.parse(m[0]) * 1000 : null;
+    };
+    // A click jumps to the first entry at or after the time under the pointer.
+    const tlClickX = tlXOfTime(tlAt('2026-01-15T09:53:20Z'));
+    const tlWanted = Math.ceil(tlTimeOfX(tlClickX) / 1e6) * 1e6;
+    tlMouse('mousedown', tlClickX);
+    tlMouse('mouseup', tlClickX, window);
+    await waitFor('a click jumps to its time', () =>
+      rows().some((c) => tlRowTime(c.textContent) === tlWanted));
+    await waitFor('the jump stops following', () => !$('app-overview-ruler .to-end[aria-pressed=true]'));
+    // Keyboard: Home and Enter go to the first bucket, the start of the file.
+    tlTrack.focus();
+    tlTrack.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }));
+    tlTrack.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await waitFor('Home and Enter on the timeline jump to the start', () => topLine() === 0);
+    // A dragged window as a filter of this tab.
+    const tlX1 = tlXOfTime(tlAt('2026-01-15T09:52:30Z'));
+    const tlX2 = tlXOfTime(tlAt('2026-01-15T09:53:30Z'));
+    tlMouse('mousedown', tlX1);
+    tlMouse('mousemove', tlX2, window);
+    tlMouse('mouseup', tlX2, window);
+    const tlWin = await waitFor('a drag marks a window', () => tlStrip().dataset.window?.split(':').map(Number));
+    click(button('Als Filter'));
+    const tlGapId = await (async () => {
+      for (let id = 1; id < 60; id++) {
+        const first = await invoke('get_lines', { sessionId: id, view: 'all', start: 0, count: 1 }).catch(() => null);
+        if (first?.[0]?.text.startsWith('2026-01-15T09:00:00.000Z')) return id;
+      }
+      throw new Error('no session of gap.log');
+    })();
+    for (let i = 0; ; i++) {
+      const s = await invoke('get_stats', { sessionId: tlGapId });
+      if (!s.filterPending && s.filteredLines > 0 && s.filteredLines < s.totalLines) break;
+      if (i > 200) throw new Error(`the time filter did not apply: ${JSON.stringify(s)}`);
+      await sleep(50);
+    }
+    await waitFor('the time filter keeps only the window', () => {
+      const times = rows().map((c) => tlRowTime(c.textContent)).filter((t) => t !== null);
+      const from = Math.floor(tlWin[0] / 1e6) * 1e6;
+      const to = Math.ceil(tlWin[1] / 1e6) * 1e6;
+      return times.length > 20 && times.every((t) => t >= from && t <= to);
+    });
+    // The timeline still shows the whole file.
+    if (Number(tlStrip().dataset.entries) !== 600) throw new Error('the timeline lost entries under a filter');
+    // Z hides it, Z brings it back.
+    press('z');
+    await waitFor('Z hides the timeline', () => !tlStrip());
+    press('z');
+    await waitFor('Z shows it again', () => Number(tlStrip()?.dataset.entries) === 600);
+    if ($('[role=alert]')?.textContent.trim()) throw new Error(`error shown: ${$('[role=alert]').textContent}`);
+
     await report('DONE');
   } catch (e) {
     await report(`FAIL ${e.message}`);

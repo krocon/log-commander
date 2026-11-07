@@ -59,6 +59,16 @@ Like <code>tail -f</code> with a GUI: millions of lines, instant filters, no wai
   3 px mark. Click a mark to go to the next entry from that place, anywhere else to go there; the selection stays. The arrow at its foot goes to the end and follows. `E`/`W` jump to the next error or warning,
   `M` bookmarks the selected entry (flag in the gutter, kept until the file starts over), `N` goes to the next
   bookmark. Switch it off in the settings.
+- **Timeline** – a 56 px strip above the log shows the entries of the whole file over *time*, stacked by level
+  (the rest in grey, WARN, ERROR and FATAL on top), so peaks, bursts of errors and outages stand out. An outage (no
+  entries for ten times the usual spacing) is hatched, its tooltip says „keine Einträge 10:04–10:51“; the band marks
+  what the log shows. Click to jump to that time (the selection stays, following stops), drag to mark a window and use
+  it „Als Filter“ (a time condition in the tab's filter tree) or „Hineinzoomen“; the wheel zooms, „Ganze Datei“ goes
+  back. By keyboard: arrows move a cursor (`Shift`: mark a window), `Enter` jumps, `+`/`-` zoom. The axis runs from
+  the 1st to the 99th percentile, widened, so a stray 1970 timestamp does not squash it; entries outside are counted
+  at its edge. Counts come from a running summary per 256 lines and are approximate (≈). It shows all lines of the
+  file, also in a filtered tab. Files without timestamps get a one-line note instead. `Z`, the toolbar („Zeit“) or the
+  settings switch it off.
 - **From the filter to the whole log** – `G` (or „Im Gesamtlog“ in the toolbar and the detail panel) shows the
   selected line of a filtered view in the whole log, with the search kept as highlighting; `G` again (or „Zurück zum
   Filter“) brings the filter back at the same line. Changing the filter by hand forgets the way back.
@@ -106,6 +116,7 @@ Like <code>tail -f</code> with a GUI: millions of lines, instant filters, no wai
 | ![Dashboard](docs/screenshots/dashboard.png) | ![Dashboard with SQL and schema](docs/screenshots/dashboard-sql.png) |
 | ![Overview ruler on a busy log](docs/screenshots/ruler-dense.png) | ![The same in the light theme](docs/screenshots/ruler-dense-light.png) |
 | ![Filter tabs: a chain of filters](docs/screenshots/drilldown.png) | |
+| ![Timeline with an outage and a marked window](docs/screenshots/timeline.png) | ![Timeline in the light theme](docs/screenshots/timeline-light.png) |
 
 ## Install
 
@@ -127,6 +138,8 @@ log-commander /var/log/app.log /var/log/other.log
 | `Space` | Pause or resume following |
 | `P` | Freeze: hold or resume reading the file of this tab |
 | `T` | Columns or raw lines |
+| `Z` | Show or hide the timeline above the log |
+| `←`, `→`, `Shift+←/→`, `Home`, `End`, `Enter`, `+`, `-`, `Esc` on the timeline | Move the cursor, mark a window, jump to its time, zoom, drop the window |
 | `D`, double click on a line | Detail panel with the whole entry; in it the arrows scroll the panel |
 | `↑`, `↓` on the panel's bar | Panel height (`Shift`: bigger steps, `Home`/`End`, double click: default) |
 | `Cmd/Ctrl+B` | Show or hide the sidebar |
@@ -197,6 +210,7 @@ Measured on an Apple Silicon Mac, release build, with
 | `get_lines`, 200 lines at a random position | 43 µs |
 | `get_overview` (800 px, 1000 bookmarks) | 0.3 ms |
 | `find_level`, no FATAL in 5.1 million lines | 0.13 ms |
+| `get_timeline` (1000 buckets) / `position_at_time` | 0.6 ms / 0.13 ms |
 | `get_lines`, 5000 lines with 0 / 4 / 16 extracted fields (`extract_integration`) | 7.8 / 11.8 / 12.8 ms |
 | Dashboard database: build / size (numbers only) / errors per minute (`report_integration`) | 12.8 s / 226 MB / 1.0 s |
 | Read and filter with 1 / 4 / 8 filter tabs open (`views_integration`) | 2.2 / 3.6 / 4.6 s |

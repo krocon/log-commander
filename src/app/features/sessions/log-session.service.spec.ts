@@ -22,10 +22,11 @@ const update = {
   columnsRevision: 1,
 } as unknown as SessionUpdate;
 
-function setup(setFilter = vi.fn(() => Promise.resolve({}))) {
+function setup(setFilter = vi.fn(() => Promise.resolve({})), extra: Record<string, unknown> = {}) {
   const api = {
     setFilter,
     getColumns: () => new Promise(() => undefined),
+    ...extra,
   } as unknown as LogApi;
   TestBed.configureTestingModule({
     providers: [
@@ -274,6 +275,37 @@ describe('LogSessionService filter tree (prompt 010)', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('a time window of the timeline becomes a time condition of the tab (prompt 014)', async () => {
+    vi.useFakeTimers();
+    try {
+      const { service, session, setFilter } = setup();
+      service.filterTimeWindow(session, '2026-01-15 10:04:00', '2026-01-15 10:51:00');
+      await vi.advanceTimersByTimeAsync(TREE_DEBOUNCE_MS);
+      expect(exprOf(setFilter)).toMatchObject({
+        children: [
+          { cond: { type: 'time', from: '2026-01-15 10:04:00', to: '2026-01-15 10:51:00' } },
+        ],
+      });
+      expect(session.findMessage()).toContain('10:04:00');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a click on the timeline jumps to the first entry at that time, the selection stays', async () => {
+    const positionAtTime = vi.fn(() => Promise.resolve({ line: 40, position: 12, exact: true }));
+    const { service, session } = setup(undefined, { positionAtTime });
+    session.selection.set({ anchor: 3, first: 3, last: 3 });
+    await service.jumpToTime(session, 1_000);
+    expect(positionAtTime).toHaveBeenCalledWith(1, 1_000, 0);
+    expect(session.follow()).toBe(false);
+    expect(session.scroll().top).toBe(7);
+    expect(session.selection()).toEqual({ anchor: 3, first: 3, last: 3 });
+    positionAtTime.mockResolvedValueOnce(null as never);
+    await service.jumpToTime(session, 5);
+    expect(session.findMessage()).toBe('Keine Zeitstempel im Log');
   });
 
   it('G lifts the tree too and brings it back', async () => {

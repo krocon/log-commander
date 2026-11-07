@@ -37,6 +37,10 @@ Architektur verbaut nichts davon.
 - Overview Ruler und Navigation (Prompt 007): Leiste rechts mit Fehlern, Warnungen, Lesezeichen, Auswahl und
   sichtbarem Bereich, Klick springt; `E`/`W` nächster Fehler bzw. Warnung, `M`/`N` Lesezeichen (nur im Speicher), `G`
   aus dem Filter ins Gesamtlog und zurück
+- Zeitstrahl / Fehler-Histogramm (Prompt 014): Streifen über dem Log mit den Einträgen der ganzen Datei über die Zeit,
+  gestapelt nach Level, Ausfälle schraffiert, Band des sichtbaren Bereichs; Klick springt zur Zeit, Ziehen markiert
+  ein Zeitfenster „Als Filter“ (Zeit-Bedingung im Filterbaum des Tabs) oder zum Hineinzoomen, Mausrad zoomt, `Z`;
+  Perzentil-Achse gegen Ausreißer
 
 ## Offen
 
@@ -56,7 +60,7 @@ mehrere Tabellenzeilen; braucht eine Zeilen-zu-Bildschirmzeilen-Liste im Backend
 Stacktrace, Regeln je Datei statt je Format.
 
 **Seitenleiste:** Thread/Logger als Knoten und Statistik-Zeilen (011),
-Zeitfilter (006/014), Tortendiagramme, Lesezeichen und Notizen.
+Tortendiagramme, Lesezeichen und Notizen.
 
 **Overview Ruler (Nachfragen zu 007):** Treffer der Suche im Ruler (im Highlight-Modus nur mit Textscan, eigener
 Hintergrund-Job), Anzahlen je Marke im Tooltip (heute Level und Zeilenbereich, die Zusammenfassung kennt nur Bits),
@@ -65,7 +69,7 @@ Ziehen im Ruler, Mini-Vorschau beim Hover, eigene Regex-Marker. Zähler je Absch
 `prompts/done/007-overview-ruler.design.md`).
 
 **Filter:** Query-DSL (`level:ERROR AND NOT "x"`) auf dem Ausdruck aus 010, Bedingungen des Baums als Highlight-Farben,
-Zeitfenster per Ziehen im Zeitstrahl (014), Filter-Vorlagen teilen, eigene Regex-Marker, persistente Lesezeichen und
+Filter-Vorlagen teilen, eigene Regex-Marker, persistente Lesezeichen und
 Notizen. Nachfragen zu 010: Zeit-Bedingung je Quelle beim Merge, Zeilenbedingungen über eine Truncation hinweg.
 
 **Dashboard (Nachfragen zu 012):** Teilen und Export (auch PDF), Alarme aus Abfragen, nur die gefilterte Ansicht
@@ -81,7 +85,11 @@ unter der Sperre (heute lesen weitere Ansichten eines Merges den Text beim Schre
 
 **Alarme:** Schwellenwert-, Muster- und Heartbeat-Trigger; Desktop-Benachrichtigung, E-Mail, Webhooks, Incident-Tools.
 
-**Analyse:** Trace-ID-Isolation, Fehler-Histogramm, Gruppierung gleicher Meldungen, Diff zweier Dateien.
+**Zeitstrahl (Nachfragen zu 014):** „nur Ansicht“ (die Zusammenfassung der Filterliste trägt keine Zeiten),
+Zeitzone/Versatz je Datei beim Merge, Ausfälle innerhalb eines Abschnitts genauer als auf eine Probe (heute jeder
+32. Kopf), Lücken im Ruler (007) zeigen, Zeitbereich des Zeitstrahls mit dem Dashboard teilen.
+
+**Analyse:** Trace-ID-Isolation, Gruppierung gleicher Meldungen, Diff zweier Dateien.
 
 **Export:** CSV/JSON/TXT/PDF, Workspace speichern und teilen, Plugin-Schnittstelle.
 

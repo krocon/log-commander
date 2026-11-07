@@ -71,6 +71,9 @@
   --ruler-warn: #f0a94b;
   --ruler-bookmark: #5aa2f7;
   --ruler-selection: #d7dce3;
+  /* Timeline (prompt 014): neutral columns and the hatching of an outage; levels, band from the ruler. */
+  --tl-all: #7d8899;
+  --tl-gap: #9aa3b0;
   /* Dashboard (prompt 012): series, series per level, grid lines. */
   --chart-1: #5aa2f7;
   --chart-2: #f0a94b;
@@ -156,6 +159,8 @@
   --ruler-warn: #975b00;
   --ruler-bookmark: #1a66d6;
   --ruler-selection: #1f2933;
+  --tl-all: #69737f;
+  --tl-gap: #7d8794;
   --chart-1: #1a66d6;
   --chart-2: #b35f00;
   --chart-3: #0f7a4a;

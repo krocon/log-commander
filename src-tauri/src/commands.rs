@@ -8,7 +8,8 @@ use crate::level::Level;
 use crate::merge::MergeSource;
 use crate::model::{
     ColumnSet, EntryDetail, EntryRange, FieldPreview, FilterInfo, FindHit, LogLine, MergeCandidate,
-    Overview, ReportResult, ReportSchema, SessionInfo, SessionUpdate, Stats, ViewInfo,
+    Overview, ReportResult, ReportSchema, SessionInfo, SessionUpdate, Stats, TimeHit, Timeline,
+    ViewInfo,
 };
 use crate::profile::Profile;
 use crate::session::{LogSession, OpenOptions, SessionManager};
@@ -280,6 +281,30 @@ pub async fn get_overview(
     view_id: Option<u32>,
 ) -> AppResult<Overview> {
     session(&state, session_id)?.overview_of(view_id.unwrap_or(0), buckets, &lines)
+}
+
+/// The timeline (prompt 014): entries of the whole file per time bucket, from the time summary.
+#[tauri::command]
+pub async fn get_timeline(
+    state: State<'_, SessionManager>,
+    session_id: u64,
+    from: Option<i64>,
+    to: Option<i64>,
+    buckets: usize,
+) -> AppResult<Timeline> {
+    session(&state, session_id)?.timeline(from, to, buckets)
+}
+
+/// The first entry at or after a time (microseconds, UTC) in the view; reads the heads of one chunk.
+#[tauri::command]
+pub async fn position_at_time(
+    state: State<'_, SessionManager>,
+    session_id: u64,
+    ts: i64,
+    view_id: Option<u32>,
+) -> AppResult<Option<TimeHit>> {
+    let session = session(&state, session_id)?;
+    blocking(move || session.position_at_time(view_id.unwrap_or(0), ts)).await
 }
 
 /// Next or previous entry of one of `levels` in the view, from the summary, without reading text.
