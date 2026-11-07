@@ -81,6 +81,9 @@ impl Column {
             "level" => ("Level", ColumnKind::Level),
             "logger" => ("Logger", ColumnKind::Text),
             "message" => ("Nachricht", ColumnKind::Text),
+            // Received syslog (prompt 016).
+            "sender" => ("Absender", ColumnKind::Text),
+            "sent" => ("Gesendet", ColumnKind::Text),
             other => (other, ColumnKind::Text),
         };
         Self {
@@ -1767,6 +1770,7 @@ mod tests {
             ("logfmt.log", "logfmt"),
             ("serilog.log", "serilog"),
             ("syslog.log", "syslog"),
+            ("syslog-received.log", "syslog-received"),
         ];
         let profiles = builtin_profiles();
         for (file, id) in expected {

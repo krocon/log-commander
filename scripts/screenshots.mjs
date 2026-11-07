@@ -36,8 +36,10 @@ const files = {
   'app.log': readFileSync(join(root, 'samples/spring-boot.log'), 'utf8'),
   'worker.log': readFileSync(join(root, 'samples/python.log'), 'utf8'),
 };
+// Prompt 016: what a syslog source received (the mock's spool).
+const received = readFileSync(join(root, 'samples/syslog-received.log'), 'utf8');
 
-async function page(browser, { theme, withFiles = true, only = null }) {
+async function page(browser, { theme, withFiles = true, only = null, extra = {} }) {
   const context = await browser.newContext({
     viewport: { width: 1240, height: 680 },
     deviceScaleFactor: 2,
@@ -48,6 +50,7 @@ async function page(browser, { theme, withFiles = true, only = null }) {
   await p.addInitScript({ path: join(root, 'scripts/e2e/mock-ipc.js') });
   await p.addInitScript((data) => window.__mock.setup(data), {
     files: only ?? (withFiles ? files : {}),
+    ...extra,
     recent: ['/var/log/shop/app.log', '/srv/worker/worker.log', '/var/log/nginx/error.log'],
   });
   await p.goto(url);
@@ -159,6 +162,43 @@ await shot(light, 'light');
 
 const start = await page(browser, { theme: 'dark', withFiles: false });
 await shot(start, 'start');
+
+// Syslog source (prompt 016): the dialog with a remote address (warning visible), then the tab of a local one.
+{
+  const src = await page(browser, {
+    theme: 'dark',
+    withFiles: false,
+    extra: {
+      spool: received,
+      settings: {
+        savedSources: [
+          {
+            config: {
+              kind: 'syslog',
+              protocol: 'tcp',
+              address: '127.0.0.1',
+              port: 6514,
+              allow: [],
+              allowRemote: false,
+            },
+            keep: false,
+          },
+        ],
+      },
+    },
+  });
+  await src.click('button:text-is("Quelle öffnen …")');
+  await src.waitForSelector('app-source-dialog dialog[open]');
+  await src.selectOption('#source-address', '0.0.0.0');
+  await src.fill('#source-allow', '10.0.4.0/24\n10.0.7.5');
+  await src.waitForTimeout(200);
+  await shot(src, 'source-dialog');
+  await src.selectOption('#source-address', '127.0.0.1');
+  await src.click('#source-start');
+  await src.waitForSelector('.lt-cell');
+  await src.waitForTimeout(300);
+  await shot(src, 'syslog');
+}
 
 await start.click('button:text-is("Pfad eingeben …")');
 await start.fill('app-open-path-dialog input', '/tmp/app.log');

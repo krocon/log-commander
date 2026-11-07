@@ -21,6 +21,8 @@
 | Messung Export 500 MB | `cd src-tauri && cargo test --release --test export_integration -- --ignored --nocapture measure_` |
 | Messung Dashboard | `cd src-tauri && cargo test --release --test report_integration -- --ignored --nocapture measure_` |
 | Messung Feld-Regeln | `cd src-tauri && cargo test --release --test extract_integration -- --ignored --nocapture measure_` |
+| Messung Syslog-Empfang | `cd src-tauri && cargo test --release --test syslog_integration -- --ignored --nocapture measure_` (Meldungen/s ohne Verlust, Verzögerung bis zum Index) |
+| Syslog von Hand senden | `logger -n 127.0.0.1 -P 5514 -d "Hallo"` (UDP; macOS: `logger` kann kein `-n`, dann `echo '<11>test' \| nc -u -w0 127.0.0.1 5514`) |
 | Messung Merge 2 × 500 MB | `cd src-tauri && cargo test --release --test merge_integration -- --ignored --nocapture measure_merge` |
 | Kontrast WCAG AA | `npm run contrast` (prüft `src/styles.css`) |
 | Screenshots für die Doku | `npm run build`, dann `node scripts/screenshots.mjs` (WebKit + IPC-Mock) |
@@ -55,6 +57,8 @@ src/                         Angular 22 (zoneless, Signals, OnPush, Standalone)
   app/features/toolbar|statusbar|tabs|start|settings/   UI
   app/features/export|workspace|share|notes/   Export-Dialog und Jobs, Arbeitsstand (.lcw), Teilen, Notizen (Prompt 015)
   app/core/dialog/native-dialog.ts   nativer Öffnen/Speichern-Dialog; e2e legt Antworten in window.__lcDialogPaths
+  app/features/sources/      Quellen ohne Datei (016): source-dialog „Quelle öffnen“, source-logic (Prüfen, Labels,
+                             gespeicherte Quellen, Status-Texte; auch für Settings und Arbeitsstand)
 src-tauri/src/               Rust; alles außer commands.rs und lib.rs ist frei von Tauri
   session.rs                 LogSession, Ansichten (ViewState), Abfragen, Hintergrund-Jobs (Filter, Level neu), SessionManager
   views.rs                   Filter-Tabs (013): ViewFilter, Kette zu einem Filter zusammensetzen, MAX_VIEWS
@@ -73,6 +77,11 @@ src-tauri/src/               Rust; alles außer commands.rs und lib.rs ist frei 
   report_db.rs               Dashboard (012): SQLite je Sitzung, Builder-Thread, abgesicherte Abfragen, bucket()
   export.rs, anchor.rs       Export als Job (Temp-Datei, Umbenennen, CSV/JSONL), Anker für Lesezeichen/Notizen
   workspace.rs               .lcw lesen/schreiben (nur diese Endung, ≤ 8 MB), Pfade prüfen
+  spool.rs                   Spool (016): SpoolWriter (begrenzte Warteschlange), Schreib-Thread, Rotation, Gesamtgrenze,
+                             SpoolRoot (<cache>/spool/<pid>/source-N, behaltene unter spool/kept)
+  sources/mod.rs             Source-Trait, SourceConfig, prepare, SourceMonitor (Zustand, Zähler), RunningSource
+  sources/syslog.rs          Syslog UDP/TCP: Binden (nur Loopback ohne allowRemote), Absender-Filter, TCP-Framing
+                             (RFC 6587), Spool-Zeile (Empfangszeit, Absender, Meldung escaped)
   e2e.rs                     nur Debug-Build: Szenario im WebView (Fenster im Hintergrund), siehe scripts/e2e/
 scripts/e2e/                 run.mjs (Harness), scenario.js (läuft im WebView), mock-ipc.js (nur für Screenshots)
 samples/                     Beispiel-Logs
@@ -169,6 +178,19 @@ samples/                     Beispiel-Logs
   gar keiner. Ein Merge gibt seine Zeiten mit. Zeigt immer die ganze Datei, auch im Filter-Tab; „Als Filter“ legt eine
   Zeit-Bedingung im Baum des Tabs an. Abfragen nur unter der Lesesperre, `position_at_time` liest die Köpfe eines
   Abschnitts (`blocking`).
+- **Quellen ohne Datei: Spool statt eigenem Lesepfad (Prompt 016).** Eine Quelle (Syslog, später SFTP 017,
+  Windows-Ereignisse 018, Datenbanken 019) schreibt Zeilen in eine Spool-Datei im Cache-Ordner, die Sitzung tailt sie wie
+  jede Datei (`SessionManager::open_source` → `LogSession::open` auf `spool.log`). Index, Tail, Filter, Suche, Freeze,
+  Export, Merge und Dashboard brauchen keinen Code dafür. Neue Quelle = Variante in `SourceConfig` + `prepare` (bindet
+  bzw. verbindet, damit Fehler im Dialog landen) + `Source::run` (eigener Thread, `StopToken`, `SpoolWriter::try_line`
+  bzw. `line_blocking` für ziehende Quellen, Zustand/Zähler über `SourceMonitor` → `SessionUpdate.sourceStatus`).
+  `SessionInfo.source` (Art, Label, Spool-Pfad, Behalten, Konfiguration ohne Geheimnisse) ersetzt im Tab den Pfad.
+  **Handles und Plattenplatz:** Die Sitzung hält rotierte Dateien offen (Segmente), eine gelöschte Spool-Datei gäbe ihren
+  Platz erst frei, wenn die Sitzung sie loslässt. Deshalb beginnt eine Spool-Sitzung neu, sobald sie so viele Dateien hält,
+  wie der Spool behält (`OpenOptions::max_segments` = `SpoolConfig::max_files`, 2 GB → 8 × 256 MB), statt erst bei 32.
+  Spitze ≈ Grenze + eine Datei, im Freeze höchstens das Doppelte. Syslog-Zeile: `ISO-Empfangszeit Absender Meldung`;
+  das eigene Profil `syslog-received` liest die Priorität hinter dem Präfix (`level.rs`: `skip_received_prefix`) und
+  zerlegt 3164/5424 (Spalten `sender`, `sent`, `pri`, …). Das Profil `syslog` bleibt für Dateien unverändert.
 - **Datei-Identität unter Windows** über `GetFileInformationByHandle`, nicht Erstellzeit (File Tunneling).
 - **CSP:** `dangerousDisableAssetCspModification: ["style-src"]` ist nötig. Sonst ergänzt Tauri Nonces, `'unsafe-inline'`
   gilt nicht mehr und Angulars Komponenten-Styles fehlen.
@@ -196,6 +218,16 @@ samples/                     Beispiel-Logs
 - **Grenzen Filter-Tabs:** höchstens 8 Tabs (Ansichten) je Datei (`too_many_views`), je Ansicht bis 4 Byte je Zeile
   (500 MB: 7 Ansichten zusammen 32 MB); die Kette zusammen höchstens 64 Bedingungen und 16 Ebenen (+1 für die Kette).
   Weitere Ansichten eines Merges lesen den Text beim Schreiben unter der Sperre.
+- **Escape-Format der Spool-Zeile (016):** `\\`, `\n`, `\r`, `\xNN` (C0 außer Tab, DEL, ungültige Bytes),
+  `\u{XXXX}` (C1 U+0080–009F, Bidi U+200E/F, U+202A–202E, U+2066–2069, U+2028/2029); eindeutig umkehrbar.
+- **Grenzen Quellen (016):** Nachricht 64 KB (dann gekürzt und markiert), 64 TCP-Verbindungen (8 je Absender, ruhig
+  120 s bzw. unfertiger Rahmen 30 s → geschlossen, am Limit weicht die längste ruhige ab 5 s; `TcpLimits`), 8 Quellen
+  zugleich, Spool-Ordner 0700/Dateien 0600, behaltene Spools löscht der Einstellungsdialog, 64 Einträge im
+  Absender-Filter, Warteschlange zum Spool 32 MB bzw. 64 K Zeilen (darüber verworfen und gezählt), Spool 64 MB bis 8 GB
+  je Quelle (Settings `spoolLimitMb`, Vorgabe 2048). Beim Überlauf des Spools beginnt die Ansicht neu. Mehrere
+  Rotationen im Freeze: Zwischenstände fehlen in der Ansicht (der Spool hat sie, bis er sie löscht). Ein Merge mit einem Spool
+  hält von ihm höchstens so viele Dateien wie der Spool (`MergeWorker::limit_segments` über die Datei-Identität), dann
+  mischt er neu. Schließt der Tab der Quelle, fehlt dem Merge die Datei (Status „Datei fehlt“). Kein TLS.
 - **Grenzen Merge:** höchstens 16 Quellen, verspätete Zeilen stehen am Ende, bis „Neu sortieren“; keine Zeilennummer der
   Quelldatei (nur Byte-Offset); ohne Zeitzone gilt die lokale Zone; ohne Zeitstempel in den ersten 200 Zeilen
   `no_timestamps`. Truncation einer Quelle, Rotation ohne Behalten oder mehr als 32 Segmente einer Quelle mischen alles neu.

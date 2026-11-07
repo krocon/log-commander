@@ -8,6 +8,7 @@ import { countConditions } from '../sessions/filter-tree';
 import { hintText } from '../fields/fields-logic';
 import { ExportService } from '../export/export.service';
 import { progressText } from '../export/export-logic';
+import { COUNTER_TITLE, sourceCounters, sourcePill } from '../sources/source-logic';
 
 @Component({
   selector: 'app-status-bar',
@@ -24,6 +25,41 @@ import { progressText } from '../export/export-logic';
         @for (problem of sourceProblems(); track problem) {
           <span class="stale">{{ problem }}</span>
         }
+      } @else if (s.source; as src) {
+        <!-- Prompt 016: state and counters of the source; the spool's path in the tooltip. -->
+        @if (sourceState(); as state) {
+          <span class="pill" [class]="'pill ' + state.cls" role="status">
+            <span class="dot"></span>{{ state.label }}
+          </span>
+        }
+        <span class="path" [title]="'Spool: ' + s.path"
+          ><bdi>{{ src.label }}</bdi></span
+        >
+        @if (counters(); as text) {
+          <span [title]="counterTitle">{{ text }}</span>
+        }
+        @if (s.update().sourceStatus?.spoolError; as problem) {
+          <span class="stale" role="alert">Spool: {{ problem }}</span>
+        }
+        <label
+          class="keep"
+          title="Spool-Datei beim Schließen des Tabs nicht löschen (bleibt im Cache-Ordner unter spool/kept)"
+        >
+          <input
+            type="checkbox"
+            [checked]="s.keepSpool()"
+            (change)="sessions.setSpoolKeep(s, $any($event.target).checked)"
+          />
+          Spool behalten
+        </label>
+        <button
+          type="button"
+          class="link"
+          title="Empfangenes als Datei speichern (Export)"
+          (click)="sessions.exportRequest.set(s)"
+        >
+          Speichern unter …
+        </button>
       } @else {
         <span class="path" [title]="s.path"
           ><bdi>{{ s.path }}</bdi></span
@@ -139,6 +175,14 @@ import { progressText } from '../export/export-logic';
     .export {
       color: var(--text);
     }
+    .keep {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .keep input {
+      margin: 0;
+    }
     .link {
       padding: 0 2px;
       color: var(--accent);
@@ -163,6 +207,17 @@ export class StatusBarComponent {
     if (!session) return { label: '', cls: '' };
     return statusPill(session.status(), session.frozen(), session.follow());
   });
+
+  /** Prompt 016: state of the source of the tab, in words. */
+  protected readonly sourceState = computed(() => {
+    const status = this.session()?.update().sourceStatus;
+    return status ? sourcePill(status.state) : null;
+  });
+  protected readonly counters = computed(() => {
+    const status = this.session()?.update().sourceStatus;
+    return status ? sourceCounters(status) : '';
+  });
+  protected readonly counterTitle = COUNTER_TITLE;
 
   protected readonly partly = computed(() => partlyRecognised(this.session()?.columns() ?? null));
   protected readonly formatTitle = computed(

@@ -7,6 +7,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 pub const GENERIC_PROFILE: &str = "generic";
+/// Lines of a syslog spool (prompt 016): time of receipt, sender, message as received.
+pub const SYSLOG_RECEIVED_PROFILE: &str = "syslog-received";
+/// The prefix of a spool line: time of receipt with milliseconds and zone, the sender's address.
+const RECEIVED: &str = r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}(?:Z|[+-]\d{2}:\d{2})";
+const SENDER: &str = r"(?:\d{1,3}(?:\.\d{1,3}){3}|[0-9A-Fa-f]*:[0-9A-Fa-f:.]*)";
 /// A format is suggested if at least this share of the sampled lines fits it.
 const SUGGEST_MIN_RATIO: f64 = 0.3;
 const SUGGEST_LINES: usize = 100;
@@ -201,6 +206,32 @@ pub fn builtin_profiles() -> Vec<Profile> {
     syslog.syslog_pri = true;
     syslog.head = Some(r"(?-u)^[A-Z][a-z]{2}\s+\d+\s\d{2}:\d{2}:\d{2}\s".into());
 
+    // Received syslog (prompt 016): every spool line is one message, so every line is an entry. The
+    // priority behind the prefix decides the level (`level.rs`), words only without one.
+    let mut received = Profile::builtin(
+        SYSLOG_RECEIVED_PROFILE,
+        "Syslog (empfangen)",
+        &[&format!(
+            r"(?i-u)^{RECEIVED} {SENDER} (?:<\d{{1,3}}>)?.*?\b(?P<level>DEBUG|INFO|NOTICE|WARN|WARNING|ERROR|ERR|FATAL|CRITICAL|CRIT|ALERT|EMERG|PANIC)\b"
+        )],
+    )
+    .with_layouts(&[
+        // RFC 5424.
+        &format!(
+            r"^(?P<timestamp>{RECEIVED}) (?P<sender>{SENDER}) <(?P<pri>\d{{1,3}})>1 (?P<sent>\S+) (?P<host>\S+) (?P<logger>\S+) (?P<pid>\S+) (?P<msgid>\S+) (?P<data>-|(?:\[[^\]]*\])+) ?(?P<message>.*)$"
+        ),
+        // RFC 3164, optionally with the priority.
+        &format!(
+            r"^(?P<timestamp>{RECEIVED}) (?P<sender>{SENDER}) (?:<(?P<pri>\d{{1,3}})>)?(?P<sent>[A-Z][a-z]{{2}} [ \d]\d \d{{2}}:\d{{2}}:\d{{2}}) (?P<host>\S+) (?P<logger>[^\s:\[]+)(?:\[(?P<pid>\d+)\])?: ?(?P<message>.*)$"
+        ),
+        // Anything else as it came.
+        &format!(
+            r"^(?P<timestamp>{RECEIVED}) (?P<sender>{SENDER}) (?:<(?P<pri>\d{{1,3}})>)?(?P<message>.*)$"
+        ),
+    ]);
+    received.syslog_pri = true;
+    received.head = Some(format!(r"(?-u)^{RECEIVED} "));
+
     let webserver = Profile::builtin(
         "webserver",
         "nginx / Apache error log",
@@ -269,7 +300,7 @@ pub fn builtin_profiles() -> Vec<Profile> {
 
     vec![
         generic, log4j, python, serilog, syslog, webserver, jsonl, access, w3c, nlog, gc, fix,
-        logfmt,
+        logfmt, received,
     ]
 }
 

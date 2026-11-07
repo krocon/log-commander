@@ -4,7 +4,7 @@
 use crate::encoding::Encoding;
 use crate::fields::Column;
 use crate::level::Level;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 pub struct LevelCounts {
@@ -84,6 +84,70 @@ pub struct SessionUpdate {
     pub sources: Vec<SourceUpdate>,
     /// The dashboard database (prompt 012), once a dashboard was opened.
     pub report: Option<ReportStatus>,
+    /// A source without a file (prompt 016): its state and counters; `None` for files.
+    pub source_status: Option<SourceStatus>,
+}
+
+/// Kinds of sources without a file of their own (prompt 016); 017–019 add theirs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SourceKind {
+    Syslog,
+}
+
+/// What a tab of a source shows instead of the spool path.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceDescriptor {
+    pub kind: SourceKind,
+    /// "Syslog :5514".
+    pub label: String,
+    /// The current spool file (the session follows it).
+    pub spool_path: String,
+    /// The spool stays when the tab closes.
+    pub keep: bool,
+    /// The configuration as it was opened (no secrets), with the port actually bound.
+    pub config: serde_json::Value,
+}
+
+/// Spools kept after their tab closed (prompt 016): shown in the settings with „Löschen“.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KeptSpools {
+    pub count: u32,
+    pub bytes: u64,
+}
+
+/// Where a source stands (prompt 016).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SourceState {
+    Connecting,
+    Listening,
+    Connected,
+    Error { message: String },
+    Stopped,
+}
+
+/// State and counters of a source, sent with every update of its session.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceStatus {
+    pub state: SourceState,
+    /// Messages accepted (written to the spool or dropped there).
+    pub received: u64,
+    /// Messages the spool could not take (queue full, disk error).
+    pub dropped: u64,
+    /// Messages cut at the size limit.
+    pub truncated: u64,
+    /// Messages or connections refused (sender filter, connection limit).
+    pub rejected: u64,
+    /// Open connections (TCP).
+    pub connections: u32,
+    /// Lines written to the spool.
+    pub spooled: u64,
+    /// The last error writing the spool (disk full …), if it persists.
+    pub spool_error: Option<String>,
 }
 
 /// Live state of one source of a merge.
@@ -133,6 +197,8 @@ pub struct SessionInfo {
     pub update: SessionUpdate,
     /// The files of a merge in source order; empty for a single file.
     pub sources: Vec<SourceInfo>,
+    /// A source without a file (prompt 016); `path` is then its spool.
+    pub source: Option<SourceDescriptor>,
 }
 
 #[derive(Debug, Clone, Serialize)]

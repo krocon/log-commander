@@ -7,6 +7,7 @@ import {
   WORKSPACE_VERSION,
   WorkspaceDoc,
   isNetworkFile,
+  isRemoteSourceFile,
   isWorkspacePath,
   locateSource,
   parseWorkspace,
@@ -245,5 +246,50 @@ describe('workspace model', () => {
     expect(isNetworkFile(remoteDoc.files[0])).toBe(true);
     expect(isWorkspacePath('/x/Fall 4711.LCW')).toBe(true);
     expect(isWorkspacePath('/x/app.log')).toBe(false);
+  });
+});
+
+describe('sources in a workspace (prompt 016)', () => {
+  const syslog = {
+    kind: 'syslog',
+    protocol: 'tcp',
+    address: '127.0.0.1',
+    port: 5514,
+    allow: ['10.0.0.0/8'],
+    allowRemote: false,
+  };
+  const withSource = (source: unknown) =>
+    JSON.stringify({
+      format: WORKSPACE_FORMAT,
+      version: WORKSPACE_VERSION,
+      files: [{ kind: 'source', sources: [], source, tabs: [{}], bookmarks: [{}], notes: [] }],
+    });
+
+  it('keeps a checked source with its tabs, without marks', () => {
+    const parsed = parseWorkspace(withSource(syslog));
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    const file = parsed.doc.files[0];
+    expect(file.kind).toBe('source');
+    expect(file.source).toEqual(syslog);
+    expect(file.tabs).toHaveLength(1);
+    expect(file.bookmarks).toEqual([]);
+    expect(isRemoteSourceFile(file)).toBe(false);
+    expect(isNetworkFile(file)).toBe(false);
+    // Round trip.
+    const again = parseWorkspace(serializeWorkspace(parsed.doc));
+    expect(again.ok && again.doc.files[0].source).toEqual(syslog);
+  });
+
+  it('drops broken sources and marks remote ones', () => {
+    const broken = parseWorkspace(withSource({ ...syslog, address: 'evil.example' }));
+    expect(broken.ok && broken.doc.files).toEqual([]);
+    expect(broken.ok && broken.dropped).toBe(1);
+    expect(parseWorkspace(withSource({ ...syslog, port: 0 })).ok).toBe(true);
+    const remote = parseWorkspace(withSource({ ...syslog, address: '0.0.0.0', allowRemote: true }));
+    expect(remote.ok && isRemoteSourceFile(remote.doc.files[0])).toBe(true);
+    // Remote without the explicit choice is not a valid configuration at all.
+    const silent = parseWorkspace(withSource({ ...syslog, address: '0.0.0.0' }));
+    expect(silent.ok && silent.doc.files).toEqual([]);
   });
 });

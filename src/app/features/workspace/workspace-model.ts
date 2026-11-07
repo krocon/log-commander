@@ -1,7 +1,15 @@
-import { Anchor, LEVELS, Level, SearchMode, SearchQuery } from '../../core/log/log.models';
+import {
+  Anchor,
+  LEVELS,
+  Level,
+  SearchMode,
+  SearchQuery,
+  SourceConfig,
+} from '../../core/log/log.models';
 import { ColumnLayout, ColumnMode, mergeColumnLayouts } from '../../core/settings/settings.models';
 import { ALL_SOURCES } from '../merge/merge-logic';
 import { FilterGroupNode, emptyTree, sanitizeTree } from '../sessions/filter-tree';
+import { isRemoteSource, parseSourceConfig } from '../sources/source-logic';
 import {
   dirName,
   isAbsolutePath,
@@ -76,8 +84,11 @@ export interface WsTab {
 }
 
 export interface WsFile {
-  kind: 'file' | 'merge';
+  /** `source`: a source without a file (prompt 016), started again from `source`; `sources` is empty. */
+  kind: 'file' | 'merge' | 'source';
   sources: WsSource[];
+  /** The configuration of a source (no secrets); only for `kind: 'source'`. */
+  source?: SourceConfig;
   /** The profile of a single file; null: the suggestion. */
   profileId: string | null;
   /** `tabs[0]` is the tab of the file. */
@@ -156,6 +167,14 @@ export function sourceCandidates(source: WsSource, workspacePath: string): strin
 /** A file of the workspace reaches out to the network (its saved path): it is not opened. */
 export function isNetworkFile(file: WsFile): boolean {
   return file.sources.some((s) => isNetworkPath(s.path));
+}
+
+/**
+ * A source of the workspace that would listen beyond this computer (prompt 016): a workspace may come from
+ * someone else, so it is never started from one; the dialog „Quelle öffnen“ can.
+ */
+export function isRemoteSourceFile(file: WsFile): boolean {
+  return file.kind === 'source' && (!file.source || isRemoteSource(file.source));
 }
 
 export function serializeWorkspace(doc: WorkspaceDoc): string {
@@ -383,6 +402,7 @@ function parseTab(v: unknown, index: number): WsTab | null {
 
 function parseFile(v: unknown, dropper: Dropper): WsFile | null {
   if (!isObj(v)) return null;
+  if (v['kind'] === 'source') return parseSourceFile(v, dropper);
   const kind = v['kind'] === 'merge' ? 'merge' : 'file';
   const rawSources = Array.isArray(v['sources']) ? v['sources'] : [];
   if (rawSources.length > MAX_WS_SOURCES) return null;
@@ -390,14 +410,7 @@ function parseFile(v: unknown, dropper: Dropper): WsFile | null {
   if (sources.some((s) => s === null)) return null;
   const count = sources.length;
   if (kind === 'file' ? count !== 1 : count < 2) return null;
-  const rawTabs = Array.isArray(v['tabs']) ? v['tabs'].slice(0, MAX_WS_TABS) : [];
-  const tabs: WsTab[] = [];
-  for (const t of rawTabs) {
-    const tab = parseTab(t, tabs.length);
-    if (tab) tabs.push(tab);
-    else dropper.count++;
-  }
-  if (!tabs.length) tabs.push(parseTab({}, 0) as WsTab);
+  const tabs = parseTabs(v['tabs'], dropper);
   return {
     kind,
     sources: sources as WsSource[],
@@ -406,6 +419,33 @@ function parseFile(v: unknown, dropper: Dropper): WsFile | null {
     bookmarks: parseMarks(v['bookmarks'], false, dropper),
     notes: parseMarks(v['notes'], true, dropper),
   };
+}
+
+/** A source (prompt 016): its configuration checked field by field, its tabs; marks do not apply to a new spool. */
+function parseSourceFile(v: Obj, dropper: Dropper): WsFile | null {
+  const source = parseSourceConfig(v['source']);
+  if (!source) return null;
+  return {
+    kind: 'source',
+    sources: [],
+    source,
+    profileId: parseProfileId(v['profileId']),
+    tabs: parseTabs(v['tabs'], dropper),
+    bookmarks: [],
+    notes: [],
+  };
+}
+
+function parseTabs(v: unknown, dropper: Dropper): WsTab[] {
+  const rawTabs = Array.isArray(v) ? v.slice(0, MAX_WS_TABS) : [];
+  const tabs: WsTab[] = [];
+  for (const t of rawTabs) {
+    const tab = parseTab(t, tabs.length);
+    if (tab) tabs.push(tab);
+    else dropper.count++;
+  }
+  if (!tabs.length) tabs.push(parseTab({}, 0) as WsTab);
+  return tabs;
 }
 
 const UI_DEFAULTS: WsUi = {

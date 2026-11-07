@@ -20,10 +20,28 @@
     { id: 'message', label: 'Nachricht', kind: 'text' },
   ];
   const MESSAGE_ONLY = [{ id: 'message', label: 'Nachricht', kind: 'text' }];
+  // Received syslog (prompt 016): time of receipt, sender, RFC 3164 behind the priority.
+  const RECEIVED =
+    /^(?<timestamp>\S+) (?<sender>\S+) <(?<pri>\d+)>(?<sent>[A-Z][a-z]{2} [ \d]\d \d\d:\d\d:\d\d) (?<host>\S+) (?<logger>[^\s:[]+)(?:\[(?<pid>\d+)\])?: ?(?<message>.*)$/d;
+  const RECEIVED_COLUMNS = [
+    { id: 'timestamp', label: 'Zeit', kind: 'timestamp' },
+    { id: 'sender', label: 'Absender', kind: 'text' },
+    { id: 'pri', label: 'pri', kind: 'number' },
+    { id: 'sent', label: 'Gesendet', kind: 'text' },
+    { id: 'host', label: 'host', kind: 'text' },
+    { id: 'logger', label: 'Logger', kind: 'text' },
+    { id: 'message', label: 'Nachricht', kind: 'text' },
+  ];
+  const SEVERITY = ['FATAL', 'FATAL', 'FATAL', 'ERROR', 'WARN', 'INFO', 'INFO', 'DEBUG'];
 
   function fieldsOf(line, columns, isContinuation) {
     const whole = columns.map((c) => (c.id === 'message' ? [0, line.length] : [0, 0]));
     if (columns.length === 1 || isContinuation) return whole;
+    if (columns === RECEIVED_COLUMNS) {
+      const match = line.match(RECEIVED);
+      if (!match) return whole;
+      return columns.map((c) => match.indices.groups[c.id] ?? [0, 0]);
+    }
     const match = line.match(SPRING);
     if (!match) return whole;
     return columns.map((c) => match.indices.groups[c.id] ?? [0, 0]);
@@ -68,7 +86,8 @@
       const c = expr.cond;
       if (c.type === 'text') value = line.text.toLowerCase().includes(c.text.toLowerCase());
       else if (c.type === 'level') value = c.levels.includes(line.level);
-      else if (c.type === 'lines') value = line.line >= (c.first ?? 0) && line.line <= (c.last ?? Infinity);
+      else if (c.type === 'lines')
+        value = line.line >= (c.first ?? 0) && line.line <= (c.last ?? Infinity);
       else value = true;
     }
     return value !== !!expr.negate;
@@ -89,7 +108,8 @@
   function below(view) {
     const root = view.root ?? view;
     const out = [view];
-    for (const v of root.views.values()) if (out.includes(v.parentView) && !out.includes(v)) out.push(v);
+    for (const v of root.views.values())
+      if (out.includes(v.parentView) && !out.includes(v)) out.push(v);
     return out;
   }
 
@@ -123,11 +143,12 @@
       columnsRevision: session.columnsRevision ?? 1,
       filterPending: false,
       filterProgress: 1,
-      profileId: 'log4j',
+      profileId: session.profileId ?? 'log4j',
       encoding: 'utf8',
       frozen: session.frozen ?? false,
       pendingBytes: 0,
       frozenStale: false,
+      sourceStatus: session.sourceStatus ?? null,
       sources: (session.sources ?? []).map((s) => ({
         status: { kind: 'live' },
         fileSize: s.size,
@@ -139,10 +160,14 @@
 
   // Extracted fields (prompt 011), simplified: rules are Rust regexes, `(?i:…)` becomes a case-insensitive JS one.
   const extractRules = new Map();
-  const profileOf = (session) => (session.baseColumns ?? session.columns).length > 1 ? 'log4j' : 'python';
+  const profileOf = (session) =>
+    session.profileId ?? ((session.baseColumns ?? session.columns).length > 1 ? 'log4j' : 'python');
   function jsRegex(pattern) {
     const insensitive = pattern.includes('(?i');
-    return new RegExp(pattern.replace(/\(\?i:/g, '(?:').replace(/\(\?i\)/g, ''), insensitive ? 'i' : '');
+    return new RegExp(
+      pattern.replace(/\(\?i:/g, '(?:').replace(/\(\?i\)/g, ''),
+      insensitive ? 'i' : '',
+    );
   }
   function firstGroup(regex, text, offset = 0) {
     const m = regex.exec(text);
@@ -156,14 +181,22 @@
     const rules = extractRules.get(profileOf(session)) ?? [];
     session.columns = [
       ...base,
-      ...rules.map((r) => ({ id: r.name, label: r.name, kind: r.kind, unit: r.unit ?? undefined, rule: r.id })),
+      ...rules.map((r) => ({
+        id: r.name,
+        label: r.name,
+        kind: r.kind,
+        unit: r.unit ?? undefined,
+        rule: r.id,
+      })),
     ];
     const message = base.findIndex((c) => c.id === 'message');
     for (const line of session.lines) {
       const fields = line.fields.slice(0, base.length);
       const [s, e] = fields[message] ?? [0, 0];
       for (const rule of rules) {
-        const span = line.isContinuation ? null : firstGroup(jsRegex(rule.pattern), line.text.slice(s, e), s);
+        const span = line.isContinuation
+          ? null
+          : firstGroup(jsRegex(rule.pattern), line.text.slice(s, e), s);
         fields.push(span ?? [0, 0]);
       }
       line.fields = fields;
@@ -177,7 +210,9 @@
     const heads = session.lines.filter((l) => !l.isContinuation);
     for (const line of heads) {
       const seen = new Set();
-      for (const m of line.text.matchAll(/\b([A-Za-z_]\w*)(=| )(\d+(?:\.\d+)?)(%|ms|s|GB|MB|KB)?(?![\w.:-])/g)) {
+      for (const m of line.text.matchAll(
+        /\b([A-Za-z_]\w*)(=| )(\d+(?:\.\d+)?)(%|ms|s|GB|MB|KB)?(?![\w.:-])/g,
+      )) {
         const [, name, sep, , unit] = m;
         if ((sep === ' ' && !unit) || seen.has(name) || /^(id|in|at|port|v)$/i.test(name)) continue;
         seen.add(name);
@@ -188,7 +223,13 @@
       }
     }
     const kindOf = (unit) =>
-      unit === '%' ? 'percent' : unit === 'ms' || unit === 's' ? 'duration' : unit ? 'size' : 'number';
+      unit === '%'
+        ? 'percent'
+        : unit === 'ms' || unit === 's'
+          ? 'duration'
+          : unit
+            ? 'size'
+            : 'number';
     return [...found.values()]
       .filter((f) => f.count / heads.length >= 0.05 && new Set(f.examples).size > 1)
       .sort((a, b) => b.count - a.count)
@@ -264,7 +305,6 @@
     };
   }
 
-
   // Dashboard (prompt 012): heads with time and `took` in seconds.
   function reportHeads(session) {
     return session.lines
@@ -313,6 +353,7 @@
     { id: 'generic', name: 'Generic (keywords, JSON)', builtin: true, patterns: [] },
     { id: 'log4j', name: 'Log4j / Logback / Spring Boot', builtin: true, patterns: [] },
     { id: 'python', name: 'Python logging', builtin: true, patterns: [] },
+    { id: 'syslog-received', name: 'Syslog (empfangen)', builtin: true, patterns: [] },
   ];
 
   const handlers = {
@@ -373,6 +414,59 @@
         sources: infos,
       };
     },
+    open_source({ config, keep, onUpdate }) {
+      const id = sessions.size + 1;
+      const text = setupData.spool ?? '';
+      const lines = classify(text, RECEIVED_COLUMNS).map((line) => {
+        const pri = line.text.match(/^\S+ \S+ <(\d+)>/);
+        return pri
+          ? {
+              ...line,
+              level: SEVERITY[Number(pri[1]) % 8],
+              isContinuation: false,
+              fields: fieldsOf(line.text, RECEIVED_COLUMNS, false),
+            }
+          : line;
+      });
+      const label = `Syslog${config.protocol === 'tcp' ? ' TCP' : config.protocol === 'both' ? ' UDP+TCP' : ''} :${config.port}`;
+      const session = {
+        id,
+        columns: RECEIVED_COLUMNS,
+        lines,
+        size: text.length,
+        generation: 0,
+        filter: { levels: LEVELS, search: '', mode: 'filter' },
+        channel: onUpdate.id,
+        sent: 0,
+        views: new Map(),
+        profileId: 'syslog-received',
+        sourceStatus: {
+          state: { kind: 'listening' },
+          received: 12873,
+          dropped: 0,
+          truncated: 2,
+          rejected: 0,
+          connections: 0,
+          spooled: 12873,
+          spoolError: null,
+        },
+      };
+      sessions.set(id, session);
+      const spoolPath = `/Users/me/Library/Caches/io.github.krocon.logcommander/spool/4711/source-${id}/spool.log`;
+      return {
+        sessionId: id,
+        path: spoolPath,
+        fileName: label,
+        suggestedProfileId: 'syslog-received',
+        update: update(session),
+        sources: [],
+        source: { kind: 'syslog', label, spoolPath, keep: !!keep, config },
+      };
+    },
+    set_spool_keep: () => null,
+    set_spool_limit: () => null,
+    kept_spools: () => ({ count: 1, bytes: 3_145_728 }),
+    delete_kept_spools: () => 1,
     inspect_merge_source({ path }) {
       const name = path.split('/').pop();
       const text = setupData.files[name] ?? '';
@@ -434,7 +528,10 @@
           view.filter = {
             ...own,
             levels: own.levels.filter((l) => above.levels.includes(l)),
-            expr: above.expr && own.expr ? { kind: 'group', op: 'and', children: [above.expr, own.expr] } : (above.expr ?? own.expr),
+            expr:
+              above.expr && own.expr
+                ? { kind: 'group', op: 'and', children: [above.expr, own.expr] }
+                : (above.expr ?? own.expr),
           };
         }
       }
@@ -452,8 +549,7 @@
       const session = target(sessionId, viewId);
       const all = visible(session);
       const hit = all.findIndex(
-        (l) =>
-          l.line > (fromLine ?? -1) && l.text.toLowerCase().includes(query.text.toLowerCase()),
+        (l) => l.line > (fromLine ?? -1) && l.text.toLowerCase().includes(query.text.toLowerCase()),
       );
       return hit < 0 ? null : { line: all[hit].line, position: hit, wrapped: false };
     },
@@ -521,7 +617,10 @@
       });
       const density = covered.map((c) => (n ? Math.min(255, Math.ceil((c * 255) / n)) : 0));
       const marks = lines.map((line) => {
-        const position = Math.max(0, shown.findIndex((l) => l.line >= line));
+        const position = Math.max(
+          0,
+          shown.findIndex((l) => l.line >= line),
+        );
         return { line, position, visible: shown[position]?.line === line };
       });
       return {
@@ -536,7 +635,10 @@
     // Timeline (prompt 014): exact over the heads with an ISO time (the backend spreads chunks evenly).
     get_timeline({ sessionId, from, to, buckets }) {
       const session = sessions.get(sessionId);
-      const heads = reportHeads(session).map((h) => ({ ...h, us: h.ts === null ? null : h.ts * 1000 }));
+      const heads = reportHeads(session).map((h) => ({
+        ...h,
+        us: h.ts === null ? null : h.ts * 1000,
+      }));
       const timed = heads.filter((h) => h.us !== null);
       const base = {
         epoch: 0,
@@ -582,15 +684,22 @@
         if (b - a >= width) gaps.push({ from: a, to: b });
       }
       const step = Math.max(1, Math.ceil(timed.length / 1024));
-      const anchors = timed.filter((_, i) => i % step === 0).map((h) => ({ line: h.line - 1, ts: h.us }));
+      const anchors = timed
+        .filter((_, i) => i % step === 0)
+        .map((h) => ({ line: h.line - 1, ts: h.us }));
       return { ...base, from: lo, to: hi, buckets: out, gaps, min, max, before, after, anchors };
     },
     position_at_time({ sessionId, ts, viewId }) {
       const session = target(sessionId, viewId);
       const shown = visible(session);
-      const head = reportHeads(sessions.get(sessionId)).find((h) => h.ts !== null && h.ts * 1000 >= ts);
+      const head = reportHeads(sessions.get(sessionId)).find(
+        (h) => h.ts !== null && h.ts * 1000 >= ts,
+      );
       if (!head || !shown.length) return null;
-      const position = Math.max(0, shown.findIndex((l) => l.line >= head.line - 1));
+      const position = Math.max(
+        0,
+        shown.findIndex((l) => l.line >= head.line - 1),
+      );
       return { line: shown[position].line, position, exact: true };
     },
     find_level({ sessionId, fromPosition, forward, levels, viewId }) {
@@ -619,7 +728,17 @@
     // entry heads of the mock session (time from the ISO prefix, `took` from the message).
     open_report({ sessionId }) {
       const session = sessions.get(sessionId);
-      session.report = { state: 'ready', progress: 1, rows: 0, lines: session.lines.length, generation: 1, reason: null, message: null, lowSpace: false, size: 0 };
+      session.report = {
+        state: 'ready',
+        progress: 1,
+        rows: 0,
+        lines: session.lines.length,
+        generation: 1,
+        reason: null,
+        message: null,
+        lowSpace: false,
+        size: 0,
+      };
       session.report.rows = reportHeads(session).length;
       session.report.size = session.report.rows * 44;
       callbacks.get(session.channel)?.({ message: update(session), index: session.sent++ });
@@ -631,7 +750,13 @@
     export_view: () => 1,
     cancel_export: () => true,
     line_anchors: ({ lines }) =>
-      lines.map((line) => ({ line, source: 0, offset: line * 100, len: 99, hash: '0000000000000000' })),
+      lines.map((line) => ({
+        line,
+        source: 0,
+        offset: line * 100,
+        len: 99,
+        hash: '0000000000000000',
+      })),
     resolve_anchors: ({ anchors }) => anchors.map((a) => a.line),
     read_workspace: () => {
       throw { code: 'not_found', message: 'no files in the screenshot mock' };
@@ -656,7 +781,10 @@
       const range = sql.match(/ts >= (\d+) AND ts < (\d+)/);
       if (range) {
         const inRange = timed.filter((h) => h.ts >= Number(range[1]) && h.ts < Number(range[2]));
-        return result(['line'], [[inRange.length ? Math.min(...inRange.map((h) => h.line)) : null]]);
+        return result(
+          ['line'],
+          [[inRange.length ? Math.min(...inRange.map((h) => h.line)) : null]],
+        );
       }
       if (/GROUP BY t, level/.test(sql)) {
         return result(
@@ -672,7 +800,10 @@
           ['t', 'fehlerrate'],
           groups((h) => minute(h.ts)).map(([t, list]) => [
             t,
-            Math.round((10000 * list.filter((h) => h.level === 'ERROR' || h.level === 'FATAL').length) / list.length) / 100,
+            Math.round(
+              (10000 * list.filter((h) => h.level === 'ERROR' || h.level === 'FATAL').length) /
+                list.length,
+            ) / 100,
           ]),
         );
       }
@@ -682,13 +813,20 @@
           groups((h) => minute(h.ts))
             .map(([t, list]) => [t, list.map((h) => h.took).filter((v) => v !== null)])
             .filter(([, values]) => values.length)
-            .map(([t, values]) => [t, values.reduce((a, b) => a + b, 0) / values.length, Math.max(...values)]),
+            .map(([t, values]) => [
+              t,
+              values.reduce((a, b) => a + b, 0) / values.length,
+              Math.max(...values),
+            ]),
         );
       }
       if (/GROUP BY level/.test(sql)) {
         const counts = {};
         for (const h of heads) counts[h.level] = (counts[h.level] ?? 0) + 1;
-        return result(['level', 'n'], Object.entries(counts).sort((a, b) => b[1] - a[1]));
+        return result(
+          ['level', 'n'],
+          Object.entries(counts).sort((a, b) => b[1] - a[1]),
+        );
       }
       if (/LIMIT 100/.test(sql)) {
         const pad = (n) => String(n).padStart(2, '0');
@@ -705,7 +843,10 @@
             .map((h) => [h.line, h.ts === null ? null : local(h.ts), h.level]),
         );
       }
-      return result(['t', 'n'], groups((h) => minute(h.ts)).map(([t, list]) => [t, list.length]));
+      return result(
+        ['t', 'n'],
+        groups((h) => minute(h.ts)).map(([t, list]) => [t, list.length]),
+      );
     },
     list_profiles: () => PROFILES,
     set_custom_profiles: () => null,

@@ -6,6 +6,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import {
   appendFileSync,
   closeSync,
+  existsSync,
   mkdtempSync,
   openSync,
   readdirSync,
@@ -19,6 +20,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
+import { createSocket } from 'node:dgram';
 import { entryTime, makeEntry, parseArgs } from '../gen-log.mjs';
 
 const root = new URL('../..', import.meta.url).pathname;
@@ -246,6 +248,48 @@ function act(action) {
         passed++;
         console.log(`  ok  file ${name} holds ${wanted.length} expected texts`);
       }
+      break;
+    }
+    case 'syslog': {
+      // Prompt 016: `syslog <port> <count>` sends RFC 3164 datagrams to the app's listener (severities ERROR,
+      // WARN, INFO in turn), then one message with line breaks.
+      const [portText, countText] = text.split(' ');
+      const socket = createSocket('udp4');
+      const port = Number(portText);
+      const messages = [];
+      for (let i = 0; i < Number(countText); i++) {
+        const pri = 8 + [3, 4, 6][i % 3];
+        messages.push(`<${pri}>Nov  7 10:15:30 e2e-host app[${i}]: syslog e2e message ${i}\n`);
+      }
+      messages.push('<11>Nov  7 10:15:31 e2e-host app[1]: multi line\nsecond line');
+      let i = 0;
+      const next = () => {
+        if (i >= messages.length) {
+          socket.close();
+          return;
+        }
+        socket.send(messages[i++], port, '127.0.0.1', () => setTimeout(next, 1));
+      };
+      next();
+      break;
+    }
+    case 'expectspool':
+    case 'expectnospool': {
+      // The spool of a source exists while its tab is open and is gone after closing (prompt 016).
+      const want = verb === 'expectspool';
+      const start = Date.now();
+      const check = () => {
+        if (existsSync(text) === want) {
+          passed++;
+          console.log(`  ok  spool ${want ? 'exists' : 'deleted'}: ${text}`);
+        } else if (Date.now() - start < 5000) {
+          setTimeout(check, 100);
+        } else {
+          console.error(`\nFAIL spool ${want ? 'missing' : 'left behind'}: ${text}`);
+          finish(1);
+        }
+      };
+      check();
       break;
     }
     case 'expectnofile': {

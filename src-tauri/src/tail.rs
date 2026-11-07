@@ -474,7 +474,7 @@ impl Tailer {
         let file = Arc::new(file);
         let size = file.metadata().map_or(0, |m| m.len());
         let mut data = self.shared.data.write();
-        let keep = data.keep_on_rotate && data.segments.len() < MAX_SEGMENTS;
+        let keep = data.keep_on_rotate && data.segments.len() < data.max_segments;
         let base = if keep {
             self.current.base + self.current.read_pos
         } else {

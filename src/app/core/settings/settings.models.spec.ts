@@ -276,3 +276,25 @@ describe('column layouts from a workspace or a broken store (prompt 015)', () =>
     expect(Object.keys(mergeColumnLayouts(profiles)).length).toBe(256);
   });
 });
+
+describe('sources and spool (prompt 016)', () => {
+  it('keeps checked sources and bounds the spool limit', () => {
+    const config = {
+      kind: 'syslog',
+      protocol: 'udp',
+      address: '127.0.0.1',
+      port: 5514,
+      allow: [],
+      allowRemote: false,
+    };
+    const merged = mergeSettings({
+      savedSources: [{ config, keep: true }, { config: { ...config, port: 'x' } }],
+    } as never);
+    expect(merged.savedSources).toEqual([{ config, keep: true }]);
+    expect(merged.spoolLimitMb).toBe(2048);
+    expect(mergeSettings({ spoolLimitMb: 1 }).spoolLimitMb).toBe(64);
+    expect(mergeSettings({ spoolLimitMb: 1e9 }).spoolLimitMb).toBe(8192);
+    expect(mergeSettings({ spoolLimitMb: 'x' as never }).spoolLimitMb).toBe(2048);
+    expect(mergeSettings({ savedSources: 'x' as never }).savedSources).toEqual([]);
+  });
+});
