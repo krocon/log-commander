@@ -19,6 +19,8 @@ export interface SessionUpdate {
   totalLines: number;
   filteredLines: number;
   counts: LevelCounts;
+  /** Lines per level in the view (after the filter); while `filterPending` still the old filter's. */
+  viewCounts: LevelCounts;
   status: Status;
   fileSize: number;
   epoch: number;

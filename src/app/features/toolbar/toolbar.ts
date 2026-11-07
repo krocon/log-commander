@@ -8,6 +8,7 @@ import {
   effect,
   inject,
   output,
+  untracked,
   viewChild,
 } from '@angular/core';
 import { LEVELS, Level, SearchMode } from '../../core/log/log.models';
@@ -24,6 +25,7 @@ import {
 import { LogSessionService } from '../sessions/log-session.service';
 import { formatSummary } from '../sessions/format-logic';
 import { columnsActive, columnsAvailable } from '../log-table/columns-logic';
+import { SidebarState } from '../sidebar/sidebar-state';
 
 const SEARCH_DEBOUNCE_MS = 200;
 
@@ -33,6 +35,20 @@ const SEARCH_DEBOUNCE_MS = 200;
   template: `
     @let s = session();
     <div class="group" [hidden]="!s">
+      <button
+        type="button"
+        class="sidebar-toggle"
+        aria-controls="sidebar"
+        [attr.aria-pressed]="sidebar.shown()"
+        [title]="
+          sidebar.shown()
+            ? 'Seitenleiste ausblenden (⌘/Strg+B)'
+            : 'Seitenleiste: Dateien, Filter, Statistik (⌘/Strg+B)'
+        "
+        (click)="sidebar.toggle()"
+      >
+        ◧ Leiste
+      </button>
       <button
         type="button"
         class="freeze"
@@ -268,6 +284,7 @@ const SEARCH_DEBOUNCE_MS = 200;
     .chip-FATAL {
       --chip: var(--lv-error-edge);
     }
+    .sidebar-toggle,
     .freeze,
     .columns,
     .detail-toggle {
@@ -283,6 +300,7 @@ export class ToolbarComponent implements OnInit, OnDestroy {
   protected readonly sessions = inject(LogSessionService);
   private readonly settingsService = inject(SettingsService);
   protected readonly settings = this.settingsService.settings;
+  protected readonly sidebar = inject(SidebarState);
 
   readonly openSettings = output<void>();
 
@@ -326,6 +344,16 @@ export class ToolbarComponent implements OnInit, OnDestroy {
       const text = this.session()?.query().text ?? '';
       const input = this.searchInput().nativeElement;
       if (input.value !== text && !this.debounce) input.value = text;
+    });
+    // A filter from the sidebar wins over a search still being typed (prompt 005).
+    effect(() => {
+      const session = this.session();
+      if (!session || session.presetRevision() === 0) return;
+      untracked(() => {
+        if (this.debounce) clearTimeout(this.debounce);
+        this.debounce = null;
+        this.searchInput().nativeElement.value = session.query().text;
+      });
     });
   }
 
@@ -392,10 +420,14 @@ export class ToolbarComponent implements OnInit, OnDestroy {
 
   protected onSearchInput(text: string): void {
     if (this.debounce) clearTimeout(this.debounce);
+    const typedIn = this.session();
+    const revision = typedIn?.presetRevision();
     this.debounce = setTimeout(() => {
       this.debounce = null;
       const session = this.session();
-      if (session) void this.sessions.setQuery(session, { ...session.query(), text });
+      // Another tab or a filter from the sidebar in the meantime: the typing belonged to before.
+      if (!session || session !== typedIn || session.presetRevision() !== revision) return;
+      void this.sessions.setQuery(session, { ...session.query(), text });
     }, SEARCH_DEBOUNCE_MS);
   }
 

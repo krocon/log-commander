@@ -37,6 +37,7 @@ Einstellung `theme`: `system` (Standard), `dark`, `light`. Der `SettingsService`
 | Akzent und Status | `--accent`, `--accent-text`, `--danger`, `--ok` | Fokus, aktive Elemente, Primär-Button, Fehler, Erfolg |
 | Auswahl und Treffer | `--row-selected`, `--hit-bg`, `--hit-text`, `--hit-current-bg`, `--hit-current-text` | Gewählter Eintrag, Suchtreffer, aktueller Treffer |
 | Level | `--lv-<level>-fg`, `--lv-<level>-bg` für `trace`, `debug`, `info`, `warn`, `error`, `fatal`, `unknown`; dazu `--lv-info-badge`, `--lv-error-edge` | Zeilenfarbe je Level, Markierung am Zeilenrand |
+| Splitter | `--splitter-bg`, `--splitter-grip`, `--splitter-hover-bg` | Leiste, Griff in der Mitte, Hover/Ziehen (`shared/splitter.ts`) |
 | Inline-Tokens | `--tok-time`, `--tok-number`, `--tok-string`, `--tok-id`, `--tok-url` | Hervorhebung in der Zeile (`highlight.ts`) |
 
 Alle Zellen einer Zeile (Rohansicht: Nummer und Text, Spaltenansicht: jede Spalte) tragen die Klasse `lv-<LEVEL>` (`table-logic.ts`). `log-table-view.css` setzt daraus Vorder- und
@@ -56,8 +57,11 @@ läuft als erster Schritt in `npm run check`.
   Attribute und Literale `--tok-id`, Satzzeichen und Kommentare `--tok-time`), Kopf auf `--bg-panel`, Level-Badge aus den
   Level-Paaren. Die Paare auf `--bg-app` stehen in `PAIRS`; der Splitter hat keinen Text.
 - Wird ein neues Vordergrund/Hintergrund-Paar gebraucht, gehört es in `PAIRS`. Ein Token ohne Paar wird nicht geprüft.
-- Grafische Elemente ohne Text (Ruler-Marken, Diagramme) brauchen 3:1 zum Hintergrund. Die Prüfung kennt das noch nicht. Wer
-  solche Tokens einführt, ergänzt eine zweite Liste mit Schwelle 3.
+- Grafische Elemente ohne Text brauchen 3:1 zum Hintergrund (WCAG 1.4.11). Dafür gibt es `GRAPHIC_PAIRS` mit Schwelle 3:
+  der Griff der Splitter (`--splitter-grip`) auf der Leiste, im Hover und auf `--bg-app`/`--bg-panel`, `--accent` als
+  Griff beim Ziehen, und die Level-Punkte der Statistik in der Seitenleiste auf `--bg-panel`. Die Leiste selbst hebt sich
+  nur leicht ab, erkennbar ist sie am Griff; die Trefferfläche reicht 5 px über die 6 px breite Leiste hinaus.
+- Seitenleiste (Prompt 005): aktuelle Datei mit `--text` auf `--row-selected` (in `PAIRS`), sonst vorhandene Tokens.
 - Farbe ist nie die einzige Information: Level steht als Wort in der Zeile, Zustände haben Text oder Symbol.
 
 ## Eigene Level-Farben

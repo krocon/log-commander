@@ -18,6 +18,7 @@ const update = (filteredLines: number, change: Partial<SessionUpdate> = {}): Ses
     totalLines: filteredLines,
     filteredLines,
     counts: { UNKNOWN: 0, TRACE: 0, DEBUG: 0, INFO: 0, WARN: 0, ERROR: 0, FATAL: 0 },
+    viewCounts: { UNKNOWN: 0, TRACE: 0, DEBUG: 0, INFO: 0, WARN: 0, ERROR: 0, FATAL: 0 },
     status: { kind: 'live' },
     fileSize: filteredLines * 10,
     epoch: 0,

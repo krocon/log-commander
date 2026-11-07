@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Checks WCAG AA (4.5:1) for the level colours of both themes in src/styles.css.
+// Checks WCAG AA in both themes of src/styles.css: 4.5:1 for text, 3:1 for graphics.
 import { readFileSync } from 'node:fs';
 
 const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8');
@@ -17,6 +17,8 @@ const PAIRS = [
   ['lv-unknown-fg', 'lv-unknown-bg'],
   ['text', 'bg-app'],
   ['text-dim', 'bg-panel'],
+  // Sidebar (prompt 005): the current file on the selection colour.
+  ['text', 'row-selected'],
   // Column header and column menu (prompt 009).
   ['text', 'bg-panel'],
   ['text', 'bg-raised'],
@@ -39,6 +41,23 @@ const PAIRS = [
   ['tok-url', 'bg-app'],
 ];
 
+// Graphics without text (WCAG 1.4.11, 3:1): the grip of the splitters (src/app/shared/splitter.ts)
+// against the bar and against the panes beside it.
+const GRAPHIC_PAIRS = [
+  ['splitter-grip', 'splitter-bg'],
+  ['splitter-grip', 'splitter-hover-bg'],
+  ['splitter-grip', 'bg-app'],
+  ['splitter-grip', 'bg-panel'],
+  ['accent', 'splitter-hover-bg'],
+  // Level marks in the statistics of the sidebar (prompt 005), on its background.
+  ['lv-trace-fg', 'bg-panel'],
+  ['lv-debug-fg', 'bg-panel'],
+  ['lv-info-badge', 'bg-panel'],
+  ['lv-warn-fg', 'bg-panel'],
+  ['lv-error-fg', 'bg-panel'],
+  ['lv-error-edge', 'bg-panel'],
+];
+
 function luminance(hex) {
   const value = hex.replace('#', '');
   const channels = [0, 2, 4].map((i) => parseInt(value.slice(i, i + 2), 16) / 255);
@@ -56,14 +75,20 @@ for (const [, name, body] of blocks) {
   const tokens = Object.fromEntries(
     [...body.matchAll(/--([\w-]+):\s*(#[0-9a-fA-F]{6})/g)].map((m) => [m[1], m[2]]),
   );
-  for (const [fg, bg] of PAIRS) {
+  const checks = [
+    ...PAIRS.map((pair) => [...pair, 4.5]),
+    ...GRAPHIC_PAIRS.map((pair) => [...pair, 3]),
+  ];
+  for (const [fg, bg, min] of checks) {
     if (!tokens[fg] || !tokens[bg]) throw new Error(`${name}: missing token ${fg} or ${bg}`);
     const ratio = contrast(tokens[fg], tokens[bg]);
-    if (ratio < 4.5) {
-      console.error(`${name}: ${fg} on ${bg} = ${ratio.toFixed(2)} (below 4.5)`);
+    if (ratio < min) {
+      console.error(`${name}: ${fg} on ${bg} = ${ratio.toFixed(2)} (below ${min})`);
       failed++;
     }
   }
 }
 if (failed) process.exit(1);
-console.log(`contrast ok: ${PAIRS.length} pairs in ${blocks.length} themes`);
+console.log(
+  `contrast ok: ${PAIRS.length} text pairs, ${GRAPHIC_PAIRS.length} graphic pairs in ${blocks.length} themes`,
+);

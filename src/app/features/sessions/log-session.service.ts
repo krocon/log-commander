@@ -111,6 +111,28 @@ export class LogSessionService {
     await this.applyFilter(session);
   }
 
+  /**
+   * Levels, search and mode at once (saved filter, sidebar): one filter job instead of three. A search
+   * still being typed in the toolbar is dropped, it must not overwrite this.
+   */
+  async applyPreset(
+    session: SessionState,
+    preset: { levels: Iterable<Level>; query: SearchQuery; mode: SearchMode },
+  ): Promise<void> {
+    session.levels.set(new Set(preset.levels));
+    session.query.set({ ...preset.query });
+    session.searchMode.set(preset.mode);
+    session.currentHitLine.set(null);
+    session.presetRevision.update((r) => r + 1);
+    await this.applyFilter(session);
+  }
+
+  /** Removes the search (sidebar `×`); like `applyPreset` it wins over a search being typed. */
+  async clearSearch(session: SessionState): Promise<void> {
+    session.presetRevision.update((r) => r + 1);
+    await this.setQuery(session, { ...session.query(), text: '' });
+  }
+
   async setSearchMode(session: SessionState, mode: SearchMode): Promise<void> {
     session.searchMode.set(mode);
     await this.applyFilter(session);

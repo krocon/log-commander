@@ -144,6 +144,7 @@ impl SessionData {
             total_lines: self.index.len() as u64,
             filtered_lines: self.filter.len(self.index.len()) as u64,
             counts: self.index.counts.into(),
+            view_counts: self.filter.counts(&self.index.counts).into(),
             status: self.status.clone(),
             file_size: self.file_size,
             epoch: self.epoch,

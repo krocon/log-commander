@@ -29,11 +29,28 @@ import { SplitPane, clampSize, dragSize, keySize } from './splitter-logic';
   },
   template: '',
   styles: `
+    /* A slim visible bar with a centred grip; the hit area reaches 4 px further on both sides. */
     :host {
+      position: relative;
+      z-index: 2;
       flex: none;
-      background: var(--bg-panel);
+      background: var(--splitter-bg);
       touch-action: none;
       outline: none;
+    }
+    :host::before {
+      content: '';
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      border-radius: 1px;
+      background: var(--splitter-grip);
+      pointer-events: none;
+    }
+    :host::after {
+      content: '';
+      position: absolute;
     }
     :host(.horizontal) {
       height: 6px;
@@ -41,18 +58,38 @@ import { SplitPane, clampSize, dragSize, keySize } from './splitter-logic';
       border-top: 1px solid var(--border);
       border-bottom: 1px solid var(--border);
     }
+    :host(.horizontal)::before {
+      width: 32px;
+      height: 2px;
+    }
+    :host(.horizontal)::after {
+      inset: -5px 0;
+    }
     :host(.vertical) {
       width: 6px;
       cursor: col-resize;
       border-left: 1px solid var(--border);
       border-right: 1px solid var(--border);
     }
+    :host(.vertical)::before {
+      width: 2px;
+      height: 32px;
+    }
+    :host(.vertical)::after {
+      inset: 0 -5px;
+    }
     :host(:hover),
     :host(.dragging) {
-      background: var(--bg-hover);
+      background: var(--splitter-hover-bg);
+    }
+    :host(.dragging)::before {
+      background: var(--accent);
     }
     :host(:focus-visible) {
       background: var(--accent);
+    }
+    :host(:focus-visible)::before {
+      background: var(--accent-text);
     }
   `,
 })

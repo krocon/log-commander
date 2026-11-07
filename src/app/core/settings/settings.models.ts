@@ -1,4 +1,4 @@
-import { Level, Profile } from '../log/log.models';
+import { LEVELS, Level, Profile, SearchMode, SearchQuery } from '../log/log.models';
 
 export type ThemeChoice = 'system' | 'dark' | 'light';
 /** Column view (prompt 009) or the raw line. */
@@ -9,6 +9,15 @@ export interface ColumnLayout {
   order: string[];
   widths: Record<string, number>;
   hidden: string[];
+}
+
+/** A filter kept by name (sidebar, prompt 005). Levels as an array: a `Set` does not serialise. */
+export interface SavedFilter {
+  id: string;
+  name: string;
+  levels: Level[];
+  query: SearchQuery;
+  mode: SearchMode;
 }
 
 export interface Settings {
@@ -28,6 +37,11 @@ export interface Settings {
   detailVisible: boolean;
   detailHeight: number;
   detailWrap: boolean;
+  /** Sidebar left of the log (prompt 005): shown, width in px, share of the tree in its height. */
+  sidebarVisible: boolean;
+  sidebarWidth: number;
+  sidebarTreeShare: number;
+  savedFilters: SavedFilter[];
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -43,6 +57,10 @@ export const DEFAULT_SETTINGS: Settings = {
   detailVisible: false,
   detailHeight: 240,
   detailWrap: true,
+  sidebarVisible: true,
+  sidebarWidth: 240,
+  sidebarTreeShare: 0.55,
+  savedFilters: [],
 };
 
 export const MIN_FONT_SIZE = 9;
@@ -51,6 +69,12 @@ export const MAX_RECENT_FILES = 15;
 /** Bounds of a stored detail height; the layout limits it further to the window. */
 export const MIN_DETAIL_HEIGHT = 80;
 export const MAX_DETAIL_HEIGHT = 4000;
+/** Bounds of a stored sidebar width and tree share; the layout limits them further to the window. */
+export const MIN_SIDEBAR_WIDTH = 180;
+export const MAX_SIDEBAR_WIDTH = 2000;
+export const MIN_TREE_SHARE = 0.1;
+export const MAX_TREE_SHARE = 0.9;
+export const MAX_SAVED_FILTERS = 100;
 
 /** The tokens the colour settings offer. */
 export const COLOR_TOKENS: readonly { token: string; level: Level | null; label: string }[] = [
@@ -95,7 +119,54 @@ export function mergeSettings(saved: Partial<Settings> | null | undefined): Sett
   merged.detailHeight = Number.isFinite(height)
     ? Math.round(Math.min(MAX_DETAIL_HEIGHT, Math.max(MIN_DETAIL_HEIGHT, height)))
     : DEFAULT_SETTINGS.detailHeight;
+  if (typeof merged.sidebarVisible !== 'boolean') {
+    merged.sidebarVisible = DEFAULT_SETTINGS.sidebarVisible;
+  }
+  const width = Number(merged.sidebarWidth);
+  merged.sidebarWidth = Number.isFinite(width)
+    ? Math.round(Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, width)))
+    : DEFAULT_SETTINGS.sidebarWidth;
+  const share = Number(merged.sidebarTreeShare);
+  merged.sidebarTreeShare = Number.isFinite(share)
+    ? Math.min(MAX_TREE_SHARE, Math.max(MIN_TREE_SHARE, share))
+    : DEFAULT_SETTINGS.sidebarTreeShare;
+  merged.savedFilters = mergeSavedFilters(merged.savedFilters);
   return merged;
+}
+
+const SEARCH_MODES: readonly SearchMode[] = ['filter', 'highlight'];
+
+/** Entries without id or name are dropped; unknown levels and broken queries fall back. */
+export function mergeSavedFilters(saved: unknown): SavedFilter[] {
+  if (!Array.isArray(saved)) return [];
+  const result: SavedFilter[] = [];
+  const ids = new Set<string>();
+  for (const value of saved as unknown[]) {
+    if (typeof value !== 'object' || value === null) continue;
+    const entry = value as Partial<Record<keyof SavedFilter, unknown>>;
+    if (typeof entry.id !== 'string' || !entry.id || ids.has(entry.id)) continue;
+    if (typeof entry.name !== 'string' || !entry.name.trim()) continue;
+    const levels = Array.isArray(entry.levels)
+      ? LEVELS.filter((level) => (entry.levels as unknown[]).includes(level))
+      : [...LEVELS];
+    const query = (
+      typeof entry.query === 'object' && entry.query !== null ? entry.query : {}
+    ) as Partial<Record<keyof SearchQuery, unknown>>;
+    ids.add(entry.id);
+    result.push({
+      id: entry.id,
+      name: entry.name.trim(),
+      levels,
+      query: {
+        text: typeof query.text === 'string' ? query.text : '',
+        isRegex: query.isRegex === true,
+        caseSensitive: query.caseSensitive === true,
+      },
+      mode: SEARCH_MODES.includes(entry.mode as SearchMode) ? (entry.mode as SearchMode) : 'filter',
+    });
+    if (result.length >= MAX_SAVED_FILTERS) break;
+  }
+  return result;
 }
 
 const isStringArray = (v: unknown): v is string[] =>

@@ -1,6 +1,6 @@
 # Architektur
 
-Stand: Detail-Panel (Prompt 004), Spaltenansicht (Prompt 009) und Formaterkennung (Prompt 008) auf Basis des Startauftrags, des Flacker-Fixes (001), des Freeze-Buttons (002) und
+Stand: Seitenleiste (Prompt 005), Detail-Panel (Prompt 004), Spaltenansicht (Prompt 009) und Formaterkennung (Prompt 008) auf Basis des Startauftrags, des Flacker-Fixes (001), des Freeze-Buttons (002) und
 der GuiExpert Table (003). Dieses Dokument beschreibt
 Entscheidungen, nicht Wünsche. Geplantes steht in `docs/roadmap.md` und in `prompts/`.
 
@@ -8,7 +8,7 @@ Entscheidungen, nicht Wünsche. Geplantes steht in `docs/roadmap.md` und in `pro
 
 ```
 ┌──────────────── WebView (Angular 22, zoneless, Signals) ──────────────┐
-│  App ── Tabs, Toolbar, LogTableView, Splitter, DetailPanel, StatusBar │
+│  App ── Tabs, Toolbar, Sidebar, LogTableView, Splitter, DetailPanel   │
 │   │      LogTableView: GuiExpert Table, Zeile + Pixel-Offset          │
 │  LogSessionService (Root) ── Tabs, Aktionen, Fehleranzeige            │
 │   └ SessionState je Tab ── update, Filter, Scroll, Auswahl,           │
@@ -58,6 +58,7 @@ Entscheidungen, nicht Wünsche. Geplantes steht in `docs/roadmap.md` und in `pro
 | Ansicht | GuiExpert Table (`log-table-view.ts`, `LogAreaModel`), eigenes Scroll-Modell: Position = Zeile + Pixel-Offset (`viewport-logic.ts`), die Tabelle zeichnet sie mit `repaintHard({ px, py })` bzw. `scrollToPixel`. Feste Zeilenhöhe, kein Umbruch, Ziehen an der Scrollleiste wird auf eine Zeile umgerechnet | Die Tabelle kappt die Scrollhöhe bei 8 Mio. px; mit dem eigenen Modell wandert die Ansicht beim Anhängen nicht. Messwerte: `prompts/done/003-gui-expert-table.design.md`. |
 | Spaltenansicht | Dieselbe Tabelle mit ihrer Kopfzeile: je Feld aus `get_columns` eine Spalte, Zellen aus den Spannen (`cellSegments` schneidet die Segmente der Zeile, Treffer und Tokens bleiben). Fortsetzungs- und nicht zerlegte Zeilen spannen per Colspan ab der ersten sichtbaren Spalte. Layout (Reihenfolge, Breiten, ausgeblendet) je Profil in den Settings, Rohansicht per `T` | Kein zweiter Viewport; Breite und Reihenfolge zieht die Tabelle selbst. Kein Sortieren: die Ansicht ist nach Datei und Zeit geordnet und wächst live. Prompt 009. |
 | Detail-Panel | Unter der Ansicht, per Splitter (`shared/splitter.ts`, wiederverwendbar) in der Höhe verstellbar. Zeigt den Eintrag von `selection().anchor`: `get_entry` liest Kopf und Fortsetzungen direkt aus dem Index (ohne Filter), höchstens 1 MiB, Schnitt an einer Zeichengrenze. Kopieren über `copy_lines` mit `view: all` liefert alles. JSON/XML formatiert ein eigener Tokenizer (`detail-format.ts`), der nur Einrückung und Farbe ändert. Neu geladen wird bei anderer Zeile, Tab, `epoch` oder `viewGeneration`, sonst nur ein Eintrag am Dateiende, höchstens ein Aufruf zugleich | Lange Zeilen und eingebettete Blöcke lesbar machen, ohne den Text im Frontend zusammenzusetzen (der `PageCache` hält nur gefilterte, gekürzte Zeilen). `JSON.parse` rundet 64-Bit-IDs, `DOMParser` scheitert an Fragmenten. Prompt 004. |
+| Seitenleiste | Links neben Log und Detail-Panel, Breite per vertikalem Splitter (min. 180 px, Log min. 360 px), darin Baum und Statistik per horizontalem Splitter (`sidebarTreeShare`). Baum = reine Funktion (`tree-model.ts`) aus Sitzungen und `savedFilters`, WAI-ARIA-Tree mit rovingem `tabindex`; Statistik „Alle“ = `counts`, „Ansicht“ = `viewCounts` aus `FilteredLines` (Zähler in `append`, Zwischenzähler je Eintrag, beides im Checkpoint). Gespeicherte Filter in den Settings, `applyPreset` = ein Filter-Job | Zweite Sicht auf denselben Zustand statt zweiter Quelle. Zähler im Backend, weil das Frontend die Level der gefilterten Zeilen nicht kennt; Mehrkosten im Filter ~0,35 ns je Zeile. Prompt 005. |
 | Gezeichnet wird, was da ist | `displayedLines` trennt den Stand der Ansicht vom Stand des Backends. Der Tail rückt erst vor, wenn das neue Ende im `PageCache` liegt | Sonst blitzt je Update die Fläche ohne Level-Farbe auf. Prompt 001. |
 | Virtuelle Offsets | Jede Datei einer Sitzung (vor und nach Rotation) belegt einen eigenen Offset-Bereich (`Segment`), der Handle bleibt offen, höchstens 32 Dateien | Zeilennummern bleiben bei „alte Zeilen behalten“ gültig, und das Lesen braucht keinen Pfad. |
 | Gefilterte Ansicht | `FilteredLines`: bei Identität keine Liste, sonst `Vec<u32>` der Zeilennummern. Im Tail inkrementell, bei Filterwechsel neu per Job | Positionen in der Ansicht sind Indizes in die Liste, Suche und Kopieren arbeiten darauf. |
