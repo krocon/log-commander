@@ -10,8 +10,11 @@ import { LogSessionService } from '../sessions/log-session.service';
     <div class="card">
       <h1>Log Commander</h1>
       <p class="lead">Logdateien live verfolgen, filtern und durchsuchen.</p>
-      <button type="button" class="primary" (click)="openFile.emit()">Datei öffnen …</button>
-      <p class="hint">oder Datei ins Fenster ziehen · ⌘/Strg+O</p>
+      <div class="actions">
+        <button type="button" class="primary" (click)="openFile.emit()">Datei öffnen …</button>
+        <button type="button" class="secondary" (click)="openPath.emit()">Pfad eingeben …</button>
+      </div>
+      <p class="hint">oder Datei ins Fenster ziehen · ⌘/Strg+O · Pfad: ⌘/Strg+⇧+O</p>
       @if (settings().recentFiles.length) {
         <h2>Zuletzt geöffnet</h2>
         <ul>
@@ -54,6 +57,15 @@ import { LogSessionService } from '../sessions/log-session.service';
     .lead {
       margin: 4px 0 18px;
       color: var(--text-dim);
+    }
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .secondary {
+      padding: 7px 16px;
+      border: 1px solid var(--border);
     }
     .primary {
       padding: 7px 16px;
@@ -114,6 +126,7 @@ export class StartScreenComponent {
   protected readonly sessions = inject(LogSessionService);
   protected readonly baseName = baseName;
   readonly openFile = output<void>();
+  readonly openPath = output<void>();
 
   protected forget(path: string): void {
     this.settingsService.removeRecentFile(path);

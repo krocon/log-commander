@@ -36,10 +36,16 @@ export class LogSessionService {
   }
 
   async open(path: string): Promise<void> {
+    const error = await this.tryOpen(path);
+    if (error) this.showError(error);
+  }
+
+  /** Opens or activates a file and hands a failure to the caller instead of showing it. */
+  async tryOpen(path: string): Promise<AppError | null> {
     const open = this.sessions().find((s) => s.path === path);
     if (open) {
       this.activate(open.id);
-      return;
+      return null;
     }
     // Updates can overtake the answer of open_log; they wait until the state exists.
     let state: SessionState | null = null;
@@ -54,10 +60,11 @@ export class LogSessionService {
       this.sessions.update((all) => [...all, state as SessionState]);
       this.activate(state.id);
       this.settings.addRecentFile(info.path);
+      return null;
     } catch (e) {
       const err = toAppError(e);
-      this.showError(err);
       if (err.code === 'not_found') this.settings.removeRecentFile(path);
+      return err;
     }
   }
 

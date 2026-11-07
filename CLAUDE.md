@@ -8,8 +8,9 @@
 
 | Zweck | Befehl |
 |---|---|
-| App starten (Dev) | `npm run dev` (Dev-Server Port 1450 + Fenster); auch `cargo tauri dev` nach `cargo install tauri-cli` |
-| Datei per CLI im Dev | `npm run tauri dev -- -- /pfad/app.log` |
+| App starten (Dev) | `npm run tauri:dev` (Dev-Server Port 1450 + Fenster); auch `cargo tauri dev` nach `cargo install tauri-cli` |
+| Datei per CLI im Dev | `npm run tauri:dev -- -- -- /pfad/app.log` (npm schluckt das erste `--`, mit zweien landen Cargo-Argumente in der App und die Datei wird ignoriert) |
+| Live-Demo | `npm run demo:log` (schreibt `/tmp/app.log`), `npm run demo:app` (öffnet sie), `npm run demo:clean` |
 | Frontend-Tests | `npm test` (Vitest + jsdom über `ng test`) |
 | Lint / Format | `npm run lint`, `npm run format`, `npm run format:check` |
 | Rust | `npm run rust:fmt`, `npm run rust:lint` (clippy `-D warnings`), `npm run rust:test` |

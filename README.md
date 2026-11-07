@@ -43,6 +43,7 @@ log-commander /var/log/app.log /var/log/other.log
 | Key | Action |
 |---|---|
 | `Cmd/Ctrl+O` | Open a file |
+| `Cmd/Ctrl+Shift+O` | Type or paste a path to open (`~` works) |
 | `End`, `F` | Go to the end and follow |
 | `Space` | Pause or resume following |
 | `Home`, `PageUp`, `PageDown`, `↑`, `↓` | Move through the file |
@@ -61,7 +62,7 @@ npm install
 ```
 
 ```bash
-npm run dev
+npm run tauri:dev
 ```
 
 (`cargo tauri dev` works too, once `cargo install tauri-cli` is done.) `npm run check` runs everything except the
@@ -70,11 +71,13 @@ end-to-end test; `npm run e2e` runs the real app with a real log file. Details: 
 Try it with live data:
 
 ```bash
-node scripts/gen-log.mjs /tmp/app.log --rate 5000 --rotate-every 100000
+npm run demo:log     # writes /tmp/app.log, stop with Ctrl+C
+npm run demo:app     # in a second terminal: the app with that file
+npm run demo:clean   # removes the files afterwards (macOS, Linux)
 ```
 
-`--format spring|python|json|nginx`, `--truncate-every N`, `--lines N`, `--stack 0..1`. Example files are in
-[`samples/`](samples/).
+For other data use `npm run gen-log -- /tmp/app.log` with `--rate N`, `--format spring|python|json|nginx`,
+`--rotate-every N`, `--truncate-every N`, `--lines N`, `--stack 0..1`. Example files are in [`samples/`](samples/).
 
 ## Performance
 

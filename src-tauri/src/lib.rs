@@ -27,6 +27,7 @@ use tauri::menu::{Menu, MenuItem, SubmenuBuilder};
 use tauri::Emitter;
 
 const MENU_OPEN: &str = "open-log";
+const MENU_OPEN_PATH: &str = "open-log-path";
 
 pub fn run() {
     let builder = tauri::Builder::default();
@@ -49,6 +50,8 @@ pub fn run() {
         .on_menu_event(|app, event| {
             if event.id() == MENU_OPEN {
                 let _ = app.emit("menu-open", ());
+            } else if event.id() == MENU_OPEN_PATH {
+                let _ = app.emit("menu-open-path", ());
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -73,17 +76,29 @@ pub fn run() {
         .expect("error while running Log Commander");
 }
 
-/// The platform's default menu plus File → Open…
+/// The platform's default menu plus File → Open… and Open Path…
 fn build_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<Menu<R>> {
     let menu = Menu::default(app)?;
     let open = MenuItem::with_id(app, MENU_OPEN, "Open…", true, Some("CmdOrCtrl+O"))?;
+    let open_path = MenuItem::with_id(
+        app,
+        MENU_OPEN_PATH,
+        "Open Path…",
+        true,
+        Some("CmdOrCtrl+Shift+O"),
+    )?;
     let file = menu.items()?.into_iter().find_map(|item| {
         let submenu = item.as_submenu()?;
         (submenu.text().ok()? == "File").then(|| submenu.clone())
     });
     match file {
-        Some(file) => file.insert(&open, 0)?,
-        None => menu.append(&SubmenuBuilder::new(app, "File").item(&open).build()?)?,
+        Some(file) => file.insert_items(&[&open, &open_path], 0)?,
+        None => menu.append(
+            &SubmenuBuilder::new(app, "File")
+                .item(&open)
+                .item(&open_path)
+                .build()?,
+        )?,
     }
     Ok(menu)
 }

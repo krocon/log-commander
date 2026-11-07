@@ -16,6 +16,7 @@ import { getMatches } from '@tauri-apps/plugin-cli';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { SettingsService } from './core/settings/settings.service';
 import { LogViewComponent } from './features/log-view/log-view';
+import { OpenPathDialogComponent } from './features/open-path/open-path-dialog';
 import { LogSessionService } from './features/sessions/log-session.service';
 import { SettingsDialogComponent } from './features/settings/settings-dialog';
 import { StartScreenComponent } from './features/start/start-screen';
@@ -28,6 +29,7 @@ import { ToolbarComponent } from './features/toolbar/toolbar';
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
     LogViewComponent,
+    OpenPathDialogComponent,
     SettingsDialogComponent,
     StartScreenComponent,
     StatusBarComponent,
@@ -35,12 +37,16 @@ import { ToolbarComponent } from './features/toolbar/toolbar';
     ToolbarComponent,
   ],
   template: `
-    <app-tabs (openFile)="openFile()" />
+    <app-tabs (openFile)="openFile()" (openPath)="pathDialogOpen.set(true)" />
     <app-toolbar (openSettings)="settingsOpen.set(true)" />
     @if (active(); as session) {
       <app-log-view class="main" [session]="session" />
     } @else {
-      <app-start-screen class="main" (openFile)="openFile()" />
+      <app-start-screen
+        class="main"
+        (openFile)="openFile()"
+        (openPath)="pathDialogOpen.set(true)"
+      />
     }
     <app-status-bar />
     @if (sessions.error(); as error) {
@@ -56,6 +62,9 @@ import { ToolbarComponent } from './features/toolbar/toolbar';
     }
     @if (settingsOpen()) {
       <app-settings-dialog (closed)="settingsOpen.set(false)" />
+    }
+    @if (pathDialogOpen()) {
+      <app-open-path-dialog (closed)="pathDialogOpen.set(false)" />
     }
   `,
   styles: `
@@ -104,6 +113,7 @@ export class App implements OnInit, OnDestroy {
 
   protected readonly active = computed(() => this.sessions.active());
   protected readonly settingsOpen = signal(false);
+  protected readonly pathDialogOpen = signal(false);
   protected readonly dropActive = signal(false);
   private dialogOpen = false;
   private readonly cleanups: (() => void)[] = [];
@@ -125,6 +135,7 @@ export class App implements OnInit, OnDestroy {
     if (!isTauri()) return;
     await this.sessions.refreshProfiles();
     this.cleanups.push(await listen('menu-open', () => this.openFile()));
+    this.cleanups.push(await listen('menu-open-path', () => this.pathDialogOpen.set(true)));
     this.cleanups.push(
       await getCurrentWebview().onDragDropEvent((event) => {
         const payload = event.payload;
@@ -177,7 +188,8 @@ export class App implements OnInit, OnDestroy {
     const key = event.key.toLowerCase();
     if (key === 'o') {
       event.preventDefault();
-      void this.openFile();
+      if (event.shiftKey) this.pathDialogOpen.set(true);
+      else void this.openFile();
     } else if (key === 'w') {
       event.preventDefault();
       const id = this.sessions.activeId();

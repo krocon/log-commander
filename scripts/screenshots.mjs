@@ -89,6 +89,11 @@ await shot(light, 'light');
 const start = await page(browser, { theme: 'dark', withFiles: false });
 await shot(start, 'start');
 
+await start.click('button:text-is("Pfad eingeben …")');
+await start.fill('app-open-path-dialog input', '/tmp/app.log');
+await start.waitForTimeout(150);
+await shot(start, 'open-path');
+
 const narrow = await page(browser, { theme: 'dark' });
 await narrow.setViewportSize({ width: 760, height: 520 });
 await narrow.waitForTimeout(200);

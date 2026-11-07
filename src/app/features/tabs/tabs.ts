@@ -36,6 +36,14 @@ import { LogSessionService } from '../sessions/log-session.service';
     <button type="button" class="open" title="Datei öffnen (⌘/Strg+O)" (click)="openFile.emit()">
       ＋
     </button>
+    <button
+      type="button"
+      class="open"
+      title="Pfad eingeben und öffnen (⌘/Strg+⇧+O)"
+      (click)="openPath.emit()"
+    >
+      Pfad …
+    </button>
   `,
   styles: `
     :host {
@@ -97,4 +105,5 @@ import { LogSessionService } from '../sessions/log-session.service';
 export class TabsComponent {
   protected readonly sessions = inject(LogSessionService);
   readonly openFile = output<void>();
+  readonly openPath = output<void>();
 }

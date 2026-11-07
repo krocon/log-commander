@@ -278,6 +278,32 @@
     click(tabOf('e2e.log').parentElement.querySelector('.close'));
     await waitFor('start screen lists recent files', () => $('app-start-screen')?.textContent.includes('e2e.log'));
 
+    // Opening by a typed path; the harness sets HOME to the folder that holds other.log.
+    const typePath = (text) => {
+      const input = $('app-open-path-dialog input');
+      input.value = text;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      return input.form;
+    };
+    click(button('Pfad eingeben'));
+    await waitFor('path dialog opens and takes the focus', () =>
+      $('app-open-path-dialog dialog')?.open && document.activeElement === $('app-open-path-dialog input'));
+    typePath('   ');
+    await waitFor('blank path cannot be submitted', () => $('app-open-path-dialog button[type=submit]').disabled);
+    typePath('~/does-not-exist.log').requestSubmit();
+    await waitFor('wrong path is reported in the dialog, which stays open', () =>
+      $('app-open-path-dialog .error')?.textContent.includes('does-not-exist.log') && $('app-open-path-dialog dialog').open);
+    typePath(' "~/other.log" ').requestSubmit();
+    await waitFor('quotes and ~ are resolved and the file opens', () => tabOf('other.log') && !$('app-open-path-dialog'));
+    press('o', { metaKey: true, shiftKey: true });
+    await waitFor('shortcut opens the path dialog', () => $('app-open-path-dialog dialog')?.open);
+    typePath('~/other.log').requestSubmit();
+    await waitFor('a file already open gets no second tab', () => !$('app-open-path-dialog') && tabs().length === 1);
+    click(button('Pfad'));
+    await waitFor('tab bar opens the path dialog', () => $('app-open-path-dialog dialog')?.open);
+    $('app-open-path-dialog dialog').close();
+    await waitFor('dialog can be dismissed', () => !$('app-open-path-dialog'));
+
     await report('DONE');
   } catch (e) {
     await report(`FAIL ${e.message}`);
