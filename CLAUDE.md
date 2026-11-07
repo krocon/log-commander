@@ -33,7 +33,8 @@ src/                         Angular 22 (zoneless, Signals, OnPush, Standalone)
   app/core/log/              LogApi, DTOs (= Rust model.rs)
   app/core/settings/         SettingsService (tauri-plugin-store, wendet Theme/Farben an), reine Merge-Logik
   app/features/sessions/     LogSessionService (Tabs, alle Aktionen), SessionState (je Tab), PageCache, filter-logic
-  app/features/log-view/     LogViewComponent, viewport-logic (reines Scroll-Modell), highlight (Inline-Tokens)
+  app/features/log-table/    LogTableViewComponent (GuiExpert Table), LogAreaModel, viewport-logic (reines
+                             Scroll-Modell), table-logic, highlight (Inline-Tokens)
   app/features/toolbar|statusbar|tabs|start|settings/   UI
 src-tauri/src/               Rust; alles außer commands.rs und lib.rs ist frei von Tauri
   session.rs                 LogSession, Abfragen, Hintergrund-Jobs (Filter, Level neu), SessionManager
@@ -49,10 +50,13 @@ samples/                     Beispiel-Logs
 
 ## Entscheidungen
 
-- **Eigener Viewport statt CDK oder GuiExpert Table.** Beide machen ein Element so hoch wie alle Zeilen; am Browser-Limit
-  (~33 Mio. px) ist bei rund 1,5 Mio. Zeilen Schluss, und die Daten müssten synchron vorliegen. Hier ist die Position
-  Zeile + Pixel-Offset, die native Scrollleiste bildet nur einen Bruchteil ab (`viewport-logic.ts`). Das erlaubt auch
-  variable Höhen beim Zeilenumbruch. Die GuiExpert Table bleibt eine Option für künftige Tabellen (Spaltenansicht).
+- **GuiExpert Table als einzige Ansicht, eigenes Scroll-Modell** (Prompt 003, ab `@guiexpert/table` 1.1.107). Das CDK
+  macht ein Element so hoch wie alle Zeilen und endet am Browser-Limit (~33 Mio. px). Die Tabelle kappt die Scrollhöhe bei
+  8 Mio. px; die Position bleibt trotzdem Zeile + Pixel-Offset (`viewport-logic.ts`), die Tabelle zeichnet sie nur:
+  `repaintHard({ px, py })` bei neuer Zeilenzahl (ein Render), sonst `scrollToPixel`. So wandert die Ansicht beim
+  Anhängen nicht. Das Rad läuft über das eigene Modell; Ziehen an der Scrollleiste rechnet `onTableScroll` auf eine Zeile um.
+  Feste Zeilenhöhe, kein Zeilenumbruch. `getValueAt` ist synchron: Nicht geladene Zeilen sind Platzhalter (`loading`).
+  Messwerte und Abwägung: `prompts/done/003-gui-expert-table.design.md`.
   Editlicious ist als Editor mit Rope nicht passend: Der Text liegt hier bewusst nicht im Speicher.
 - **Virtuelle Offsets und Segmente:** Jede Datei einer Sitzung (vor/nach Rotation) belegt einen eigenen Offset-Bereich, der
   Handle bleibt offen. So bleiben Zeilennummern bei „alte Zeilen behalten“ gültig, höchstens 32 Dateien, dann Neubeginn.

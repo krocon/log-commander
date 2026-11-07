@@ -30,7 +30,21 @@
     }
   }
 
-  const rowTexts = () => $$('.row .text').map((e) => e.textContent);
+  // The table: one text cell (`.lt-cell`) and one gutter cell (`.lt-gutter`) per row, both with the row's classes and
+  // `data-line`. The table may keep cells outside the view, so rows are the visible text cells from the top.
+  const view = () => $('app-log-table-view');
+  const scroller = () => $('app-log-table-view .ge-table-scroll-viewport');
+  const inView = (cells) => {
+    const box = view().getBoundingClientRect();
+    return cells
+      .map((c) => ({ c, r: c.getBoundingClientRect() }))
+      .filter(({ r }) => r.height > 0 && r.bottom > box.top + 1 && r.top < box.bottom - 1)
+      .sort((a, b) => a.r.top - b.r.top)
+      .map(({ c }) => c);
+  };
+  const rows = () => inView($$('app-log-table-view .lt-cell'));
+  const topLine = () => Number(rows()[0]?.dataset.line);
+  const rowTexts = () => rows().map((e) => e.textContent);
   const status = () => $('app-status-bar').innerText;
   const chip = (level) => $(`.chip-${level}`);
   const count = (level) => Number(chip(level).querySelector('.count').textContent.replace(/\D/g, ''));
@@ -43,7 +57,7 @@
   };
   const button = (text) => $$('button').find((b) => b.textContent.trim().startsWith(text));
   const wheel = (deltaY) =>
-    $('.scroller').dispatchEvent(new WheelEvent('wheel', { deltaY, bubbles: true, cancelable: true }));
+    scroller().dispatchEvent(new WheelEvent('wheel', { deltaY, bubbles: true, cancelable: true }));
   const press = (key, options = {}) =>
     document.body.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, ...options }));
 
@@ -65,9 +79,9 @@
     let withPlaceholder = 0;
     const observer = new MutationObserver(() => {
       changes++;
-      if ($('.row.loading')) withPlaceholder++;
+      if ($('.lt-cell.loading')) withPlaceholder++;
     });
-    observer.observe($('.view'), {
+    observer.observe(view(), {
       childList: true,
       subtree: true,
       attributes: true,
@@ -96,22 +110,22 @@
     click($$('.tab .title').find((t) => t.textContent.includes('e2e.log')));
     await waitFor('lines rendered', () => rowTexts().some((t) => t.includes('Starting ShopApplication')));
     await waitFor('counters', () => count('ERROR') === 8 && count('FATAL') === 1 && count('WARN') === 1);
-    await waitFor('text keeps its spaces', () => getComputedStyle($('.row .text')).whiteSpace === 'pre');
+    await waitFor('text keeps its spaces', () => getComputedStyle(rows()[0]).whiteSpace === 'pre');
     await waitFor('text is exact, without added spaces', () =>
       rowTexts()[0] === '2026-01-15T10:00:00.123+01:00  INFO 4711 --- [           main] c.a.shop.ShopApplication                 : Starting ShopApplication v2.4.1 using Java 21',
     );
-    await waitFor('long lines scroll sideways', () => $('.scroller').scrollWidth > $('.scroller').clientWidth);
-    $('.scroller').scrollLeft = 120;
-    await waitFor('text moves, line numbers stay', () => {
-      const text = $('.row .text').getBoundingClientRect().left;
-      const gutter = $('.row .gutter').getBoundingClientRect().left;
-      return gutter === 0 && text < 0;
-    });
-    $('.scroller').scrollLeft = 0;
+    await waitFor('long lines scroll sideways', () => scroller().scrollWidth > scroller().clientWidth);
+    const textLeft = () => rows()[0].getBoundingClientRect().left;
+    const gutterLeft = () => inView($$('app-log-table-view .lt-gutter'))[0].getBoundingClientRect().left;
+    const [text0, gutter0] = [textLeft(), gutterLeft()];
+    scroller().scrollLeft = 120;
+    await waitFor('text moves, line numbers stay', () => textLeft() <= text0 - 100 && gutterLeft() === gutter0);
+    scroller().scrollLeft = 0;
+    await waitFor('text back at the start', () => textLeft() === text0);
     await waitFor('continuation lines inherit ERROR', () =>
-      $$('.row.lv-ERROR.cont').some((r) => r.textContent.includes('Caused by')),
+      $$('.lt-cell.lv-ERROR.cont').some((r) => r.textContent.includes('Caused by')),
     );
-    const errorRow = $$('.row.lv-ERROR')[0];
+    const errorRow = $$('.lt-cell.lv-ERROR')[0];
     const [r, g, b] = getComputedStyle(errorRow).color.match(/\d+/g).map(Number);
     await waitFor('ERROR is red', () => r > 150 && r > g * 1.5 && r > b * 1.5);
     await waitFor('profile suggested', () => {
@@ -141,15 +155,15 @@
 
     // Level filter: toggle, only this, this and worse, presets.
     click(chip('INFO'));
-    await waitFor('INFO off', () => chip('INFO').getAttribute('aria-pressed') === 'false' && !$('.row.lv-INFO'));
+    await waitFor('INFO off', () => chip('INFO').getAttribute('aria-pressed') === 'false' && !$('.lt-cell.lv-INFO'));
     click(button('WARN+'));
-    await waitFor('WARN+ shows no INFO', () => $('.row') && !$('.row.lv-INFO') && !!$('.row.lv-WARN'));
+    await waitFor('WARN+ shows no INFO', () => rows().length && !$('.lt-cell.lv-INFO') && !!$('.lt-cell.lv-WARN'));
     click(chip('ERROR'), { altKey: true });
     await waitFor('alt-click only ERROR, with its stack trace', () =>
-      $$('.row').every((r) => r.classList.contains('lv-ERROR')) && rowTexts().some((t) => t.includes('Caused by')),
+      rows().every((r) => r.classList.contains('lv-ERROR')) && rowTexts().some((t) => t.includes('Caused by')),
     );
     chip('WARN').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
-    await waitFor('double click: WARN and worse', () => !!$('.row.lv-WARN') && !!$('.row.lv-FATAL') && !$('.row.lv-INFO'));
+    await waitFor('double click: WARN and worse', () => !!$('.lt-cell.lv-WARN') && !!$('.lt-cell.lv-FATAL') && !$('.lt-cell.lv-INFO'));
     await act('append 2026-01-15T10:02:00.000+01:00 ERROR 4711 --- [t] a.B : after the filter');
     await waitFor('filter grows incrementally', () => rowTexts().some((t) => t.includes('after the filter')));
     click(button('Alle'));
@@ -159,7 +173,7 @@
     search('order');
     await waitFor('search filters', () => status().includes(' von ') && rowTexts().some((t) => t.includes('Could not place order')));
     await waitFor('entry stays together', () => rowTexts().some((t) => t.includes('at com.acme.shop.db.ConnectionPool')));
-    await waitFor('match is marked', () => $$('.row .hit').some((h) => /order/i.test(h.textContent)));
+    await waitFor('match is marked', () => $$('.lt-cell .hit').some((h) => /order/i.test(h.textContent)));
     click(button('.*'));
     search('or+der\\s+\\d+');
     await waitFor('regex search', () => rowTexts().some((t) => t.includes('Order 4242')));
@@ -173,14 +187,14 @@
     await waitFor('highlight mode shows everything', () => !status().includes(' von '));
     click($('button[title^="Nächster"]'));
     await waitFor('next match scrolls to it', () =>
-      $$('.row.current-hit').some((r) => r.textContent.includes('bulk line 10')),
+      $$('.lt-cell.current-hit').some((r) => r.textContent.includes('bulk line 10')),
     );
     await waitFor('follow stopped by the jump', () => status().includes('Pausiert'));
-    const firstHit = $('.row.current-hit .gutter').textContent;
+    const firstHit = $('.lt-gutter.current-hit').textContent;
     click($('button[title^="Nächster"]'));
-    await waitFor('next match moves on', () => $('.row.current-hit .gutter')?.textContent !== firstHit);
+    await waitFor('next match moves on', () => $('.lt-gutter.current-hit')?.textContent !== firstHit);
     click($('button[title^="Vorheriger"]'));
-    await waitFor('previous match goes back', () => $('.row.current-hit .gutter')?.textContent === firstHit);
+    await waitFor('previous match goes back', () => $('.lt-gutter.current-hit')?.textContent === firstHit);
     search('');
     mode.value = 'filter';
     mode.dispatchEvent(new Event('change', { bubbles: true }));
@@ -192,10 +206,10 @@
     // Selecting a stack trace line selects the entry; copying returns its text.
     press('Home');
     await waitFor('home', () => rowTexts()[0].includes('Starting ShopApplication'));
-    const cause = $$('.row').find((r) => r.textContent.includes('Caused by'));
-    click(cause.querySelector('.text'));
-    await waitFor('entry selected', () => $$('.row.selected').length === 8);
-    const first = Number($$('.row.selected')[0].dataset.line);
+    const cause = rows().find((r) => r.textContent.includes('Caused by'));
+    click(cause);
+    await waitFor('entry selected', () => $$('.lt-cell.selected').length === 8);
+    const first = Math.min(...$$('.lt-cell.selected').map((c) => Number(c.dataset.line)));
     const text = await invoke('copy_lines', {
       sessionId: 1,
       first,
@@ -203,20 +217,17 @@
     });
     await waitFor('copy text is the entry', () => text.startsWith('2026-01-15T10:00:07') && text.includes('... 12 more'));
 
-    // Wrapping, line numbers, font size, theme.
-    click(button('⏎'));
-    await waitFor('wrap on', () => $('.view.wrap'));
-    click(button('⏎'));
-    await waitFor('wrap off', () => !$('.view.wrap'));
-    const before = getComputedStyle($('.view')).fontSize;
+    // Font size.
+    const fontOf = () => getComputedStyle($('app-log-table-view .lt-table')).fontSize;
+    const before = fontOf();
     click(button('A+'));
-    await waitFor('font grows', () => getComputedStyle($('.view')).fontSize !== before);
+    await waitFor('font grows', () => fontOf() !== before);
     click(button('A−'));
 
     // File events.
     press('End');
     await act('truncate');
-    await waitFor('truncation empties the view', () => status().match(/\b0 Zeilen/) && $('.empty'));
+    await waitFor('truncation empties the view', () => status().match(/\b0 Zeilen/) && $('.lt-empty'));
     await act('append 2026-01-15T10:03:00.000+01:00  WARN 4711 --- [t] a.B : after truncate');
     await waitFor('reads on after truncation', () => rowTexts().some((t) => t.includes('after truncate')));
     await act('rotate 2026-01-15T10:04:00.000+01:00 ERROR 4711 --- [t] a.B : first in new file');
@@ -264,22 +275,22 @@
     await waitFor('custom profile selectable', () => [...profileSelect.options].some((o) => o.textContent.trim() === 'Mine'));
     profileSelect.value = [...profileSelect.options].find((o) => o.textContent.trim() === 'Mine').value;
     profileSelect.dispatchEvent(new Event('change', { bubbles: true }));
-    await waitFor('levels recomputed by the profile', () => count('FATAL') === 2 && count('UNKNOWN') === 2 && !!$('.row.lv-FATAL'));
+    await waitFor('levels recomputed by the profile', () => count('FATAL') === 2 && count('UNKNOWN') === 2 && !!$('.lt-cell.lv-FATAL'));
 
     // A big file: the scrollbar reaches every line although the view is far over the browser limit.
     click(tabOf('big.log'));
     await waitFor('big file indexed', () => /2\.000\.000 Zeilen/.test(status()) && status().includes('Live'), 60000);
-    const scroller = $('.scroller');
-    await waitFor('scroll range is capped', () => scroller.scrollHeight < 9000000);
+    const bar = scroller();
+    await waitFor('scroll range is capped', () => bar.scrollHeight < 9000000);
     await waitFor('following shows the last line', () => rowTexts().some((t) => t.includes('big line 2000000')));
-    scroller.scrollTop = scroller.scrollHeight / 2;
+    bar.scrollTop = bar.scrollHeight / 2;
     await waitFor('dragging the bar pauses near the middle', () =>
       status().includes('Pausiert') && rowTexts().some((t) => /big line (99\d{4}|100\d{4}) /.test(t)),
     );
-    const middle = Number($('.row').dataset.line);
+    const middle = topLine();
     wheel(60);
     await waitFor('wheel moves by lines even here', () => {
-      const now = Number($('.row').dataset.line);
+      const now = topLine();
       return now > middle && now <= middle + 4;
     });
     press('Home');
@@ -305,7 +316,7 @@
       if (measuring) loop.port2.postMessage(0);
     };
     loop.port2.postMessage(0);
-    await waitFor('rows are loaded before the burst', () => !$('.row.loading'));
+    await waitFor('rows are loaded before the burst', () => !$('.lt-cell.loading'));
     let tail = watchTail();
     await act('rate 10000 3');
     await waitFor('all lines of the burst arrived', () => lineCount() === linesBefore + 30000, 20000);
@@ -321,8 +332,8 @@
     profileSelect.dispatchEvent(new Event('change', { bubbles: true }));
     await waitFor('back on the log4j profile', () => count('INFO') > 30000);
     click(button('ERROR+'));
-    await waitFor('only errors are shown', () => $('.row.lv-ERROR') && !$('.row.lv-INFO'));
-    await waitFor('filtered rows are loaded', () => !$('.row.loading'));
+    await waitFor('only errors are shown', () => $('.lt-cell.lv-ERROR') && !$('.lt-cell.lv-INFO'));
+    await waitFor('filtered rows are loaded', () => !$('.lt-cell.loading'));
     tail = watchTail();
     await act('rate 2000 2 ERROR');
     await waitFor('filtered follow kept up', () => rowTexts().some((t) => t.includes('ERROR rate line 4000')), 20000);
@@ -343,7 +354,7 @@
     await waitFor('line count holds', () => lineCount() === heldLines);
     await waitFor('rows hold', () => rowTexts().join() === heldRows);
     click(button('ERROR+'));
-    await waitFor('a filter finishes during the freeze', () => status().includes(' von ') && $('.row.lv-ERROR') && !$('.row.lv-INFO'));
+    await waitFor('a filter finishes during the freeze', () => status().includes(' von ') && $('.lt-cell.lv-ERROR') && !$('.lt-cell.lv-INFO'));
     click(button('Alle'));
     await waitFor('the filter lifts during the freeze', () => !status().includes(' von ') && lineCount() === heldLines);
     await sleep(2200); // all of the burst is in the file
@@ -362,13 +373,13 @@
     wheel(-400);
     await waitFor('scrolled up within the freeze', () => !rowTexts().some((t) => t.includes('rate line 4000')));
     await sleep(100);
-    const readingAt = $('.row').dataset.line;
+    const readingAt = topLine();
     await act('append 2026-01-15T10:08:00.000+01:00  INFO 4711 --- [t] a.B : after the freeze');
     await sleep(400);
     press('p');
     await waitFor('resumed for the reader', () => pill() === 'Pausiert');
     await waitFor('the badge counts what came', () => $('.new-lines')?.textContent.includes('1 neue Zeile'));
-    await waitFor('the reader stays in place', () => $('.row').dataset.line === readingAt);
+    await waitFor('the reader stays in place', () => topLine() === readingAt);
     press('End');
     await waitFor('following again', () => pill() === 'Live');
 

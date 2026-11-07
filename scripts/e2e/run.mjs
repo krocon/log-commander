@@ -32,13 +32,21 @@ if (!process.argv.includes('--no-build')) {
   if (built.status !== 0) process.exit(built.status ?? 1);
 }
 
+/** `--scenario <file>` runs another scenario, e.g. a spike measurement. */
+function scenarioArg() {
+  const i = process.argv.indexOf('--scenario');
+  return i > 0 ? process.argv[i + 1] : undefined;
+}
+
 const dir = mkdtempSync(join(tmpdir(), 'lc-e2e-'));
 const log = join(dir, 'e2e.log');
 writeFileSync(log, readFileSync(join(root, 'samples/spring-boot.log')));
 const other = join(dir, 'other.log');
 writeFileSync(other, 'ERROR:root:other file\nINFO:root:still here\n');
 const big = join(dir, 'big.log');
-writeBigFile(big, 2_000_000);
+// `--big-lines N` for measurements with larger files (the spike of prompt 003 reads at 10 million).
+const bigLinesAt = process.argv.indexOf('--big-lines');
+writeBigFile(big, bigLinesAt > 0 ? Number(process.argv[bigLinesAt + 1]) : 2_000_000);
 
 function writeBigFile(path, lines) {
   const fd = openSync(path, 'w');
@@ -63,7 +71,7 @@ const app = spawn(join(root, 'src-tauri/target/debug', exe), [log, other, big], 
     LOCALAPPDATA: dir,
     XDG_CONFIG_HOME: dir,
     XDG_DATA_HOME: dir,
-    LC_E2E_SCRIPT: join(root, 'scripts/e2e/scenario.js'),
+    LC_E2E_SCRIPT: join(root, scenarioArg() ?? 'scripts/e2e/scenario.js'),
   },
   stdio: ['ignore', 'pipe', 'inherit'],
 });
@@ -96,7 +104,8 @@ function act(action) {
       break;
     }
     case 'rate': {
-      const [rateText, secondsText, level = 'INFO'] = text.split(' ');
+      const [rateText, secondsText, level = 'INFO', target = 'log'] = text.split(' ');
+      const file = target === 'big' ? big : log;
       const rate = Number(rateText);
       const seconds = Number(secondsText);
       const perTick = rate / 20;
@@ -107,9 +116,21 @@ function act(action) {
           written++;
           chunk += `2026-01-15T10:07:00.000+01:00 ${level.padStart(5)} 4711 --- [t] a.B : ${level} rate line ${written}\n`;
         }
-        appendFileSync(log, chunk);
+        appendFileSync(file, chunk);
         if (written >= rate * seconds) clearInterval(tick);
       }, 50);
+      break;
+    }
+    case 'cpustart':
+      cpuMark = cpuSample();
+      break;
+    case 'cpustop': {
+      const now = cpuSample();
+      const seconds = (Date.now() - cpuMark.at) / 1000;
+      const pct = (a, b) => Math.round(((a - b) / seconds) * 100);
+      console.log(
+        `  cpu ${text}: app ${pct(now.app, cpuMark.app)} %, webview ${pct(now.web, cpuMark.web)} %, webview rss ${now.rss} MB`,
+      );
       break;
     }
     case 'truncate':
@@ -128,6 +149,25 @@ function act(action) {
     default:
       break;
   }
+}
+
+let cpuMark = { at: Date.now(), app: 0, web: 0 };
+
+/** CPU seconds of the app and of the newest WebKit content process (macOS), RSS of the latter. */
+function cpuSample() {
+  const seconds = (pid) => {
+    const out = spawnSync('ps', ['-o', 'time=,rss=', '-p', String(pid)], {
+      encoding: 'utf8',
+    }).stdout.trim();
+    const [time = '0:0', rss = '0'] = out.split(/\s+/);
+    const parts = time.split(':').map(Number);
+    return { cpu: parts.reduce((acc, v) => acc * 60 + v, 0), rss: Math.round(Number(rss) / 1024) };
+  };
+  const web = spawnSync('pgrep', ['-n', '-f', 'com.apple.WebKit.WebContent'], {
+    encoding: 'utf8',
+  }).stdout.trim();
+  const webSample = web ? seconds(web) : { cpu: 0, rss: 0 };
+  return { at: Date.now(), app: seconds(app.pid).cpu, web: webSample.cpu, rss: webSample.rss };
 }
 
 createInterface({ input: app.stdout }).on('line', (line) => {

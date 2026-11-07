@@ -39,7 +39,8 @@ Einstellung `theme`: `system` (Standard), `dark`, `light`. Der `SettingsService`
 | Level | `--lv-<level>-fg`, `--lv-<level>-bg` für `trace`, `debug`, `info`, `warn`, `error`, `fatal`, `unknown`; dazu `--lv-info-badge`, `--lv-error-edge` | Zeilenfarbe je Level, Markierung am Zeilenrand |
 | Inline-Tokens | `--tok-time`, `--tok-number`, `--tok-string`, `--tok-id`, `--tok-url` | Hervorhebung in der Zeile (`highlight.ts`) |
 
-Zeilen tragen die Klasse `lv-<LEVEL>` (`log-view.ts`). `log-view.css` setzt daraus Vorder- und Hintergrund. FATAL ist als
+Beide Zellen einer Zeile tragen die Klasse `lv-<LEVEL>` (`table-logic.ts`). `log-table-view.css` setzt daraus Vorder- und
+Hintergrund. FATAL ist als
 einziges Level eine kräftige Fläche mit weißem Text, ERROR und WARN haben eine getönte Fläche und eine Markierung am Rand.
 
 ## Kontrast (WCAG AA)

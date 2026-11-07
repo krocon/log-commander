@@ -21,10 +21,10 @@ Like <code>tail -f</code> with a GUI: millions of lines, instant filters, no wai
   nginx/Apache error logs, JSON Lines (including numeric Pino/Bunyan levels). Add your own regex with `(?P<level>...)`.
 - **Search** – filter or highlight, regular expressions, case sensitivity, jump between matches.
 - **Follow** – stays at the end while you are there; scroll up and it pauses and counts the new lines.
-- **Freeze** – holds a tab to read in peace: lines, counts and the scrollbar stay put while filters and search keep
+- **Freeze** – holds a tab to read in peace: lines, counts and the position stay put while filters and search keep
   working. Resuming reads everything written in between.
-- **Comfort** – tabs with a red dot for new errors in the background, drag & drop, command line, recent files, line
-  wrap, copying whole entries, dark and light themes that follow the system, adjustable colours.
+- **Comfort** – tabs with a red dot for new errors in the background, drag & drop, command line, recent files,
+  copying whole entries, dark and light themes that follow the system, adjustable colours.
 - **Encodings** – UTF-8, UTF-16 by BOM, Latin-1 detection; invalid bytes never stop it. ANSI colours in logs are removed.
 
 | | |

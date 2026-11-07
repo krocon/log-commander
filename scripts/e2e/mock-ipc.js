@@ -129,7 +129,7 @@
     set_custom_profiles: () => null,
     'plugin:store|load': () => 1,
     'plugin:store|get_store': () => 1,
-    'plugin:store|get': () => [{ recentFiles: setupData.recent }, true],
+    'plugin:store|get': () => [{ recentFiles: setupData.recent, ...(setupData.settings ?? {}) }, true],
     'plugin:store|set': () => null,
     'plugin:store|save': () => null,
     'plugin:cli|cli_matches': () => ({

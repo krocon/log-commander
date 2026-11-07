@@ -15,7 +15,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { getMatches } from '@tauri-apps/plugin-cli';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { SettingsService } from './core/settings/settings.service';
-import { LogViewComponent } from './features/log-view/log-view';
+import { LogTableViewComponent } from './features/log-table/log-table-view';
 import { OpenPathDialogComponent } from './features/open-path/open-path-dialog';
 import { LogSessionService } from './features/sessions/log-session.service';
 import { SettingsDialogComponent } from './features/settings/settings-dialog';
@@ -28,7 +28,7 @@ import { ToolbarComponent } from './features/toolbar/toolbar';
   selector: 'app-root',
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
-    LogViewComponent,
+    LogTableViewComponent,
     OpenPathDialogComponent,
     SettingsDialogComponent,
     StartScreenComponent,
@@ -40,7 +40,7 @@ import { ToolbarComponent } from './features/toolbar/toolbar';
     <app-tabs (openFile)="openFile()" (openPath)="pathDialogOpen.set(true)" />
     <app-toolbar (openSettings)="settingsOpen.set(true)" />
     @if (active(); as session) {
-      <app-log-view class="main" [session]="session" />
+      <app-log-table-view class="main" [session]="session" />
     } @else {
       <app-start-screen
         class="main"
@@ -109,7 +109,7 @@ import { ToolbarComponent } from './features/toolbar/toolbar';
 })
 export class App implements OnInit, OnDestroy {
   protected readonly sessions = inject(LogSessionService);
-  private readonly settings = inject(SettingsService);
+  protected readonly settings = inject(SettingsService);
 
   protected readonly active = computed(() => this.sessions.active());
   protected readonly settingsOpen = signal(false);

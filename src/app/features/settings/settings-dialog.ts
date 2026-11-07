@@ -62,14 +62,6 @@ import { formatMapping, newProfileId, parseMapping } from './profile-logic';
             />
             Zeilennummern anzeigen
           </label>
-          <label class="check">
-            <input
-              type="checkbox"
-              [checked]="settings().wrapLines"
-              (change)="setCheck('wrapLines', $event)"
-            />
-            Zeilen umbrechen
-          </label>
         </section>
 
         <section>
@@ -272,7 +264,7 @@ export class SettingsDialogComponent implements OnInit {
     this.settingsService.update({ fontSize: Number((event.target as HTMLInputElement).value) });
   }
 
-  protected setCheck(key: 'showLineNumbers' | 'wrapLines', event: Event): void {
+  protected setCheck(key: 'showLineNumbers', event: Event): void {
     this.settingsService.update({ [key]: (event.target as HTMLInputElement).checked });
   }
 
