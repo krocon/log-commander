@@ -96,14 +96,16 @@ function act(action) {
       break;
     }
     case 'rate': {
-      const [rate, seconds] = text.split(' ').map(Number);
+      const [rateText, secondsText, level = 'INFO'] = text.split(' ');
+      const rate = Number(rateText);
+      const seconds = Number(secondsText);
       const perTick = rate / 20;
       let written = 0;
       const tick = setInterval(() => {
         let chunk = '';
         for (let i = 0; i < perTick; i++) {
           written++;
-          chunk += `2026-01-15T10:07:00.000+01:00  INFO 4711 --- [t] a.B : rate line ${written}\n`;
+          chunk += `2026-01-15T10:07:00.000+01:00 ${level.padStart(5)} 4711 --- [t] a.B : ${level} rate line ${written}\n`;
         }
         appendFileSync(log, chunk);
         if (written >= rate * seconds) clearInterval(tick);

@@ -47,6 +47,47 @@
   const press = (key, options = {}) =>
     document.body.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, ...options }));
 
+  // Live tail: a row must never be drawn before its text is there, that is what flickers. An observer,
+  // not requestAnimationFrame, because a window in the background gets no frames. A page requested
+  // alongside shows how long a round trip takes while the file grows.
+  const watchTail = () => {
+    const durations = [];
+    let probing = true;
+    (async () => {
+      while (probing) {
+        const start = performance.now();
+        await invoke('get_lines', { sessionId: 1, view: 'filtered', start: 0, count: 200 }).catch(() => {});
+        durations.push(performance.now() - start);
+        await sleep(100);
+      }
+    })();
+    let changes = 0;
+    let withPlaceholder = 0;
+    const observer = new MutationObserver(() => {
+      changes++;
+      if ($('.row.loading')) withPlaceholder++;
+    });
+    observer.observe($('.view'), {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['class'],
+    });
+    return {
+      async check(name) {
+        observer.disconnect();
+        probing = false;
+        durations.sort((a, b) => a - b);
+        const at = (q) => Math.round((durations[Math.floor(q * (durations.length - 1))] ?? 0) * 10) / 10;
+        await report(`PASS get_lines during the tail (${name}): ${durations.length} calls, median ${at(0.5)} ms, max ${at(1)} ms`);
+        if (withPlaceholder > 0) {
+          throw new Error(`${name}: rows without text in ${withPlaceholder} of ${changes} view changes`);
+        }
+        await report(`PASS tail draws no row without text (${name}): ${changes} view changes`);
+      },
+    };
+  };
+
   try {
     await report('START');
     // CLI argument opened the file; first lines, colours, counters, profile suggestion.
@@ -264,12 +305,29 @@
       if (measuring) loop.port2.postMessage(0);
     };
     loop.port2.postMessage(0);
+    await waitFor('rows are loaded before the burst', () => !$('.row.loading'));
+    let tail = watchTail();
     await act('rate 10000 3');
     await waitFor('all lines of the burst arrived', () => lineCount() === linesBefore + 30000, 20000);
     await waitFor('follow kept up', () => rowTexts().some((t) => t.includes('rate line 30000')));
     measuring = false;
     await report(`PASS worst event loop lag during 3 s at 10k lines/s: ${Math.round(worstLag)} ms (${turns} turns)`);
     if (worstLag > 250) throw new Error(`event loop blocked for ${Math.round(worstLag)} ms`);
+    await tail.check('all levels');
+
+    // The same with only errors on screen, where a row without its colour stands out most. The custom
+    // profile from above would call every line FATAL.
+    profileSelect.value = 'log4j';
+    profileSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    await waitFor('back on the log4j profile', () => count('INFO') > 30000);
+    click(button('ERROR+'));
+    await waitFor('only errors are shown', () => $('.row.lv-ERROR') && !$('.row.lv-INFO'));
+    await waitFor('filtered rows are loaded', () => !$('.row.loading'));
+    tail = watchTail();
+    await act('rate 2000 2 ERROR');
+    await waitFor('filtered follow kept up', () => rowTexts().some((t) => t.includes('ERROR rate line 4000')), 20000);
+    await tail.check('ERROR+');
+    click(button('Alle'));
 
     // Closing the tabs leads back to the start screen.
     click(tabOf('big.log').parentElement.querySelector('.close'));

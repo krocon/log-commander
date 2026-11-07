@@ -59,6 +59,10 @@ samples/                     Beispiel-Logs
 - **Provisorische letzte Zeile:** Eine Zeile ohne `\n` bleibt laut Vorgabe im Puffer, damit eine Datei ohne abschließenden
   Zeilenumbruch aber nicht ihre letzte Zeile verschweigt, wird sie nach 1 s Pause (oder am Ende des Ladens) angezeigt und
   beim Weiterschreiben ersetzt.
+- **Gezeichnet wird nur, was da ist:** `SessionState.displayedLines` trennt den Zeilenstand der Ansicht vom Stand des Backends
+  (`filteredLines`). Der Live-Tail rückt erst vor, wenn das neue Ende im `PageCache` liegt (`displayed-lines.ts`), sonst blitzt
+  je Update die Fläche ohne Level-Farbe auf. Maßgeblich ist, was angekommen ist, damit überholte Ladevorgänge nicht aushungern.
+  Filterwechsel und Sprünge an ungeladene Stellen zeigen weiter kurz Platzhalter.
 - **Fortsetzungszeilen:** Einrücken, `at `, `Caused by:`, `Traceback`, `... ` wird vor der Regex geprüft
   (`at com.acme.error.Handler` ist keine ERROR-Zeile). Zeilen mit Zeitstempel ohne Level beginnen einen neuen Eintrag.
 - **Datei-Identität unter Windows** über `GetFileInformationByHandle`, nicht Erstellzeit (File Tunneling).

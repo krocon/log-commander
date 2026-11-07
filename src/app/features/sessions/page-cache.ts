@@ -24,6 +24,15 @@ export class PageCache {
     return page?.[position % PAGE_SIZE] ?? null;
   }
 
+  has(position: number): boolean {
+    return this.line(position) !== null;
+  }
+
+  /** Where each held page ends. */
+  *pageEnds(): Iterable<number> {
+    for (const [page, lines] of this.pages) yield page * PAGE_SIZE + lines.length;
+  }
+
   /** Requests all pages touching the range that are missing or out of date. */
   ensure(start: number, end: number): void {
     const first = Math.floor(start / PAGE_SIZE);

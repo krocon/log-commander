@@ -1,4 +1,4 @@
-import { computed, signal } from '@angular/core';
+import { Signal, computed, linkedSignal, signal } from '@angular/core';
 import { LogApi } from '../../core/log/log-api';
 import {
   Level,
@@ -8,6 +8,7 @@ import {
   SessionUpdate,
   Status,
 } from '../../core/log/log.models';
+import { nextDisplayedLines } from './displayed-lines';
 import { ALL_LEVELS } from './filter-logic';
 import { PageCache } from './page-cache';
 
@@ -58,10 +59,59 @@ export class SessionState {
   private transientTimer: ReturnType<typeof setTimeout> | null = null;
 
   readonly status = computed<Status>(() => this.transient() ?? this.update().status);
+  /** The line count of the backend; what the view draws is `displayedLines`. */
   readonly filteredLines = computed(() => this.update().filteredLines);
   readonly newLines = computed(() =>
     this.follow() ? 0 : Math.max(0, this.filteredLines() - this.pausedAtCount()),
   );
+
+  /** Rows the view can show at once; it reports them. */
+  readonly visibleRows = signal(40);
+
+  /** The range the view needs next: following, that is the new end before it is drawn. */
+  readonly wantedRange = computed(() => {
+    const rows = this.visibleRows();
+    if (this.follow()) {
+      const end = this.filteredLines();
+      return { start: Math.max(0, end - rows), end };
+    }
+    const top = this.scroll().top;
+    return { start: top, end: top + rows };
+  });
+
+  /** The line count the view draws: it only moves on once the new lines are here. */
+  readonly displayedLines: Signal<number> = linkedSignal({
+    source: () => {
+      const { filteredLines, epoch, viewGeneration } = this.update();
+      this.cache.revision();
+      return {
+        filteredLines,
+        epoch,
+        viewGeneration,
+        follow: this.follow(),
+        top: this.scroll().top,
+        rows: this.visibleRows(),
+      };
+    },
+    computation: (source, previous) => {
+      // Another view: positions start over, there is nothing to hold on to.
+      if (
+        !previous ||
+        previous.source.epoch !== source.epoch ||
+        previous.source.viewGeneration !== source.viewGeneration
+      ) {
+        return source.filteredLines;
+      }
+      return nextDisplayedLines({
+        displayed: previous.value,
+        target: source.filteredLines,
+        follow: source.follow,
+        top: source.top,
+        rows: source.rows,
+        loaded: this.cache,
+      });
+    },
+  });
 
   constructor(
     info: SessionInfo,

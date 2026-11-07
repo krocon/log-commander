@@ -130,7 +130,7 @@ export class LogViewComponent implements OnInit, OnDestroy {
     this.heightsRevision();
     const wrapped = this.wrap();
     return {
-      count: this.session().filteredLines(),
+      count: this.session().displayedLines(),
       viewportH: this.viewportH(),
       rowH: this.rowH(),
       heightOf: wrapped ? (p) => this.heights.get(p) ?? this.rowH() : undefined,
@@ -146,7 +146,7 @@ export class LogViewComponent implements OnInit, OnDestroy {
     const cache = session.cache;
     cache.revision();
     const top = session.scroll().top;
-    const count = session.filteredLines();
+    const count = session.displayedLines();
     const end = Math.min(count, top + visibleRowCount(this.viewportH(), this.rowH()));
     const selection = session.selection();
     const hitLine = session.currentHitLine();
@@ -171,7 +171,7 @@ export class LogViewComponent implements OnInit, OnDestroy {
   });
 
   protected readonly spacerH = computed(() =>
-    scrollRange(this.session().filteredLines(), this.viewportH(), this.rowH()),
+    scrollRange(this.session().displayedLines(), this.viewportH(), this.rowH()),
   );
   protected readonly spacerW = computed(() =>
     this.wrap() ? 0 : Math.max(0, this.contentW() - this.viewportW()) + this.viewportW(),
@@ -206,10 +206,16 @@ export class LogViewComponent implements OnInit, OnDestroy {
       }
     });
     effect(() => {
+      this.session().visibleRows.set(visibleRowCount(this.viewportH(), this.rowH()));
+    });
+    effect(() => {
       const session = this.session();
       session.cache.revision();
       const top = session.scroll().top;
-      session.cache.ensure(top, top + visibleRowCount(this.viewportH(), this.rowH()));
+      session.cache.ensure(top, top + session.visibleRows());
+      // Following, the new end has to arrive before the view can move there.
+      const wanted = session.wantedRange();
+      session.cache.ensure(wanted.start, wanted.end);
     });
     effect(() => {
       // Heights belong to a view and a width.
@@ -285,7 +291,7 @@ export class LogViewComponent implements OnInit, OnDestroy {
     const target = Math.round(
       topToScrollTop(
         this.session().scroll().top,
-        this.session().filteredLines(),
+        this.session().displayedLines(),
         this.viewportH(),
         this.rowH(),
       ),
@@ -301,7 +307,7 @@ export class LogViewComponent implements OnInit, OnDestroy {
     if (Math.abs(scroller.scrollTop - this.expectedScrollTop) < 2) return;
     // Dragged by the user.
     this.expectedScrollTop = scroller.scrollTop;
-    const count = session.filteredLines();
+    const count = session.displayedLines();
     const range = scrollRange(count, this.viewportH(), this.rowH());
     const top = scrollTopToTop(scroller.scrollTop, count, this.viewportH(), this.rowH());
     if (scroller.scrollTop >= range - 1) {
