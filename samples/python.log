@@ -1,0 +1,12 @@
+2026-01-15 10:00:00,123 - app.main - INFO - Worker started with 4 threads
+2026-01-15 10:00:01,456 - app.db - DEBUG - SELECT * FROM users WHERE id = 42
+2026-01-15 10:00:02,789 - app.db - WARNING - Slow query: 1532 ms
+2026-01-15 10:00:03,012 - app.api - ERROR - Request failed for "/orders/42"
+Traceback (most recent call last):
+  File "/srv/app/api.py", line 88, in handle
+    order = load_order(order_id)
+  File "/srv/app/orders.py", line 17, in load_order
+    raise ValueError("order not found")
+ValueError: order not found
+2026-01-15 10:00:04,345 - app.main - CRITICAL - Database is gone
+2026-01-15 10:00:05,678 - app.main - INFO - Shutting down

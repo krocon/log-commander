@@ -1,0 +1,15 @@
+2026-01-15T10:00:00.123+01:00  INFO 4711 --- [           main] c.a.shop.ShopApplication                 : Starting ShopApplication v2.4.1 using Java 21
+2026-01-15T10:00:01.402+01:00 DEBUG 4711 --- [           main] o.s.b.a.ApplicationAvailabilityBean      : Application availability state changed to CORRECT
+2026-01-15T10:00:02.118+01:00  INFO 4711 --- [           main] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat started on port 8080 (http)
+2026-01-15T10:00:05.771+01:00 TRACE 4711 --- [nio-8080-exec-1] c.a.shop.web.RequestLogger               : GET https://shop.example.com/api/orders?id=42 from 10.0.3.17
+2026-01-15T10:00:06.009+01:00  WARN 4711 --- [nio-8080-exec-1] c.a.shop.db.ConnectionPool               : Pool usage at 87%, 3 connections free
+2026-01-15T10:00:07.334+01:00 ERROR 4711 --- [nio-8080-exec-2] c.a.shop.service.OrderService            : Could not place order 123e4567-e89b-12d3-a456-426614174000
+java.lang.IllegalStateException: connection pool exhausted
+	at com.acme.shop.db.ConnectionPool.acquire(ConnectionPool.java:142)
+	at com.acme.shop.service.OrderService.place(OrderService.java:57)
+	at org.springframework.aop.framework.CglibAopProxy$DynamicAdvisedInterceptor.intercept(CglibAopProxy.java:688)
+Caused by: java.net.SocketTimeoutException: Read timed out
+	at java.base/sun.nio.ch.NioSocketImpl.timedRead(NioSocketImpl.java:288)
+	... 12 more
+2026-01-15T10:00:08.002+01:00  INFO 4711 --- [nio-8080-exec-3] c.a.shop.service.OrderService            : Order 4242 placed in 118 ms for user "anna.berg"
+2026-01-15T10:00:09.500+01:00 FATAL 4711 --- [           main] c.a.shop.ShopApplication                 : Out of memory, shutting down

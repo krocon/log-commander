@@ -1,0 +1,14 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Minimal permissions for the main window. All file access goes through the app's own Rust commands; tauri-plugin-fs is not used.",
+  "windows": ["main"],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:window:allow-set-title",
+    "dialog:allow-open",
+    "store:default",
+    "cli:allow-cli-matches"
+  ]
+}

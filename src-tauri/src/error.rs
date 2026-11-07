@@ -1,0 +1,66 @@
+//! Structured, serialisable errors (`AppError { code, message, path }`), as in
+//! files-and-folders-tauri and editlicious. `src/app/core/errors/app-error.ts` mirrors the codes.
+
+use serde::Serialize;
+use std::io;
+use std::path::Path;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ErrorCode {
+    NotFound,
+    PermissionDenied,
+    IsADirectory,
+    Io,
+    UnknownSession,
+    UnknownProfile,
+    InvalidProfile,
+    InvalidSearch,
+    TooLarge,
+}
+
+#[derive(Debug, Clone, Serialize, thiserror::Error)]
+#[serde(rename_all = "camelCase")]
+#[error("{message}")]
+pub struct AppError {
+    pub code: ErrorCode,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+}
+
+impl AppError {
+    pub fn new(code: ErrorCode, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+            path: None,
+        }
+    }
+
+    pub fn from_io(err: &io::Error, path: &Path) -> Self {
+        let code = match err.kind() {
+            io::ErrorKind::NotFound => ErrorCode::NotFound,
+            io::ErrorKind::PermissionDenied => ErrorCode::PermissionDenied,
+            io::ErrorKind::IsADirectory => ErrorCode::IsADirectory,
+            _ => ErrorCode::Io,
+        };
+        Self {
+            code,
+            message: err.to_string(),
+            path: Some(path.display().to_string()),
+        }
+    }
+
+    pub fn unknown_session(id: u64) -> Self {
+        Self::new(ErrorCode::UnknownSession, format!("no open session {id}"))
+    }
+}
+
+pub type AppResult<T> = Result<T, AppError>;
+
+impl From<regex::Error> for AppError {
+    fn from(err: regex::Error) -> Self {
+        Self::new(ErrorCode::InvalidSearch, err.to_string())
+    }
+}

@@ -1,0 +1,193 @@
+/*
+ * Design tokens, the only place for colours. Dark is the default; light applies on request or when
+ * the system prefers it and the user chose "follow system". scripts/check-contrast.mjs verifies
+ * WCAG AA for the level colours of both blocks marked below.
+ */
+
+/* @theme dark */
+:root {
+  color-scheme: dark;
+  --bg-app: #14171c;
+  --bg-panel: #1b1f26;
+  --bg-raised: #252a33;
+  --bg-hover: #2b313c;
+  --bg-gutter: #14171c;
+  --border: #2e343f;
+  --text: #d7dce3;
+  --text-dim: #98a2b0;
+  --accent: #5aa2f7;
+  --accent-text: #0d1117;
+  --danger: #ff6b6b;
+  --ok: #4cc38a;
+  --row-selected: #24395a;
+  --hit-bg: #6b5300;
+  --hit-text: #ffe9a8;
+  --hit-current-bg: #e8b100;
+  --hit-current-text: #14171c;
+
+  --lv-trace-fg: #8b95a3;
+  --lv-trace-bg: #14171c;
+  --lv-debug-fg: #6cc4d8;
+  --lv-debug-bg: #14171c;
+  --lv-info-fg: #d7dce3;
+  --lv-info-bg: #14171c;
+  --lv-info-badge: #4cc38a;
+  --lv-warn-fg: #f0a94b;
+  --lv-warn-bg: #2a2217;
+  --lv-error-fg: #ff7b7b;
+  --lv-error-bg: #2c1719;
+  --lv-error-edge: #ff5252;
+  --lv-fatal-fg: #ffffff;
+  --lv-fatal-bg: #b3261e;
+  --lv-unknown-fg: #d7dce3;
+  --lv-unknown-bg: #14171c;
+
+  --tok-time: #7f8a99;
+  --tok-number: #b9a3f0;
+  --tok-string: #9ccc8a;
+  --tok-id: #d9a6d2;
+  --tok-url: #7fb4f5;
+}
+/* @end */
+
+/* @theme light */
+:root[data-theme='light'] {
+  color-scheme: light;
+  --bg-app: #fbfbfc;
+  --bg-panel: #f1f2f4;
+  --bg-raised: #ffffff;
+  --bg-hover: #e4e6ea;
+  --bg-gutter: #fbfbfc;
+  --border: #d3d7dd;
+  --text: #1f2933;
+  --text-dim: #5a6573;
+  --accent: #1a66d6;
+  --accent-text: #ffffff;
+  --danger: #c21d1d;
+  --ok: #0f7a4a;
+  --row-selected: #d4e4fb;
+  --hit-bg: #ffe28a;
+  --hit-text: #3d2f00;
+  --hit-current-bg: #8f5f00;
+  --hit-current-text: #ffffff;
+
+  --lv-trace-fg: #5f6b7a;
+  --lv-trace-bg: #fbfbfc;
+  --lv-debug-fg: #0b6e8c;
+  --lv-debug-bg: #fbfbfc;
+  --lv-info-fg: #1f2933;
+  --lv-info-bg: #fbfbfc;
+  --lv-info-badge: #0f7a4a;
+  --lv-warn-fg: #8a5300;
+  --lv-warn-bg: #fdf3e1;
+  --lv-error-fg: #c21d1d;
+  --lv-error-bg: #fdecec;
+  --lv-error-edge: #d32f2f;
+  --lv-fatal-fg: #ffffff;
+  --lv-fatal-bg: #b3261e;
+  --lv-unknown-fg: #1f2933;
+  --lv-unknown-bg: #fbfbfc;
+
+  --tok-time: #5f6b7a;
+  --tok-number: #6236b5;
+  --tok-string: #2c6e1d;
+  --tok-id: #8d2f83;
+  --tok-url: #1a5fc4;
+}
+/* @end */
+
+:root {
+  --font-ui: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace;
+  --radius: 5px;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: var(--bg-app);
+  color: var(--text);
+  font: 13px/1.4 var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+
+button:hover {
+  background: var(--bg-hover);
+}
+
+button[aria-pressed='true'] {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+input,
+select,
+textarea {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 3px 7px;
+}
+
+input.invalid {
+  border-color: var(--danger);
+}
+
+::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--bg-hover);
+  border: 3px solid var(--bg-app);
+  border-radius: 7px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-dim);
+}
+
+::-webkit-scrollbar-corner {
+  background: var(--bg-app);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}

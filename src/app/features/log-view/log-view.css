@@ -1,0 +1,258 @@
+:host {
+  display: block;
+  position: relative;
+  min-height: 0;
+  background: var(--bg-app);
+}
+
+.scroller {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  outline: none;
+}
+
+/* Stays in the viewport of the scroller; the spacer below only provides the scrollbars. */
+.view {
+  position: sticky;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: var(--font-size);
+  line-height: var(--row-h);
+}
+
+.spacer {
+  pointer-events: none;
+}
+
+.rows {
+  will-change: transform;
+}
+
+.row {
+  display: flex;
+  min-height: var(--row-h);
+  height: var(--row-h);
+  color: var(--lv-unknown-fg);
+  background: var(--lv-unknown-bg);
+  cursor: default;
+}
+
+.view.wrap .row {
+  height: auto;
+}
+
+.gutter {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  width: var(--gutter);
+  padding-right: 1ch;
+  text-align: right;
+  color: var(--text-dim);
+  opacity: 0.75;
+  background: var(--bg-gutter);
+  font-size: 0.88em;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.mark {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  width: 3px;
+  margin-right: 1ch;
+  background: transparent;
+}
+
+.text {
+  flex: none;
+  white-space: pre;
+  transform: translateX(calc(var(--sx) * -1));
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.view.wrap .text {
+  flex: 1 1 0;
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  transform: none;
+}
+
+.row.loading .text::before {
+  content: '…';
+  color: var(--text-dim);
+}
+
+.row.cont .text {
+  opacity: 0.92;
+}
+
+.row.lv-TRACE {
+  color: var(--lv-trace-fg);
+  background: var(--lv-trace-bg);
+}
+
+.row.lv-DEBUG {
+  color: var(--lv-debug-fg);
+  background: var(--lv-debug-bg);
+}
+
+.row.lv-INFO {
+  color: var(--lv-info-fg);
+  background: var(--lv-info-bg);
+}
+
+.row.lv-INFO .mark {
+  background: var(--lv-info-badge);
+  opacity: 0.55;
+}
+
+.row.lv-WARN {
+  color: var(--lv-warn-fg);
+  background: var(--lv-warn-bg);
+}
+
+.row.lv-WARN .mark {
+  background: var(--lv-warn-fg);
+}
+
+.row.lv-ERROR {
+  color: var(--lv-error-fg);
+  background: var(--lv-error-bg);
+}
+
+.row.lv-ERROR .mark {
+  background: var(--lv-error-edge);
+}
+
+.row.lv-FATAL {
+  color: var(--lv-fatal-fg);
+  background: var(--lv-fatal-bg);
+  font-weight: 700;
+}
+
+.row.lv-FATAL .mark {
+  background: var(--lv-fatal-fg);
+}
+
+.row.selected,
+.row.selected .gutter {
+  background: var(--row-selected);
+}
+
+.row.current-hit .gutter {
+  color: var(--hit-current-bg);
+  opacity: 1;
+  font-weight: 700;
+}
+
+/* Inline highlighting: quiet, and only where it does not fight the level colour. */
+.t-time {
+  color: var(--tok-time);
+}
+
+.t-number {
+  color: var(--tok-number);
+}
+
+.t-string {
+  color: var(--tok-string);
+}
+
+.t-id {
+  color: var(--tok-id);
+}
+
+.t-url {
+  color: var(--tok-url);
+}
+
+.t-level {
+  font-weight: 600;
+}
+
+.lv-INFO .t-level {
+  color: var(--lv-info-badge);
+}
+
+.lv-WARN .t-time,
+.lv-WARN .t-number,
+.lv-WARN .t-string,
+.lv-WARN .t-id,
+.lv-WARN .t-url,
+.lv-ERROR .t-time,
+.lv-ERROR .t-number,
+.lv-ERROR .t-string,
+.lv-ERROR .t-id,
+.lv-ERROR .t-url,
+.lv-FATAL .t-time,
+.lv-FATAL .t-number,
+.lv-FATAL .t-string,
+.lv-FATAL .t-id,
+.lv-FATAL .t-url {
+  color: inherit;
+}
+
+.lv-TRACE .t-level,
+.lv-DEBUG .t-level {
+  color: inherit;
+}
+
+.hit {
+  background: var(--hit-bg);
+  color: var(--hit-text);
+  border-radius: 2px;
+}
+
+.current-hit .hit {
+  background: var(--hit-current-bg);
+  color: var(--hit-current-text);
+}
+
+.cut {
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--text-dim);
+  font-family: var(--font-ui);
+  font-size: 13px;
+}
+
+.new-lines {
+  position: absolute;
+  right: 26px;
+  bottom: 22px;
+  z-index: 2;
+  padding: 5px 12px;
+  background: var(--accent);
+  color: var(--accent-text);
+  border-radius: 14px;
+  font-weight: 600;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 35%);
+}
+
+.new-lines:hover {
+  background: var(--accent);
+  filter: brightness(1.1);
+}
+
+.new-lines.quiet {
+  background: var(--bg-raised);
+  color: var(--text);
+  border-color: var(--border);
+  font-weight: 400;
+}

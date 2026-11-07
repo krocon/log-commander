@@ -1,0 +1,6 @@
+2026/01/15 10:00:00 [notice] 1234#1234: signal process started
+2026/01/15 10:00:01 [info] 1234#1234: *1 client 10.0.3.17 closed keepalive connection
+2026/01/15 10:00:02 [warn] 1234#1234: *2 an upstream response is buffered to a temporary file
+2026/01/15 10:00:03 [error] 1234#1234: *3 open() "/var/www/html/favicon.ico" failed (2: No such file or directory), client: 10.0.3.17, server: example.com
+2026/01/15 10:00:04 [crit] 1234#1234: *4 SSL_do_handshake() failed
+2026/01/15 10:00:05 [emerg] 1234#1234: bind() to 0.0.0.0:80 failed (98: Address already in use)

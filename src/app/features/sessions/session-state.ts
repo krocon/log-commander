@@ -1,0 +1,147 @@
+import { computed, signal } from '@angular/core';
+import { LogApi } from '../../core/log/log-api';
+import {
+  Level,
+  SearchMode,
+  SearchQuery,
+  SessionInfo,
+  SessionUpdate,
+  Status,
+} from '../../core/log/log.models';
+import { ALL_LEVELS } from './filter-logic';
+import { PageCache } from './page-cache';
+
+export interface ScrollPos {
+  top: number;
+  subPx: number;
+}
+
+export interface LineSelection {
+  anchor: number;
+  first: number;
+  last: number;
+}
+
+const TRANSIENT_STATUS_MS = 4000;
+
+/** Everything one tab knows; a single viewport component renders the active one. */
+export class SessionState {
+  readonly id: number;
+  readonly path: string;
+  readonly fileName: string;
+  readonly suggestedProfileId: string;
+
+  readonly update = signal<SessionUpdate>(null as unknown as SessionUpdate);
+  readonly cache: PageCache;
+
+  readonly levels = signal<ReadonlySet<Level>>(ALL_LEVELS);
+  readonly query = signal<SearchQuery>({ text: '', isRegex: false, caseSensitive: false });
+  readonly searchMode = signal<SearchMode>('filter');
+  readonly searchError = signal<string | null>(null);
+
+  readonly scroll = signal<ScrollPos>({ top: 0, subPx: 0 });
+  readonly scrollLeft = signal(0);
+  readonly follow = signal(true);
+  /** Number of lines in the view when follow stopped; the badge counts from here. */
+  readonly pausedAtCount = signal(0);
+
+  readonly selection = signal<LineSelection | null>(null);
+  readonly currentHitLine = signal<number | null>(null);
+  readonly findMessage = signal<string | null>(null);
+
+  readonly hasNewErrors = signal(false);
+  private seenErrors = 0;
+  active = false;
+
+  /** "File rotated" and the like stay visible for a moment. */
+  readonly transient = signal<Status | null>(null);
+  private transientTimer: ReturnType<typeof setTimeout> | null = null;
+
+  readonly status = computed<Status>(() => this.transient() ?? this.update().status);
+  readonly filteredLines = computed(() => this.update().filteredLines);
+  readonly newLines = computed(() =>
+    this.follow() ? 0 : Math.max(0, this.filteredLines() - this.pausedAtCount()),
+  );
+
+  constructor(
+    info: SessionInfo,
+    private readonly api: LogApi,
+  ) {
+    this.id = info.sessionId;
+    this.path = info.path;
+    this.fileName = info.fileName;
+    this.suggestedProfileId = info.suggestedProfileId;
+    this.cache = new PageCache((start, count) =>
+      this.api.getLines(this.id, 'filtered', start, count),
+    );
+    this.update.set(info.update);
+    this.seenErrors = errorCount(info.update);
+  }
+
+  applyUpdate(next: SessionUpdate): void {
+    const prev = this.update();
+    const viewChanged = next.viewGeneration !== prev.viewGeneration;
+    if (next.epoch !== prev.epoch) {
+      this.cache.clear();
+      this.scroll.set({ top: 0, subPx: 0 });
+      this.selection.set(null);
+      this.currentHitLine.set(null);
+      this.pausedAtCount.set(0);
+      this.seenErrors = 0;
+    } else if (viewChanged) {
+      this.onViewChanged();
+    } else if (next.filteredLines !== prev.filteredLines || next.fileSize !== prev.fileSize) {
+      this.cache.invalidateTail(prev.filteredLines);
+    }
+    const errors = errorCount(next);
+    if (this.active) {
+      this.seenErrors = errors;
+    } else if (errors > this.seenErrors) {
+      this.hasNewErrors.set(true);
+    }
+    if (next.status.kind === 'truncated' || next.status.kind === 'rotated') {
+      this.showTransient(next.status);
+    }
+    this.update.set(next);
+    if (viewChanged && !this.follow()) this.pausedAtCount.set(next.filteredLines);
+  }
+
+  /** The tab comes to the front: what happened is seen now. */
+  markSeen(): void {
+    this.seenErrors = errorCount(this.update());
+    this.hasNewErrors.set(false);
+  }
+
+  setFollow(follow: boolean): void {
+    if (!follow && this.follow()) this.pausedAtCount.set(this.filteredLines());
+    this.follow.set(follow);
+  }
+
+  private onViewChanged(): void {
+    // Stay on the line that was on top; positions changed but line numbers did not.
+    const anchor = this.cache.line(this.scroll().top)?.line;
+    this.cache.clear();
+    if (this.follow() || anchor === undefined) {
+      if (!this.follow()) this.scroll.set({ top: 0, subPx: 0 });
+    } else {
+      // If the user scrolled in the meantime, that wins.
+      const requestedAt = this.scroll();
+      void this.api
+        .getPosition(this.id, anchor)
+        .catch(() => 0)
+        .then((top) => {
+          if (this.scroll() === requestedAt) this.scroll.set({ top, subPx: 0 });
+        });
+    }
+  }
+
+  private showTransient(status: Status): void {
+    this.transient.set(status);
+    if (this.transientTimer) clearTimeout(this.transientTimer);
+    this.transientTimer = setTimeout(() => this.transient.set(null), TRANSIENT_STATUS_MS);
+  }
+}
+
+function errorCount(update: SessionUpdate): number {
+  return update.counts.ERROR + update.counts.FATAL;
+}

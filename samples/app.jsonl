@@ -1,0 +1,9 @@
+{"time":"2026-01-15T10:00:00.123Z","level":30,"pid":4711,"msg":"server listening on 10.0.0.5:3000"}
+{"time":"2026-01-15T10:00:01.000Z","level":20,"pid":4711,"msg":"loaded 128 routes"}
+{"time":"2026-01-15T10:00:02.500Z","level":40,"pid":4711,"msg":"deprecated option used"}
+{"time":"2026-01-15T10:00:03.250Z","level":50,"pid":4711,"msg":"upstream returned 502","url":"https://api.example.com/v1/items"}
+{"@t":"2026-01-15T10:00:04.000Z","@l":"Warning","@m":"Serilog-style event"}
+{"timestamp":"2026-01-15T10:00:05.000Z","severity":"ERROR","message":"GCP-style event"}
+{"time":"2026-01-15T10:00:06.000Z","lvl":"debug","msg":"logfmt-to-json event"}
+{"time":"2026-01-15T10:00:07.000Z","level":60,"pid":4711,"msg":"fatal: cannot bind port"}
+{"time":"2026-01-15T10:00:08.000Z","level":10,"pid":4711,"msg":"trace event"}
