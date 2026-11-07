@@ -74,7 +74,8 @@ als Inline-Style auf `<html>`, und zwar nur Tokens mit Präfix `lv-`.
 
 ## Ein weiteres Theme
 
-Bisher nicht vorgesehen. Dafür müssten `check-contrast.mjs` (erwartet genau zwei Blöcke), `ThemeChoice` und
+Geplant mit `prompts/020-farbschemata-look-and-feel.md` (Schemata als JSON, Picker, nach dem Vorbild von files-and-folders).
+Bis dahin gilt: Dafür müssten `check-contrast.mjs` (erwartet genau zwei Blöcke), `ThemeChoice` und
 `mergeSettings` (`settings.models.ts`), die Auswahl im Einstellungsdialog und die Bestimmung von `data-theme` im
 `SettingsService` erweitert werden. Ein neues Theme definiert alle Farb-Tokens und besteht alle Paare ohne Korrektur zur
 Laufzeit. Übernommene Farben fremder Themes: Herkunft und Lizenz hier in einer Tabelle festhalten.
