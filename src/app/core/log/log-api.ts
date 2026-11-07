@@ -30,6 +30,7 @@ import {
   SearchQuery,
   SessionInfo,
   SessionUpdate,
+  SourceConfig,
   TimeHit,
   Timeline,
   ViewFilterSpec,
@@ -57,6 +58,40 @@ export class LogApi {
     const channel = new Channel<SessionUpdate>();
     channel.onmessage = onUpdate;
     return call('open_merged', { sources, keepOnRotate, onUpdate: channel });
+  }
+
+  /**
+   * Starts a source without a file (prompt 016, e.g. a syslog listener) and opens its spool as a tab. A port in
+   * use or a refused address comes back as an error before anything runs.
+   */
+  openSource(
+    config: SourceConfig,
+    keep: boolean,
+    onUpdate: (update: SessionUpdate) => void,
+  ): Promise<SessionInfo> {
+    const channel = new Channel<SessionUpdate>();
+    channel.onmessage = onUpdate;
+    return call('open_source', { config, keep, onUpdate: channel });
+  }
+
+  /** Keep the spool of a source when its tab closes. */
+  setSpoolKeep(sessionId: number, keep: boolean): Promise<void> {
+    return call('set_spool_keep', { sessionId, keep });
+  }
+
+  /** Total size of a spool in MB, for sources opened from now on. */
+  setSpoolLimit(megabytes: number): Promise<void> {
+    return call('set_spool_limit', { megabytes });
+  }
+
+  /** Spools kept after their tab closed: how many and their size. */
+  keptSpools(): Promise<{ count: number; bytes: number }> {
+    return call('kept_spools', {});
+  }
+
+  /** Deletes the kept spools; returns how many went. */
+  deleteKeptSpools(): Promise<number> {
+    return call('delete_kept_spools', {});
   }
 
   /** Profile suggestion, encoding, first and last time of a file, for the merge dialog. */

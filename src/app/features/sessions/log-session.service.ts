@@ -12,7 +12,9 @@ import {
   SearchQuery,
   SessionInfo,
   SessionUpdate,
+  SourceConfig,
 } from '../../core/log/log.models';
+import { addSavedSource, sourceKey } from '../sources/source-logic';
 import { ALL_SOURCES, mergeKey, maskForBackend } from '../merge/merge-logic';
 import { ALL_LEVELS } from './filter-logic';
 import { inheritOnClose, insertIndex, viewLimitReason } from './view-chain';
@@ -80,6 +82,8 @@ export class LogSessionService {
   readonly noteRequest = signal<{ session: SessionState; line: number } | null>(null);
   /** The export dialog (prompt 015) for a tab. */
   readonly exportRequest = signal<SessionState | null>(null);
+  /** The dialog „Quelle öffnen“ (prompt 016), maybe with a configuration to start from. */
+  readonly sourceRequest = signal<{ config: SourceConfig | null } | null>(null);
   /**
    * Opens a workspace (`.lcw`) given as a path, wherever a path is opened (dialog, path field, drop, command line,
    * recent files). Set by the workspace service, which needs this service itself.
@@ -146,6 +150,48 @@ export class LogSessionService {
       return null;
     } catch (e) {
       return toAppError(e);
+    }
+  }
+
+  /**
+   * Starts a source without a file (prompt 016) and opens its spool as a tab; a source with the same listener
+   * open already is activated. Remembered in the settings (configuration only). Hands a failure (port in use …)
+   * to the caller.
+   */
+  async openSource(config: SourceConfig, keep: boolean): Promise<AppError | null> {
+    const key = sourceKey(config);
+    const open = tabOfFile(
+      this.sessions().filter((s) => s.source !== null && sourceKey(s.source.config) === key),
+    );
+    if (open && config.port !== 0) {
+      this.activate(open.id);
+      return null;
+    }
+    try {
+      await this.api.setSpoolLimit(this.settings.settings().spoolLimitMb);
+      await this.start((onUpdate) => this.api.openSource(config, keep, onUpdate));
+      // Port 0 (chosen by the system) is nothing to open again.
+      if (config.port !== 0) {
+        this.settings.update({
+          savedSources: addSavedSource(this.settings.settings().savedSources, { config, keep }),
+        });
+      }
+      return null;
+    } catch (e) {
+      return toAppError(e);
+    }
+  }
+
+  /** Keep the spool of a source when its tab closes (prompt 016). */
+  async setSpoolKeep(session: SessionState, keep: boolean): Promise<void> {
+    if (!session.isSource) return;
+    const before = session.keepSpool();
+    session.keepSpool.set(keep);
+    try {
+      await this.api.setSpoolKeep(session.sessionId, keep);
+    } catch (e) {
+      session.keepSpool.set(before);
+      this.showError(toAppError(e));
     }
   }
 

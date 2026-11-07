@@ -1,6 +1,6 @@
 # Architektur
 
-Stand: Export und Arbeitsstand (Prompt 015), Zeitstrahl (Prompt 014), Filter als eigener Tab (Prompt 013), Dashboard und SQL-Timeline (Prompt 012), Felder aus der Nachricht (Prompt 011), Verkettete Filter (Prompt 010), Overview Ruler und Navigation (Prompt 007), Dateien zusammenführen (Prompt 006), Seitenleiste (Prompt 005), Detail-Panel (Prompt 004), Spaltenansicht (Prompt 009) und Formaterkennung (Prompt 008) auf Basis des Startauftrags, des Flacker-Fixes (001), des Freeze-Buttons (002) und
+Stand: Quellen ohne Datei mit Spool und Syslog-Empfang (Prompt 016), Export und Arbeitsstand (Prompt 015), Zeitstrahl (Prompt 014), Filter als eigener Tab (Prompt 013), Dashboard und SQL-Timeline (Prompt 012), Felder aus der Nachricht (Prompt 011), Verkettete Filter (Prompt 010), Overview Ruler und Navigation (Prompt 007), Dateien zusammenführen (Prompt 006), Seitenleiste (Prompt 005), Detail-Panel (Prompt 004), Spaltenansicht (Prompt 009) und Formaterkennung (Prompt 008) auf Basis des Startauftrags, des Flacker-Fixes (001), des Freeze-Buttons (002) und
 der GuiExpert Table (003). Dieses Dokument beschreibt
 Entscheidungen, nicht Wünsche. Geplantes steht in `docs/roadmap.md` und in `prompts/`.
 
@@ -32,6 +32,8 @@ Entscheidungen, nicht Wünsche. Geplantes steht in `docs/roadmap.md` und in `pro
 │  timeline.rs   TimeSummary: Zeiten/Einträge je 256 Zeilen (Zeitstrahl)│
 │  report_db.rs  Dashboard: SQLite je Sitzung, Builder, sichere Abfragen │
 │  export.rs / anchor.rs / workspace.rs   Export-Jobs, Anker, .lcw      │
+│  spool.rs      Spool: SpoolWriter, Schreib-Thread, Rotation, Grenze   │
+│  sources/      Source-Trait, Monitor; syslog.rs (UDP/TCP → Spool)     │
 │  encoding.rs / platform.rs   Encodings, ANSI; Share-Flags, Datei-ID   │
 │  model.rs / error.rs   DTOs (camelCase), AppError { code, message }   │
 │  e2e.rs        nur Debug-Build: Szenario im WebView                   │
@@ -39,6 +41,7 @@ Entscheidungen, nicht Wünsche. Geplantes steht in `docs/roadmap.md` und in `pro
         │ read_at (positionell), notify + Polling
         ▼
       Logdatei(en) – der Text bleibt dort, nicht im Speicher
+      (bei Quellen ohne Datei: ihr Spool im Cache-Ordner, Prompt 016)
 ```
 
 ## Datenfluss
@@ -54,7 +57,11 @@ Entscheidungen, nicht Wünsche. Geplantes steht in `docs/roadmap.md` und in `pro
 4. **Anzeigen:** Das Frontend fragt sichtbare Bereiche per `get_lines(view, start, count)` ab, in Seiten zu 200 Zeilen. Rust
    liest den Text dafür aus der Datei (`LineReader` mit gleitendem Puffer), dekodiert, entfernt ANSI, kürzt auf 128 KB und
    zerlegt ihn mit dem `FieldParser` der Sitzung in Feldspannen (`fields`, Spalten über `get_columns`).
-5. **Ändern:** `set_filter` und `set_profile` starten Hintergrund-Jobs. Eine neue `viewGeneration` macht gecachte Seiten
+5. **Quellen ohne Datei (016):** `open_source(config, keep, onUpdate)` prüft die Konfiguration und bindet den Port
+   (`sources::prepare`), legt den Spool an, startet die Quelle auf einem eigenen Thread und öffnet dann eine normale
+   Sitzung auf `spool.log`. Der Empfang schreibt über eine begrenzte Warteschlange in den Schreib-Thread des Spools, der
+   mindestens alle 100 ms auf die Platte bringt; ab dort ist es eine Datei wie jede andere.
+6. **Ändern:** `set_filter` und `set_profile` starten Hintergrund-Jobs. Eine neue `viewGeneration` macht gecachte Seiten
    ungültig, eine neue `epoch` die Zeilennummern.
 
 ## Entscheidungen
@@ -75,6 +82,8 @@ Entscheidungen, nicht Wünsche. Geplantes steht in `docs/roadmap.md` und in `pro
 | Zeitstrahl | Streifen über Tabelle und Ruler (`features/timeline/`, 56 px, `Z`, Setting `showTimeline`), Canvas mit gestapelten Säulen je Eimer (neutral, WARN, ERROR, FATAL), schraffierten Ausfällen, Band des sichtbaren Bereichs (Zeit der obersten/untersten Zeile im `PageCache` über Anker Zeile → Zeit), Achse in lokaler Zeit (UTC gerechnet). Daten aus `get_timeline(from, to, buckets)`: eine `TimeSummary` im `LineIndex` (`timeline.rs`) mit je Abschnitt zu 256 Zeilen erster/letzter Zeit, größtem Sprung und Einträgen (Köpfe) gesamt/WARN/ERROR/FATAL, verdichtet wie die `LevelSummary` (höchstens 64 K Abschnitte zu 64 Byte). Beim Einlesen entscheidet ein `TimeCursor` vor der Sperre, welche Köpfe geparst werden (erster mit Zeit, jeder 32., letzter; endet ein Abschnitt in Fortsetzungen, wird der letzte Kopf nachgelesen, ebenso am Ende jedes Blocks für das Live-Ende). Ohne Zeit im Sample wird nichts geparst. Der Merge reicht die Zeit seiner Köpfe durch. Abfrage: Abschnitte anteilig auf Eimer, am größten Sprung geteilt, wenn er ein Ausfall ist (zehnmal länger als die Zeilen dazwischen bei der Rate des Rests brauchten); ungeordnete Abschnitte als Punkt an ihrer ersten Zeit, Ausreißer-Abschnitte an ihrem Ende auf der Achse. Ganze Datei: Achse vom 1. bis 99. Perzentil, um das Dreifache erweitert bis zur äußersten Zeit darin. `position_at_time` sucht den Abschnitt in der Zusammenfassung und darin den ersten Kopf ≥ Zeit (Text lesen, `blocking`). Klick springt (Auswahl bleibt), Ziehen → „Als Filter“ (Zeit-Bedingung im Baum des Tabs, Prompt 010/013) oder Zoom; Laden höchstens 2×/s und nur bei geänderter Zeilenzahl, Epoche, Zoom oder Breite | Ein Scan je Abfrage oder die Datenbank aus 012 wären zu teuer bzw. nur bei offenem Dashboard da. 500 MB: Einlesen 2,27 → 2,38 s (unter Last gemessen; ein Parse kostet 235 ns, ~10 je 256 Zeilen ≈ 50 ms), `get_timeline` 0,6 ms, `position_at_time` 0,13 ms. Prompt 014. |
 | Export | `export_view` startet einen Job (eigener Thread, `ExportJobs` mit Abbruch-Flag) und antwortet sofort mit der Id; Fortschritt über einen eigenen `Channel<ExportProgress>` höchstens alle 100 ms. `LogSession::export_cursor` legt das Ende beim Start fest, `export_batch` gibt Schritte zu 16 K Zeilen unter der Lesesperre heraus (neue Filterliste: weiter ab der nächsten Zeilennummer; neue Epoche: `file_changed`). Text ganz über `LineReader` + `display_text` (keine 128-KB-Grenze), in `.<name>.<pid>-<job>.part` daneben (`create_new`), am Ende `sync_all` und `rename`; Abbruch oder Fehler löscht. Ziel geprüft: absolut, ohne `..`, Endung des Formats, nicht die offene Datei (Pfad und Datei-Identität aller Segmente). CSV nach RFC 4180 mit BOM und `'` vor Formel-Zellen, JSON Lines mit Spalten-IDs | Gigabytes nie durch IPC; der Tail wartet nie. 500 MB: TXT 0,55 s, CSV mit 5 Spalten 9,8 s, `get_lines` daneben ≤ 0,6 ms. Prompt 015. |
 | Anker und Arbeitsstand | Lesezeichen und Notizen (je Datei, im Frontend) werden beim Speichern zu Ankern `{line, source, offset, len, hash}` (`line_anchors`, FNV-1a über 256 Byte) und beim Öffnen gesucht (`resolve_anchors`: gleiche Nummer, sonst ±10 000 Zeilen um Nummer und alte Byte-Position, nur Zeilen gleicher Länge werden gelesen). Ein `.lcw` ist JSON mit `format`/`version` (Migration aus Version 1), Pfade absolut und relativ; das Backend liest und schreibt nur `.lcw` (≤ 8 MB, Temp + Rename), `parseWorkspace` prüft jedes Feld. Fehlende Dateien: `probe_paths`, Dialog „Suchen …“/„Überspringen“. Native Dialoge über `core/dialog/native-dialog.ts` (e2e: `window.__lcDialogPaths`) | Zeilennummern ändern sich beim Neuschreiben; der Hash macht „nicht gefunden“ ehrlich. Ein geteilter Arbeitsstand ist fremde Eingabe und bringt kein SQL mit (Dashboards bleiben je Format). Prompt 015. |
+| Quellen ohne Datei | **Spool statt eigenem Lesepfad:** jede Quelle schreibt Zeilen in `<cache>/spool/<pid>/source-N/spool.log`, die Sitzung tailt die Datei. `trait Source` (`sources/mod.rs`): `prepare` (bindet/verbindet, Fehler gehen in den Dialog), `run(ctx)` auf eigenem Thread bis zum `StopToken`, Zeilen über `SpoolWriter` (`try_line`: nie blockieren, voll = verwerfen und zählen; `line_blocking` für ziehende Quellen), Zustand und Zähler über `SourceMonitor` in `SessionUpdate.sourceStatus` (Benachrichtigung höchstens alle 200 ms), `SessionInfo.source` statt Pfad. Spool: Schreib-Thread mit 1 MiB Puffer, Flush ≤ 100 ms, Rotation per Umbenennen bei 1/8 der Gesamtgrenze (höchstens 256 MB), älteste Datei gelöscht; die Sitzung beginnt neu, wenn sie so viele Dateien hält wie der Spool (`max_segments`), denn ein offenes Handle hielte gelöschten Platz fest. Ein Merge mit einem Spool begrenzt dessen Segmente ebenso. Schließen stoppt die Quelle sofort (Port frei), der Spool wird mit der Sitzung gelöscht oder nach `spool/kept/` verschoben; Reste toter Prozesse löscht der Start | Ein eigener Lesepfad hieße jede Funktion von `tail.rs`/`session.rs` doppelt. Kosten: Plattenplatz (begrenzt) und ~0,1 s bis zum Index. 50 000 und 100 000 Meldungen/s über UDP ohne Verlust (`syslog_integration`, `measure_`). Prompt 016. |
+| Syslog | UDP (eine Meldung je Datagramm), TCP mit Octet-Counting oder `\n` (RFC 6587, `TcpFramer`, höchstens 64 KB im Puffer), kein TLS. Spool-Zeile: Empfangszeit (ISO 8601 mit ms und Zone, je Sekunde gecacht), Absender (IPv4-gemappte Adressen als IPv4), Meldung roh, aber eindeutig escaped (`\\`, `\n`, `\r`, `\xNN` für C0/DEL/ungültige Bytes, `\u{XXXX}` für C1, Bidi, U+2028/2029), über 64 KB gekürzt und markiert. Eigenes Profil `syslog-received` (Level aus PRI hinter dem Präfix, Layouts 5424/3164/roh mit `sender`, `sent`, `pri`), fest gewählt; Zeitstrahl und Merge nutzen die Empfangszeit. Standard `127.0.0.1:5514`, andere Adressen nur mit `allowRemote` (auch im Backend geprüft), keine Hostnamen, Absender-Filter (Adressen/Netze), höchstens 64 TCP-Verbindungen (8 je Absender, Leerlauf 120 s, unfertiger Rahmen 30 s, am Limit weicht die längste ruhige), höchstens 8 Quellen, Spool 0700/0600, nichts wird zurückgesendet | Die Uhr des Senders kann falsch gehen und 3164 hat kein Jahr; die Empfangszeit ist monoton genug für Zeitstrahl und Merge. PRI am Zeilenanfang hätte das Präfix nicht erkannt (`detect_syslog_pri` prüfte nur `^<`). Prompt 016. |
 | Gezeichnet wird, was da ist | `displayedLines` trennt den Stand der Ansicht vom Stand des Backends. Der Tail rückt erst vor, wenn das neue Ende im `PageCache` liegt | Sonst blitzt je Update die Fläche ohne Level-Farbe auf. Prompt 001. |
 | Virtuelle Offsets | Jede Datei einer Sitzung (vor und nach Rotation) belegt einen eigenen Offset-Bereich (`Segment`), der Handle bleibt offen, höchstens 32 Dateien | Zeilennummern bleiben bei „alte Zeilen behalten“ gültig, und das Lesen braucht keinen Pfad. |
 | Gefilterte Ansicht | `FilteredLines`: bei Identität keine Liste, sonst `Vec<u32>` der Zeilennummern. Im Tail inkrementell, bei Filterwechsel neu per Job | Positionen in der Ansicht sind Indizes in die Liste, Suche und Kopieren arbeiten darauf. |
@@ -118,6 +127,10 @@ Entscheidungen, nicht Wünsche. Geplantes steht in `docs/roadmap.md` und in `pro
 - Export: Ende fest beim Start; eine Truncation während des Exports bricht ihn ab. Mit Spalten zählen die ersten 16 KB
   einer Zeile für die Felder. Arbeitsstand: höchstens 32 Dateien, 8 Tabs je Datei, 10 000 Lesezeichen bzw. Notizen je
   Datei, 2000 Zeichen je Notiz, 8 MB; Filter geschlossener Eltern-Tabs gehen nicht mit. Teilen: 64 KB, 20 000 Zeilen.
+- Quellen (016): Meldung 64 KB, 64 TCP-Verbindungen, 64 Absender-Einträge, Warteschlange 32 MB bzw. 64 K Zeilen, Spool
+  64 MB bis 8 GB je Quelle (Vorgabe 2 GB); beim Überlauf beginnt die Ansicht neu. Spitze auf der Platte etwa Grenze plus
+  eine Datei, im Freeze höchstens das Doppelte (die Sitzung hält ihre Dateien, der Spool schreibt weiter). Mehrere
+  Rotationen im Freeze: Zwischenstände fehlen in der Ansicht. Kein TLS, kein GELF.
 - Anzeige 128 KB je Zeile, Suche 1 MB je Zeile. Eine Zeile ohne Ende wird bei 16 MB geteilt.
 - Felder: zerlegt werden die ersten 16 KB einer Zeile, höchstens 12 Spalten aus JSON-/logfmt-Schlüsseln bzw. FIX-Tags.
   Nach einer Rotation mit anderem Format fallen die neuen Zeilen auf `message` zurück.
@@ -140,7 +153,7 @@ Entscheidungen, nicht Wünsche. Geplantes steht in `docs/roadmap.md` und in `pro
 | `rusqlite` 0.41 (`bundled`, `functions`, `hooks`, `limits`) | Dashboard-Datenbank und Nutzer-SQL (Prompt 012) | Echtes SQL ohne Dienst, +1,8 MiB (DuckDB: +43 MiB, Minuten Bauzeit). Gebaut ohne Extension-Loading (`.cargo/config.toml`: `SQLITE_OMIT_LOAD_EXTENSION`, `SQLITE_DQS=0`); Authorizer, Progress-Handler und Limits brauchen `hooks`/`limits`. |
 | `libc` 0.2 (nur Unix) | `statvfs` für den freien Speicher vor dem Aufbau | War schon im Baum; Windows nutzt `GetDiskFreeSpaceExW` aus `windows-sys`. |
 | `uplot` 1.6 (npm) | Diagramme im Dashboard | 22 KB gzip, eigener Lazy-Chunk, Canvas, kein `eval` (ECharts: 169–368 KB, enthält `new Function`); CSS 1,9 KB global (`angular.json`). |
-| `chrono` 0.4 (nur `clock`, `std`) | Zeitstempel ohne Zone in lokaler Zeit, Datum aus der Änderungszeit (`timestamp.rs`, auch für den Merge aus Prompt 006) | Zeitzonen und Kalender von Hand sind fehleranfällig; ohne Standard-Features klein. |
+| `chrono` 0.4 (nur `clock`, `std`) | Zeitstempel ohne Zone in lokaler Zeit, Datum aus der Änderungszeit (`timestamp.rs`, auch für den Merge aus Prompt 006), Empfangszeit der Syslog-Quelle (016) | Zeitzonen und Kalender von Hand sind fehleranfällig; ohne Standard-Features klein. |
 | `regex` 1 | Profile, Level-Erkennung, Layouts, Suche | Lineare Laufzeit, kein ReDoS durch Nutzermuster. |
 | `memchr` 2 | schneller Zeilensplit | War über `regex` schon im Baum. |
 | `encoding_rs` 0.8 | Dekodieren (UTF-8, UTF-16 LE/BE, Latin-1) | Bewährt, stammt aus Firefox. |

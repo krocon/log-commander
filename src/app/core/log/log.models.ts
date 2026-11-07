@@ -46,6 +46,67 @@ export interface SessionUpdate {
   sources: SourceUpdate[];
   /** The dashboard database (prompt 012), once a dashboard was opened. */
   report?: ReportStatus | null;
+  /** A source without a file (prompt 016): its state and counters; absent for files. */
+  sourceStatus?: SourceStatus | null;
+}
+
+/** Kinds of sources without a file (prompt 016); 017–019 add theirs. */
+export type SourceKind = 'syslog';
+
+export type SyslogProtocol = 'udp' | 'tcp' | 'both';
+
+/** A syslog listener as the dialog configures it (mirrors `SyslogConfig` in sources/syslog.rs). */
+export interface SyslogConfig {
+  kind: 'syslog';
+  protocol: SyslogProtocol;
+  /** An IP address; `127.0.0.1` by default. */
+  address: string;
+  /** 0 lets the system choose (tests, e2e). */
+  port: number;
+  /** Senders allowed: addresses or networks; empty: everyone who reaches the port. */
+  allow: string[];
+  /** Listening beyond this computer, chosen explicitly. */
+  allowRemote: boolean;
+}
+
+/** What `open_source` takes; never holds secrets (017–019 keep those in the keychain). */
+export type SourceConfig = SyslogConfig;
+
+/** Shown instead of the spool path. */
+export interface SourceDescriptor {
+  kind: SourceKind;
+  /** „Syslog :5514“. */
+  label: string;
+  /** The spool file the tab follows. */
+  spoolPath: string;
+  /** The spool stays when the tab closes. */
+  keep: boolean;
+  /** The configuration as opened, with the port actually bound. */
+  config: SourceConfig;
+}
+
+export type SourceState =
+  | { kind: 'connecting' }
+  | { kind: 'listening' }
+  | { kind: 'connected' }
+  | { kind: 'error'; message: string }
+  | { kind: 'stopped' };
+
+/** State and counters of a source, with every update of its tab. */
+export interface SourceStatus {
+  state: SourceState;
+  /** Messages accepted. */
+  received: number;
+  /** Messages the spool could not take (queue full, disk error). */
+  dropped: number;
+  /** Messages cut at 64 KB. */
+  truncated: number;
+  /** Messages or connections refused (sender filter, connection limit). */
+  rejected: number;
+  connections: number;
+  /** Lines written to the spool. */
+  spooled: number;
+  spoolError: string | null;
 }
 
 /** Live state of one source of a merge. */
@@ -93,6 +154,8 @@ export interface SessionInfo {
   update: SessionUpdate;
   /** The files of a merge in source order; empty for a single file. */
   sources: SourceInfo[];
+  /** A source without a file (prompt 016); `path` is then its spool. */
+  source?: SourceDescriptor | null;
 }
 
 /** A filter opened as a tab of its own (prompt 013): a view of the same session, with its own channel. */

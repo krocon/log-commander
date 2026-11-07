@@ -63,6 +63,60 @@ pub async fn open_log(
     .await
 }
 
+/// Starts a source without a file (prompt 016, e.g. a syslog listener) and opens its spool as a
+/// tab. Errors of the configuration (port in use, address) come back before anything runs.
+#[tauri::command]
+pub async fn open_source(
+    app: AppHandle,
+    config: crate::sources::SourceConfig,
+    keep: Option<bool>,
+    on_update: Channel<SessionUpdate>,
+) -> AppResult<SessionInfo> {
+    blocking(move || {
+        let manager = app.state::<SessionManager>();
+        let sink = Box::new(move |update: SessionUpdate| {
+            let _ = on_update.send(update);
+        });
+        manager.open_source(config, keep.unwrap_or(false), OpenOptions::default(), sink)
+    })
+    .await
+}
+
+/// Keep the spool of a source when its tab closes (prompt 016).
+#[tauri::command]
+pub async fn set_spool_keep(
+    state: State<'_, SessionManager>,
+    session_id: u64,
+    keep: bool,
+) -> AppResult<()> {
+    session(&state, session_id)?.set_spool_keep(keep)
+}
+
+/// Total size of a spool in MB (settings), for sources opened from now on.
+#[tauri::command]
+pub async fn set_spool_limit(state: State<'_, SessionManager>, megabytes: u64) -> AppResult<()> {
+    state.set_spool_limit(megabytes.saturating_mul(crate::spool::MIB));
+    Ok(())
+}
+
+/// Kept spools (`spool/kept` in the cache folder): how many and their size, for the settings.
+#[tauri::command]
+pub async fn kept_spools(state: State<'_, SessionManager>) -> AppResult<crate::model::KeptSpools> {
+    let root = state.spool_root()?;
+    blocking(move || {
+        let (count, bytes) = root.kept_usage();
+        Ok(crate::model::KeptSpools { count, bytes })
+    })
+    .await
+}
+
+/// Deletes the kept spools; returns how many went.
+#[tauri::command]
+pub async fn delete_kept_spools(state: State<'_, SessionManager>) -> AppResult<u32> {
+    let root = state.spool_root()?;
+    blocking(move || Ok(root.delete_kept())).await
+}
+
 /// One file of a merge as the dialog sends it; without a profile the suggestion applies.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -47,6 +47,11 @@ Architektur verbaut nichts davon.
   Ruler und Detail-Panel; Arbeitsstand `.lcw` mit Dateien, Merges, Filter-Tabs samt Baum, Lesezeichen und Notizen als Anker,
   Layout; fehlende Dateien suchen oder überspringen; Teilen als Markdown oder Jira
 
+- Quellen ohne Datei und Syslog-Empfang (Prompt 016): Spool im Cache-Ordner, den die Sitzung wie eine Datei verfolgt
+  (alle Funktionen inklusive Freeze, Export, Merge, Dashboard); Syslog über UDP (RFC 3164/5424) und TCP (RFC 6587),
+  nur lokal ohne ausdrückliche Wahl, Absender-Filter, Zähler (empfangen, verworfen, gekürzt, abgewiesen), Spool
+  behalten oder löschen, gespeicherte Quellen, Quellen im Arbeitsstand; Grundlage für 017–019
+
 ## Offen
 
 **Dateien:** Rotierte Archive als durchgehende Timeline, `.gz`/`.zip`/`.zst` lesen, Ordner/Glob
@@ -97,7 +102,11 @@ Zeitzone/Versatz je Datei beim Merge, Ausfälle innerhalb eines Abschnitts genau
 
 **Export und Arbeitsstand (Nachfragen zu 015):** PDF, Export als Excel-Datei, Notizen mit Markdown, Arbeitsstand
 automatisch beim Beenden, Filter geschlossener Eltern-Tabs im Arbeitsstand (das Frontend kennt nur ihre Beschriftung),
-Zoom des Zeitstrahls im Arbeitsstand, Quellen aus 016–019 (ohne Geheimnisse), Spalten-Layout nur für den Arbeitsstand
+Zoom des Zeitstrahls im Arbeitsstand, Quellen aus 017–019 im Arbeitsstand (016: Syslog ist drin), Spalten-Layout nur für den Arbeitsstand
 statt in den Settings, Plugin-Schnittstelle.
+
+**Quellen (Nachfragen zu 016):** Syslog über TLS (RFC 5425), GELF, Fluentd/Forward, Weiterleiten an andere Server,
+Empfang im Hintergrund ohne offenes Fenster, Rate-Grenze je Absender, Ansicht beim Überlauf des Spools ohne
+Neubeginn (bräuchte ein Verwerfen der ältesten Segmente im Index), behaltene Spools im Start-Bildschirm.
 
 **Plattform:** Signierung einrichten (Secrets, siehe `.github/workflows/release.yml`), UI-Sprachen.

@@ -35,6 +35,11 @@ pub enum ErrorCode {
     FileChanged,
     /// A workspace file (prompt 015) that cannot be read or written: path, size, not a workspace.
     InvalidWorkspace,
+    /// A source (prompt 016) that cannot be opened as configured: address, sender filter, remote
+    /// listening without the explicit choice.
+    InvalidSource,
+    /// The port of a source is taken by another program.
+    PortInUse,
 }
 
 #[derive(Debug, Clone, Serialize, thiserror::Error)]

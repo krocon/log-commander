@@ -9,6 +9,7 @@ import { ALL_SOURCES, mergeKey } from '../merge/merge-logic';
 import { countConditions, emptyTree } from '../sessions/filter-tree';
 import { LogSessionService } from '../sessions/log-session.service';
 import { LostMark, SessionState } from '../sessions/session-state';
+import { sourceKey, sourceLabel } from '../sources/source-logic';
 import {
   WORKSPACE_EXTENSION,
   WORKSPACE_FORMAT,
@@ -18,6 +19,7 @@ import {
   WsMark,
   WsTab,
   isNetworkFile,
+  isRemoteSourceFile,
   locateSource,
   parseWorkspace,
   serializeWorkspace,
@@ -44,8 +46,10 @@ export interface ConfirmItem {
   file: number;
   label: string;
   paths: string[];
-  /** A network path: never opened or probed. */
+  /** A network path, or a source listening beyond this computer: never opened, probed or started. */
   network: boolean;
+  /** Why it is not opened, when `network`. */
+  reason: string | null;
   checked: boolean;
 }
 
@@ -202,6 +206,23 @@ export class WorkspaceService {
         ...marks('note'),
       ];
       const profileId = first.update().profileId;
+      if (first.source) {
+        // Prompt 016: the source is started again; marks belong to this spool only.
+        files.push({
+          kind: 'source',
+          sources: [],
+          source: { ...first.source.config },
+          profileId: profileId === first.suggestedProfileId ? null : profileId,
+          tabs: wsTabs.map((t) => ({ ...t, top: null, selection: null })).slice(0, 8),
+          bookmarks: [],
+          notes: [],
+        });
+        const activeIndex = ordered.findIndex((t) => t.id === this.sessions.activeId());
+        if (activeIndex >= 0) {
+          active = { file: files.length - 1, tab: Math.min(7, activeIndex + offset) };
+        }
+        continue;
+      }
       files.push({
         kind: first.isMerge ? 'merge' : 'file',
         sources: first.isMerge
@@ -275,9 +296,19 @@ export class WorkspaceService {
           : {}),
       });
       const report: RestoreReport = {
-        skipped: doc.files
-          .filter(isNetworkFile)
-          .map((f) => `${f.sources.map((s) => s.path).join(' + ')} (Netzwerkpfad, nicht geöffnet)`),
+        skipped: [
+          ...doc.files
+            .filter(isNetworkFile)
+            .map(
+              (f) => `${f.sources.map((s) => s.path).join(' + ')} (Netzwerkpfad, nicht geöffnet)`,
+            ),
+          ...doc.files
+            .filter(isRemoteSourceFile)
+            .map(
+              (f) =>
+                `${f.source ? sourceLabel(f.source) : 'Quelle'} (lauscht über diesen Rechner hinaus, nicht gestartet)`,
+            ),
+        ],
         lost: [],
         dropped: parsed.dropped,
         migratedFrom: parsed.migratedFrom,
@@ -367,12 +398,25 @@ export class WorkspaceService {
     this.confirm.set({
       name: baseName(wsPath),
       items: doc.files.map((f, file) => {
+        if (f.kind === 'source' && f.source) {
+          // Prompt 016: starting a listener is a side effect; one beyond this computer never from a file.
+          const remote = isRemoteSourceFile(f);
+          return {
+            file,
+            label: `${sourceLabel(f.source)} (Quelle)`,
+            paths: [`startet Syslog-Empfang auf ${f.source.address}:${f.source.port}`],
+            network: remote,
+            reason: remote ? 'nicht gestartet (lauscht über diesen Rechner hinaus)' : null,
+            checked: !remote,
+          };
+        }
         const network = isNetworkFile(f);
         return {
           file,
           label: f.sources.map((s) => baseName(s.path)).join(' + '),
           paths: f.sources.map((s) => s.path),
           network,
+          reason: network ? 'nicht geöffnet (Netzwerkpfad)' : null,
           checked: !network,
         };
       }),
@@ -434,11 +478,36 @@ export class WorkspaceService {
     this.missingDone = null;
   }
 
+  /** A source of the workspace (prompt 016): started again, its filter tabs restored. */
+  private async restoreSource(file: WsFile, report: RestoreReport): Promise<SessionState[]> {
+    const config = file.source;
+    if (!config || isRemoteSourceFile(file)) return [];
+    const label = sourceLabel(config);
+    const keep = this.settings
+      .settings()
+      .savedSources.find((s) => sourceKey(s.config) === sourceKey(config))?.keep;
+    const error = await this.sessions.openSource(config, keep ?? false);
+    if (error) {
+      report.skipped.push(`${label}: ${describeError(error)}`);
+      return [];
+    }
+    const fileTab =
+      this.sessions
+        .sessions()
+        .find(
+          (s) =>
+            s.viewId === 0 && s.source !== null && sourceKey(s.source.config) === sourceKey(config),
+        ) ?? null;
+    if (!fileTab) return [];
+    return this.restoreTabs(file, fileTab, false);
+  }
+
   private async restoreFile(
     file: WsFile,
     paths: string[],
     report: RestoreReport,
   ): Promise<SessionState[]> {
+    if (file.kind === 'source') return this.restoreSource(file, report);
     const label = baseName(file.sources[0].path);
     const merge = file.kind === 'merge';
     if (paths.length === 0 || (merge && paths.length < 2)) {
@@ -470,6 +539,17 @@ export class WorkspaceService {
         this.sessions.sessions().find((s) => s.viewId === 0 && samePath(s.path, paths[0])) ?? null;
     }
     if (!fileTab) return [];
+    const created = await this.restoreTabs(file, fileTab, partial);
+    await this.placeMarks(file, created, label, report);
+    return created;
+  }
+
+  /** Profile and tabs of a file, merge or source: filters, filter tabs below, modes. */
+  private async restoreTabs(
+    file: WsFile,
+    fileTab: SessionState,
+    partial: boolean,
+  ): Promise<SessionState[]> {
     if (file.profileId && fileTab.update().profileId !== file.profileId) {
       await this.sessions.setProfile(fileTab, file.profileId);
     }
@@ -502,7 +582,6 @@ export class WorkspaceService {
       }
       this.sessions.setMode(created[i], tab.mode);
     }
-    await this.placeMarks(file, created, label, report);
     return created;
   }
 

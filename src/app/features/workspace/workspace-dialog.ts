@@ -23,8 +23,8 @@ import { WorkspaceService } from './workspace.service';
       @if (kind() === 'confirm' && ws.confirm(); as c) {
         <h2 id="ws-title">Arbeitsstand „{{ c.name }}“ öffnen</h2>
         <p class="dim">
-          Diese Dateien werden zum Lesen geöffnet. Nur angehakte werden gesucht und geöffnet;
-          Netzwerkpfade nie.
+          Diese Dateien werden zum Lesen geöffnet, Quellen gestartet. Nur angehakte werden gesucht
+          und geöffnet; Netzwerkpfade und Quellen, die über diesen Rechner hinaus lauschen, nie.
         </p>
         <ul class="missing">
           @for (item of c.items; track item.file; let i = $index) {
@@ -41,7 +41,7 @@ import { WorkspaceService } from './workspace.service';
                   ><bdi>{{ item.paths.join(' + ') }}</bdi></span
                 >
                 @if (item.network) {
-                  <span class="state">nicht geöffnet (Netzwerkpfad)</span>
+                  <span class="state">{{ item.reason ?? 'nicht geöffnet' }}</span>
                 }
               </label>
             </li>

@@ -18,6 +18,8 @@ export type ErrorCode =
   | 'invalid_export'
   | 'file_changed'
   | 'invalid_workspace'
+  | 'invalid_source'
+  | 'port_in_use'
   | 'backend_unavailable'
   | 'unknown';
 
@@ -63,6 +65,10 @@ export function describeError(error: AppError): string {
       return 'Die Datei wurde während des Exports geleert oder neu begonnen, Export abgebrochen';
     case 'invalid_workspace':
       return `Kein gültiger Arbeitsstand: ${error.message}${where}`;
+    case 'invalid_source':
+      return `Quelle nicht möglich: ${error.message}`;
+    case 'port_in_use':
+      return `Port belegt: ${error.message}. Anderen Port wählen oder das andere Programm beenden`;
     case 'backend_unavailable':
       return 'Desktop-Backend nicht verfügbar (läuft die App im Browser?)';
     default:

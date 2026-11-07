@@ -8,6 +8,7 @@ import {
   ValueKind,
 } from '../log/log.models';
 import { FilterGroupNode, sanitizeTree } from '../../features/sessions/filter-tree';
+import { SavedSource, mergeSavedSources } from '../../features/sources/source-logic';
 
 export type ThemeChoice = 'system' | 'dark' | 'light';
 /** Column view (prompt 009) or the raw line. */
@@ -66,6 +67,10 @@ export interface Settings {
   extractRules: Record<string, ExtractRule[]>;
   /** Profiles `suggest_fields` already ran for on opening: the hint comes once per profile. */
   fieldHints: string[];
+  /** Sources opened before (prompt 016), newest first; configurations only, never secrets. */
+  savedSources: SavedSource[];
+  /** Total size of one source's spool in MB (prompt 016); the oldest spool file goes beyond it. */
+  spoolLimitMb: number;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -89,6 +94,8 @@ export const DEFAULT_SETTINGS: Settings = {
   savedFilters: [],
   extractRules: {},
   fieldHints: [],
+  savedSources: [],
+  spoolLimitMb: 2048,
 };
 
 export const MIN_FONT_SIZE = 9;
@@ -106,6 +113,9 @@ export const MAX_SAVED_FILTERS = 100;
 /** Extraction rules per profile; the backend refuses more. */
 export const MAX_EXTRACT_RULES = 32;
 const MAX_FIELD_HINTS = 200;
+/** Bounds of the spool limit, as the backend clamps it (8 GB: 32 files of 256 MB). */
+export const MIN_SPOOL_LIMIT_MB = 64;
+export const MAX_SPOOL_LIMIT_MB = 8192;
 
 /** The tokens the colour settings offer. */
 export const COLOR_TOKENS: readonly { token: string; level: Level | null; label: string }[] = [
@@ -172,6 +182,11 @@ export function mergeSettings(saved: Partial<Settings> | null | undefined): Sett
   merged.fieldHints = isStringArray(merged.fieldHints)
     ? [...new Set(merged.fieldHints)].slice(-MAX_FIELD_HINTS)
     : [];
+  merged.savedSources = mergeSavedSources(merged.savedSources);
+  const spool = Number(merged.spoolLimitMb);
+  merged.spoolLimitMb = Number.isFinite(spool)
+    ? Math.round(Math.min(MAX_SPOOL_LIMIT_MB, Math.max(MIN_SPOOL_LIMIT_MB, spool)))
+    : DEFAULT_SETTINGS.spoolLimitMb;
   return merged;
 }
 

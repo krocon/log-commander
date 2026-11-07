@@ -3,6 +3,7 @@ import { SettingsService } from '../../core/settings/settings.service';
 import { baseName } from '../../shared/format';
 import { LogSessionService } from '../sessions/log-session.service';
 import { isWorkspacePath } from '../workspace/workspace-model';
+import { sourceLabel } from '../sources/source-logic';
 
 @Component({
   selector: 'app-start-screen',
@@ -17,13 +18,48 @@ import { isWorkspacePath } from '../workspace/workspace-model';
         <button type="button" class="secondary" (click)="merge.emit()">
           Dateien zusammenführen …
         </button>
+        <button type="button" class="secondary" (click)="openSource.emit()">Quelle öffnen …</button>
         <button type="button" class="secondary" (click)="openWorkspace.emit()">
           Arbeitsstand öffnen …
         </button>
       </div>
       <p class="hint">
-        oder Datei ins Fenster ziehen · ⌘/Strg+O · Pfad: ⌘/Strg+⇧+O · Zusammenführen: ⌘/Strg+⇧+M
+        oder Datei ins Fenster ziehen · ⌘/Strg+O · Pfad: ⌘/Strg+⇧+O · Zusammenführen: ⌘/Strg+⇧+M ·
+        Quelle (Syslog): ⌘/Strg+⇧+L
       </p>
+      @if (settings().savedSources.length) {
+        <h2>Quellen</h2>
+        <ul>
+          @for (s of settings().savedSources; track $index) {
+            <li>
+              <button
+                type="button"
+                class="recent"
+                title="Im Dialog „Quelle öffnen“ prüfen und starten"
+                (click)="sessions.sourceRequest.set({ config: s.config })"
+              >
+                <span class="name"
+                  ><span class="ws" aria-hidden="true">⇣</span><span class="sr-only">Quelle: </span
+                  >{{ sourceLabel(s.config) }}</span
+                >
+                <span class="dir"
+                  >{{ s.config.address
+                  }}{{ s.config.allow.length ? ' · mit Absender-Filter' : '' }}</span
+                >
+              </button>
+              <button
+                type="button"
+                class="forget"
+                [attr.aria-label]="sourceLabel(s.config) + ' aus der Liste entfernen'"
+                title="Aus der Liste entfernen"
+                (click)="forgetSource($index)"
+              >
+                ×
+              </button>
+            </li>
+          }
+        </ul>
+      }
       @if (settings().recentFiles.length) {
         <h2>Zuletzt geöffnet</h2>
         <ul>
@@ -155,9 +191,17 @@ export class StartScreenComponent {
   readonly openPath = output<void>();
   readonly merge = output<void>();
   readonly openWorkspace = output<void>();
+  readonly openSource = output<void>();
   protected readonly isWorkspace = isWorkspacePath;
+  protected readonly sourceLabel = sourceLabel;
 
   protected forget(path: string): void {
     this.settingsService.removeRecentFile(path);
+  }
+
+  protected forgetSource(index: number): void {
+    this.settingsService.update({
+      savedSources: this.settings().savedSources.filter((_, i) => i !== index),
+    });
   }
 }

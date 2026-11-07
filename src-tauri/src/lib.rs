@@ -10,6 +10,7 @@
 //! - `merge`: several files as one session, in time order
 //! - `report_db`: the dashboard database (SQLite) and its guarded queries
 //! - `export`, `anchor`, `workspace`: export jobs, anchored lines, workspace files (prompt 015)
+//! - `spool`, `sources`: sources without a file (syslog …) write a spool the session follows (016)
 //! - `commands`: the thin Tauri command layer; everything else is free of Tauri
 
 pub mod anchor;
@@ -32,6 +33,8 @@ pub mod platform;
 pub mod profile;
 pub mod report_db;
 pub mod session;
+pub mod sources;
+pub mod spool;
 pub mod tail;
 pub mod timeline;
 pub mod timestamp;
@@ -48,6 +51,7 @@ const MENU_MERGE: &str = "merge-logs";
 const MENU_EXPORT: &str = "export-log";
 const MENU_WORKSPACE_OPEN: &str = "workspace-open";
 const MENU_WORKSPACE_SAVE: &str = "workspace-save";
+const MENU_OPEN_SOURCE: &str = "open-source";
 
 pub fn run() {
     #[allow(unused_mut)] // changed by end-to-end runs (debug builds) only
@@ -85,6 +89,15 @@ pub fn run() {
                 },
                 Err(e) => eprintln!("no cache folder: {e}"),
             }
+            // Spools of sources (prompt 016), cleaned up like the dashboards.
+            if let Ok(cache) = app.path().app_cache_dir() {
+                match spool::SpoolRoot::prepare(&cache) {
+                    Ok(root) => app
+                        .state::<SessionManager>()
+                        .set_spool_root(std::sync::Arc::new(root)),
+                    Err(e) => eprintln!("no folder for spools: {e}"),
+                }
+            }
             Ok(())
         })
         .menu(build_menu)
@@ -101,11 +114,18 @@ pub fn run() {
                 let _ = app.emit("menu-workspace-open", ());
             } else if event.id() == MENU_WORKSPACE_SAVE {
                 let _ = app.emit("menu-workspace-save", ());
+            } else if event.id() == MENU_OPEN_SOURCE {
+                let _ = app.emit("menu-open-source", ());
             }
         })
         .invoke_handler(tauri::generate_handler![
             commands::open_log,
             commands::open_merged,
+            commands::open_source,
+            commands::set_spool_keep,
+            commands::set_spool_limit,
+            commands::kept_spools,
+            commands::delete_kept_spools,
             commands::inspect_merge_source,
             commands::resort,
             commands::close_log,
@@ -156,11 +176,13 @@ pub fn run() {
             // Prompt 015: an export running while the app quits leaves no temporary file.
             if let tauri::RunEvent::Exit = event {
                 app.state::<export::ExportJobs>().shutdown();
+                // Prompt 016: listeners stop, spools are deleted or kept as chosen.
+                app.state::<SessionManager>().close_all();
             }
         });
 }
 
-/// The platform's default menu plus File → Open…, Open Path…, Merge Files…, Export…, Open Workspace…
+/// The platform's default menu plus File → Open…, Open Path…, Open Source…, Merge Files…, Export…, Open Workspace…
 /// and Save Workspace…
 fn build_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<Menu<R>> {
     let menu = Menu::default(app)?;
@@ -178,6 +200,13 @@ fn build_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<Men
         "Merge Files…",
         true,
         Some("CmdOrCtrl+Shift+M"),
+    )?;
+    let open_source = MenuItem::with_id(
+        app,
+        MENU_OPEN_SOURCE,
+        "Open Source…",
+        true,
+        Some("CmdOrCtrl+Shift+L"),
     )?;
     let export = MenuItem::with_id(app, MENU_EXPORT, "Export…", true, Some("CmdOrCtrl+Shift+E"))?;
     let workspace_open = MenuItem::with_id(
@@ -204,6 +233,7 @@ fn build_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<Men
             &[
                 &open,
                 &open_path,
+                &open_source,
                 &merge,
                 &export,
                 &separator,
@@ -216,6 +246,7 @@ fn build_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<Men
             &SubmenuBuilder::new(app, "File")
                 .item(&open)
                 .item(&open_path)
+                .item(&open_source)
                 .item(&merge)
                 .item(&export)
                 .item(&separator)

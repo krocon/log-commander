@@ -562,6 +562,9 @@ struct SourceFile {
     last_read: Instant,
     /// Read completely and sorted before merging (its entries were not in time order).
     needs_sort: bool,
+    /// Files kept after rotations before the merge starts over: fewer for a spool (prompt 016),
+    /// which deletes its oldest files and must not have them held here.
+    max_segments: usize,
 }
 
 impl SourceFile {
@@ -716,6 +719,7 @@ impl MergeWorker {
                 file_size: meta.len(),
                 last_read: Instant::now(),
                 needs_sort: false,
+                max_segments: MAX_SEGMENTS,
             });
             profiles.push(profile);
             samples.push(sample);
@@ -744,6 +748,15 @@ impl MergeWorker {
 
     pub fn total_size(&self) -> u64 {
         self.files.iter().map(|f| f.file_size).sum()
+    }
+
+    /// Files that are spools of running sources (prompt 016) keep at most as many files as the spool.
+    pub fn limit_segments(&mut self, limits: &[(FileId, usize)]) {
+        for src in &mut self.files {
+            if let Some(&(_, max)) = limits.iter().find(|(id, _)| Some(*id) == src.id) {
+                src.max_segments = max.clamp(1, MAX_SEGMENTS);
+            }
+        }
     }
 
     pub fn paths(&self) -> Vec<PathBuf> {
@@ -1303,7 +1316,7 @@ impl Runner {
         src.file_size = size;
         let file = Arc::new(file);
         let encoding = src.encoding();
-        let keep = keep_wanted && src.segments.len() < MAX_SEGMENTS;
+        let keep = keep_wanted && src.segments.len() < src.max_segments;
         if !keep {
             // Without the old lines (or too many files): this source starts over, all is merged again.
             src.segments = vec![SourceSegment {

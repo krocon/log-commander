@@ -1,0 +1,48 @@
+2026-11-07T10:15:31.643+01:00 127.0.0.1 <15>Nov  7 10:15:31 mac-mini backupd[6931]: Scanning /Users for changes
+2026-11-07T10:15:32.611+01:00 127.0.0.1 <15>Nov  7 10:15:32 mac-mini backupd[4341]: Scanning /Users for changes
+2026-11-07T10:15:33.625+01:00 10.0.4.22 <12>Nov  7 10:15:33 web-02 nginx[5048]: upstream response time 1.8s exceeds 1s
+2026-11-07T10:15:35.037+01:00 10.0.4.22 <4>1 2026-11-07T10:15:35.037Z web-02 kernel 3710 ID4 [meta seq="3"] TCP: request_sock_TCP: Possible SYN flooding on port 443. Sending cookies.
+2026-11-07T10:15:36.115+01:00 10.0.4.21 <11>Nov  7 10:15:36 web-01 nginx[548]: connect() failed (111: Connection refused) while connecting to upstream
+2026-11-07T10:15:38.058+01:00 127.0.0.1 <14>Nov  7 10:15:38 mac-mini backupd[5175]: Backup completed successfully (2.1 GB)
+2026-11-07T10:15:39.579+01:00 10.0.7.5 <29>Nov  7 10:15:39 db-01 systemd[5798]: Started Daily apt download activities.
+2026-11-07T10:15:41.643+01:00 127.0.0.1 <15>Nov  7 10:15:41 mac-mini backupd[9582]: Scanning /Users for changes
+2026-11-07T10:15:41.863+01:00 10.0.7.5 <14>1 2026-11-07T10:15:41.863Z db-01 postgres 8674 ID6 [meta seq="8"] checkpoint complete: wrote 1532 buffers (9.4%)
+2026-11-07T10:15:43.431+01:00 10.0.4.22 <4>Nov  7 10:15:43 web-02 kernel: TCP: request_sock_TCP: Possible SYN flooding on port 443. Sending cookies.
+2026-11-07T10:15:44.736+01:00 10.0.7.5 <27>Nov  7 10:15:44 db-01 systemd[7531]: postgresql@16-main.service: Main process exited, code=killed, status=9/KILL
+2026-11-07T10:15:45.045+01:00 10.0.4.22 <4>Nov  7 10:15:45 web-02 kernel: TCP: request_sock_TCP: Possible SYN flooding on port 443. Sending cookies.
+2026-11-07T10:15:46.908+01:00 127.0.0.1 <15>Nov  7 10:15:46 mac-mini backupd[2114]: Scanning /Users for changes
+2026-11-07T10:15:48.808+01:00 10.0.4.21 <36>1 2026-11-07T10:15:48.808Z web-01 sshd 472 ID4 [meta seq="13"] Failed password for invalid user admin from 203.0.113.7 port 40112 ssh2
+2026-11-07T10:15:49.437+01:00 10.0.4.22 <2>Nov  7 10:15:49 web-02 kernel: Out of memory: Killed process 4711 (java) total-vm:8123456kB
+2026-11-07T10:15:49.612+01:00 10.0.4.21 <30>Nov  7 10:15:49 web-01 cron[9992]: (root) CMD (/usr/local/bin/rotate-logs)
+2026-11-07T10:15:50.960+01:00 127.0.0.1 <14>Nov  7 10:15:50 mac-mini backupd[5342]: Backup completed successfully (2.1 GB)
+2026-11-07T10:15:51.413+01:00 10.0.4.21 <30>Nov  7 10:15:51 web-01 cron[4083]: (root) CMD (/usr/local/bin/rotate-logs)
+2026-11-07T10:15:51.490+01:00 127.0.0.1 <14>1 2026-11-07T10:15:51.490Z mac-mini backupd 890 ID6 [meta seq="18"] Backup completed successfully (2.1 GB)
+2026-11-07T10:15:53.138+01:00 10.0.4.22 <4>Nov  7 10:15:53 web-02 kernel: TCP: request_sock_TCP: Possible SYN flooding on port 443. Sending cookies.
+2026-11-07T10:15:53.907+01:00 10.0.4.21 <11>Nov  7 10:15:53 web-01 nginx[4104]: connect() failed (111: Connection refused) while connecting to upstream
+2026-11-07T10:15:54.422+01:00 10.0.4.21 <30>Nov  7 10:15:54 web-01 cron[4484]: (root) CMD (/usr/local/bin/rotate-logs)
+2026-11-07T10:15:56.052+01:00 127.0.0.1 <15>Nov  7 10:15:56 mac-mini backupd[7709]: Scanning /Users for changes
+2026-11-07T10:15:58.002+01:00 127.0.0.1 <14>1 2026-11-07T10:15:58.002Z mac-mini backupd 1068 ID6 [meta seq="23"] Backup completed successfully (2.1 GB)
+2026-11-07T10:15:58.166+01:00 10.0.4.22 <2>Nov  7 10:15:58 web-02 kernel: Out of memory: Killed process 4711 (java) total-vm:8123456kB
+2026-11-07T10:16:00.265+01:00 127.0.0.1 <14>Nov  7 10:16:00 mac-mini backupd[1962]: Backup completed successfully (2.1 GB)
+2026-11-07T10:16:02.008+01:00 10.0.4.21 <38>Nov  7 10:16:02 web-01 sshd[7567]: Accepted publickey for deploy from 10.0.9.3 port 51522 ssh2
+2026-11-07T10:16:03.825+01:00 10.0.4.22 <4>Nov  7 10:16:03 web-02 kernel: TCP: request_sock_TCP: Possible SYN flooding on port 443. Sending cookies.
+2026-11-07T10:16:04.380+01:00 10.0.4.22 <2>1 2026-11-07T10:16:04.380Z web-02 kernel 8314 ID2 [meta seq="28"] Out of memory: Killed process 4711 (java) total-vm:8123456kB
+2026-11-07T10:16:05.341+01:00 127.0.0.1 <15>Nov  7 10:16:05 mac-mini backupd[8227]: Scanning /Users for changes
+2026-11-07T10:16:06.094+01:00 127.0.0.1 <15>Nov  7 10:16:06 mac-mini backupd[459]: Scanning /Users for changes
+2026-11-07T10:16:08.133+01:00 10.0.7.5 <29>Nov  7 10:16:08 db-01 systemd[1348]: Started Daily apt download activities.
+2026-11-07T10:16:09.422+01:00 127.0.0.1 <15>Nov  7 10:16:09 mac-mini backupd[3526]: Scanning /Users for changes
+2026-11-07T10:16:11.876+01:00 127.0.0.1 <15>1 2026-11-07T10:16:11.876Z mac-mini backupd 9166 ID7 [meta seq="33"] Scanning /Users for changes
+2026-11-07T10:16:12.241+01:00 10.0.4.21 <30>Nov  7 10:16:12 web-01 cron[1052]: (root) CMD (/usr/local/bin/rotate-logs)
+2026-11-07T10:16:14.174+01:00 10.0.4.21 <36>Nov  7 10:16:14 web-01 sshd[959]: Failed password for invalid user admin from 203.0.113.7 port 40112 ssh2
+2026-11-07T10:16:16.316+01:00 10.0.7.5 <14>Nov  7 10:16:16 db-01 postgres[6069]: checkpoint complete: wrote 1532 buffers (9.4%)
+2026-11-07T10:16:18.004+01:00 10.0.7.5 <29>Nov  7 10:16:18 db-01 systemd[3753]: Started Daily apt download activities.
+2026-11-07T10:16:18.825+01:00 127.0.0.1 <14>1 2026-11-07T10:16:18.825Z mac-mini backupd 103 ID6 [meta seq="38"] Backup completed successfully (2.1 GB)
+2026-11-07T10:16:19.772+01:00 10.0.7.5 <29>Nov  7 10:16:19 db-01 systemd[1008]: Started Daily apt download activities.
+2026-11-07T10:16:20.914+01:00 10.0.4.21 <36>Nov  7 10:16:20 web-01 sshd[1044]: Failed password for invalid user admin from 203.0.113.7 port 40112 ssh2
+2026-11-07T10:16:21.557+01:00 10.0.4.22 <11>Nov  7 10:16:21 web-02 nginx[8932]: connect() failed (111: Connection refused) while connecting to upstream
+2026-11-07T10:16:22.693+01:00 10.0.4.21 <30>Nov  7 10:16:22 web-01 cron[7825]: (root) CMD (/usr/local/bin/rotate-logs)
+2026-11-07T10:16:25.110+01:00 127.0.0.1 <14>1 2026-11-07T10:16:25.110Z mac-mini backupd 7648 ID6 [meta seq="43"] Backup completed successfully (2.1 GB)
+2026-11-07T10:16:25.857+01:00 10.0.4.21 <14>Nov  7 10:16:25 web-01 nginx[1606]: GET /api/orders 200 12ms
+2026-11-07T10:16:27.428+01:00 10.0.7.5 <14>Nov  7 10:16:27 db-01 postgres[723]: checkpoint complete: wrote 1532 buffers (9.4%)
+2026-11-07T10:16:28.229+01:00 10.0.4.21 <30>Nov  7 10:16:28 web-01 cron[5745]: (root) CMD (/usr/local/bin/rotate-logs)
+2026-11-07T10:16:29.102+01:00 127.0.0.1 <14>Nov  7 10:16:29 mac-mini backupd[1571]: Backup completed successfully (2.1 GB)

@@ -27,6 +27,10 @@ import { WorkspaceService } from '../workspace/workspace.service';
               <!-- A filter tab (prompt 013): it filters the tab to its left further. -->
               <span class="chain" aria-hidden="true">↳</span>
             }
+            @if (session.isSource && session.viewId === 0) {
+              <!-- A source without a file (prompt 016): received, not read from a file. -->
+              <span class="src" role="img" aria-label="Quelle" title="Empfangen (Spool)">⇣</span>
+            }
             <app-session-marks [session]="session" />
             {{ session.tabLabel() }}
           </button>
@@ -60,6 +64,14 @@ import { WorkspaceService } from '../workspace/workspace.service';
       (click)="merge.emit()"
     >
       Zusammenführen …
+    </button>
+    <button
+      type="button"
+      class="open"
+      title="Syslog über UDP/TCP empfangen (⌘/Strg+⇧+L)"
+      (click)="openSource.emit()"
+    >
+      Quelle …
     </button>
     @if (sessions.sessions().length) {
       <button
@@ -103,6 +115,9 @@ import { WorkspaceService } from '../workspace/workspace.service';
     .chain {
       color: var(--text-dim);
     }
+    .src {
+      color: var(--accent);
+    }
     .tab.active {
       background: var(--bg-panel);
       color: var(--text);
@@ -136,4 +151,5 @@ export class TabsComponent {
   readonly openFile = output<void>();
   readonly openPath = output<void>();
   readonly merge = output<void>();
+  readonly openSource = output<void>();
 }

@@ -9,6 +9,7 @@ import {
   SearchQuery,
   SessionInfo,
   SessionUpdate,
+  SourceDescriptor,
   SourceInfo,
   Status,
 } from '../../core/log/log.models';
@@ -88,6 +89,11 @@ export class SessionState {
   readonly sourceLabels: readonly string[];
   /** Tooltip of the tab: the path, or the files of a merge. */
   readonly title: string;
+  /** A source without a file (prompt 016): the tab shows its label, `path` is its spool. */
+  readonly source: SourceDescriptor | null;
+  readonly isSource: boolean;
+  /** The spool stays when the tab closes; shared by the tabs of the source. */
+  readonly keepSpool: WritableSignal<boolean>;
   /** Visible sources of a merge (bit = source index). */
   readonly sourceMask = signal(ALL_SOURCES);
 
@@ -283,7 +289,14 @@ export class SessionState {
     this.fileName = this.isMerge ? mergeTitle(this.sources.length) : info.fileName;
     this.mergeKey = this.isMerge ? mergeKey(this.sources.map((s) => s.path)) : null;
     this.sourceLabels = sourceLabels(this.sources.map((s) => s.fileName));
-    this.title = this.isMerge ? this.sources.map((s) => s.path).join('\n') : info.path;
+    this.source = info.source ?? null;
+    this.isSource = this.source !== null;
+    this.keepSpool = view ? view.parent.keepSpool : signal(this.source?.keep ?? false);
+    this.title = this.isMerge
+      ? this.sources.map((s) => s.path).join('\n')
+      : this.source
+        ? `${this.source.label}\nSpool: ${info.path}`
+        : info.path;
     this.suggestedProfileId = info.suggestedProfileId;
     this.cache = new PageCache((start, count) =>
       this.api.getLines(this.sessionId, 'filtered', start, count, this.viewId),

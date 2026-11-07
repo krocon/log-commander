@@ -114,6 +114,16 @@ Like <code>tail -f</code> with a GUI: millions of lines, instant filters, no wai
   Bookmarks and notes are anchored by line, byte offset and a hash of the line, so they are found again after lines
   were inserted before them; what is not found is listed and kept. A workspace from someone else is checked field by
   field and never runs anything; dashboards are not part of it.
+- **Syslog receiver** – „Quelle …“ in the tab bar, the start screen, File → Open Source… or `Cmd/Ctrl+Shift+L`:
+  receive syslog over UDP (RFC 3164 and 5424) and TCP (RFC 6587: octet counting and newline framing; no TLS) and
+  watch it like a file, with everything a file has (filters, search, freeze, columns, timeline, dashboard, export,
+  merge with a log file by time). Each message becomes one line: time of receipt, sender, the message as received;
+  it is escaped so it stays one unambiguous line (`\\` for a backslash, `\n`, `\r`, `\xNN` for control characters and
+  broken bytes, `\u{XXXX}` for C1 controls, bidi marks and line/paragraph separators); messages over 64 KB are cut and
+  marked. The priority gives the level. The tab shows „⇣ Syslog :5514“, the status bar the state and counters
+  (received, dropped, cut, refused), the spool's path in its tooltip, „Spool behalten“ and „Speichern unter …“.
+  Freeze holds the view while receiving goes on. Sources are remembered (without secrets) and saved in workspaces.
+  See [security](#receiving-syslog-safely) below.
 - **Share** – right click „Als Markdown kopieren“ or „Als Jira kopieren“: file, lines, time span and filter as a head,
   the selected lines as a code block, the notes as a list, up to 64 KB (for more there is the export).
 - **Search** – filter or highlight, regular expressions, case sensitivity, jump between matches.
@@ -134,7 +144,37 @@ Like <code>tail -f</code> with a GUI: millions of lines, instant filters, no wai
 | ![Dashboard](docs/screenshots/dashboard.png) | ![Dashboard with SQL and schema](docs/screenshots/dashboard-sql.png) |
 | ![Overview ruler on a busy log](docs/screenshots/ruler-dense.png) | ![The same in the light theme](docs/screenshots/ruler-dense-light.png) |
 | ![Filter tabs: a chain of filters](docs/screenshots/drilldown.png) | |
+| ![Received syslog](docs/screenshots/syslog.png) | ![Opening a syslog source](docs/screenshots/source-dialog.png) |
 | ![Timeline with an outage and a marked window](docs/screenshots/timeline.png) | ![Timeline in the light theme](docs/screenshots/timeline-light.png) |
+
+## Receiving syslog safely
+
+A syslog listener takes data from the network. Log Commander keeps it small and visible:
+
+- **Only this computer by default:** `127.0.0.1`, port 5514. Listening on all interfaces (`0.0.0.0`, `::`) or another
+  address needs an explicit tick in the dialog, which warns that other computers can then reach the port. Without a
+  sender filter it accepts whatever reaches it; the optional filter takes addresses and networks (`10.0.0.0/8`,
+  `fd00::/8`). A workspace never starts a source that listens beyond this computer.
+- **Port 514** needs administrator or root rights; the dialog says so, and a port in use is reported with its number.
+  Point the sender (or a local forwarder such as rsyslog) at 5514 instead.
+- **Firewall:** listening on `127.0.0.1` asks nothing. The first time the app listens on another address, macOS asks
+  „Allow incoming network connections?“ (for an unsigned development build again after each rebuild) and Windows
+  Defender Firewall asks for the network types. Declining leaves the port reachable from this computer only.
+- **The sender filter is no authentication** for UDP: sender addresses can be forged.
+- **Bounded:** at most 64 KB per message, 64 TCP connections (8 per sender; idle ones close after 120 s, a message
+  not finished within 30 s ends its connection, at the limit the longest idle one makes room), 8 sources at a time,
+  32 MB waiting for the disk; when the disk cannot keep
+  up, messages are dropped and counted instead of filling memory. The spool (a file in the app's cache folder) is
+  at most 2 GB per source (settings), split into files of 256 MB; beyond it the oldest file is deleted and the view
+  starts over. Closing the tab stops the listener and deletes the spool, unless „Spool behalten“ is ticked (then it
+  moves to `spool/kept/` in the cache folder; the settings show their size and delete them). Spool folders and files
+  are readable by your user only (Unix).
+- **Nothing is sent back** (no replies, no amplification), no host names are looked up, and the text of messages is
+  never interpreted as markup.
+
+Measured with `cargo test --release --test syslog_integration -- --ignored --nocapture measure_`: 50,000 and 100,000
+messages per second over UDP without loss, a single sender pushing 120,000 per second without loss, about 0.1 s from
+receipt to the index.
 
 ## Install
 
@@ -152,6 +192,7 @@ log-commander /var/log/app.log /var/log/other.log
 | `Cmd/Ctrl+O` | Open a file |
 | `Cmd/Ctrl+Shift+O` | Type or paste a path to open (`~` works) |
 | `Cmd/Ctrl+Shift+M` | Merge files into one tab, sorted by time |
+| `Cmd/Ctrl+Shift+L` | Open a source: receive syslog over UDP/TCP |
 | `End`, `F` | Go to the end and follow |
 | `Space` | Pause or resume following |
 | `P` | Freeze: hold or resume reading the file of this tab |

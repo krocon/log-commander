@@ -1681,6 +1681,99 @@
     window.__lcDialogPaths = undefined;
     if ($('[role=alert]')?.textContent.trim()) throw new Error(`error shown: ${$('[role=alert]').textContent}`);
 
+    // ---- Prompt 016: a syslog source on a random port, messages arrive with levels, closing deletes the spool.
+    const srcDialog = () => $('app-source-dialog dialog');
+    const setSrcField = (selector, value) => {
+      const el = $(selector);
+      el.value = value;
+      el.dispatchEvent(new Event(el.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true }));
+    };
+    press('l', { metaKey: true, ctrlKey: true, shiftKey: true });
+    await waitFor('„Quelle öffnen“ with Cmd/Ctrl+Shift+L', () => srcDialog()?.open);
+    await waitFor(
+      'the source listens on this computer only by default',
+      () => $('#source-address').value === '127.0.0.1' && $('#source-port').value === '5514' && !$('#source-start').disabled,
+    );
+    setSrcField('#source-address', '0.0.0.0');
+    await waitFor(
+      'all interfaces: warning shown, start only after the explicit choice',
+      () => $('#source-remote-warning')?.textContent.includes('andere Rechner') && $('#source-start').disabled,
+    );
+    $('#source-allow-remote').checked = true;
+    $('#source-allow-remote').dispatchEvent(new Event('change', { bubbles: true }));
+    await waitFor('chosen explicitly: start possible', () => !$('#source-start').disabled);
+    setSrcField('#source-address', '127.0.0.1');
+    await waitFor('back on loopback: no warning', () => !$('#source-remote-warning'));
+    setSrcField('#source-port', '514');
+    await waitFor('port 514 tells about the rights it needs', () =>
+      $('#source-port-note').textContent.includes('Root-Rechte'),
+    );
+    let srcPort = 0;
+    for (let attempt = 0; attempt < 5 && !srcPort; attempt++) {
+      const candidate = 20000 + Math.floor(Math.random() * 30000);
+      setSrcField('#source-port', String(candidate));
+      await sleep(50);
+      click($('#source-start'));
+      const start = Date.now();
+      while (Date.now() - start < 5000) {
+        if (!srcDialog()) {
+          srcPort = candidate;
+          break;
+        }
+        if (srcDialog().querySelector('[role=alert]')?.textContent.includes('Port belegt')) break;
+        await sleep(30);
+      }
+    }
+    if (!srcPort) throw new Error('no free port for the syslog source');
+    const srcLabel = `Syslog :${srcPort}`;
+    await waitFor('the tab shows the source, not the spool', () => {
+      const tab = tabs().find((t) => t.textContent.includes(srcLabel));
+      return tab && tab.querySelector('.src') && !tab.textContent.includes('spool.log');
+    });
+    await waitFor('status bar: listening, nothing received yet', () =>
+      status().includes('Lauscht') && status().includes('0 empfangen'),
+    );
+    const spoolPath = $('app-status-bar .path').title.replace(/^Spool: /, '');
+    if (!spoolPath.endsWith('spool.log')) throw new Error(`no spool path in the title: ${spoolPath}`);
+    await report('PASS spool path in the title of the status bar');
+    await act(`expectspool ${spoolPath}`);
+    await act(`syslog ${srcPort} 300`);
+    await waitFor('301 messages received and shown', () => status().includes('301 empfangen'), 20000);
+    await waitFor(
+      'levels from the priority: 101 ERROR (one multi-line), 100 WARN, 100 INFO',
+      () => count('ERROR') === 101 && count('WARN') === 100 && count('INFO') === 100,
+      20000,
+    );
+    let srcId = null;
+    for (let id = 1; id < 40 && srcId === null; id++) {
+      const stats = await invoke('get_stats', { sessionId: id }).catch(() => null);
+      if (stats?.sourceStatus) srcId = id;
+    }
+    const [lastSrcLine] = await invoke('get_lines', { sessionId: srcId, view: 'all', start: 300, count: 1 });
+    if (!lastSrcLine?.text.endsWith('multi line\\nsecond line') || lastSrcLine.isContinuation) {
+      throw new Error(`multi-line message not one line: ${lastSrcLine?.text}`);
+    }
+    await report('PASS the multi-line message is one line with \\n');
+    // The same port for UDP and TCP again: in use, said in the dialog with the port.
+    press('l', { metaKey: true, ctrlKey: true, shiftKey: true });
+    await waitFor('dialog again', () => srcDialog()?.open);
+    click($('input[name=protocol][value=both]'));
+    setSrcField('#source-port', String(srcPort));
+    await sleep(50);
+    click($('#source-start'));
+    await waitFor('port in use: error with the port, no crash', () =>
+      srcDialog()?.querySelector('[role=alert]')?.textContent.includes(String(srcPort)),
+    );
+    srcDialog().close();
+    await waitFor('dialog closed', () => !srcDialog());
+    const srcTab = () => tabs().find((t) => t.textContent.includes(srcLabel));
+    click(srcTab());
+    click(srcTab().closest('.tab').querySelector('.close'));
+    await waitFor('the source tab is closed', () => !srcTab());
+    await act(`expectspool ${spoolPath}`.replace('expectspool', 'expectnospool'));
+    await sleep(500);
+    if ($('[role=alert]')?.textContent.trim()) throw new Error(`error shown: ${$('[role=alert]').textContent}`);
+
     await report('DONE');
   } catch (e) {
     await report(`FAIL ${e.message}`);

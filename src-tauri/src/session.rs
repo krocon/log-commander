@@ -24,6 +24,8 @@ use crate::overview::{level_bit, LevelSummary};
 use crate::platform::open_shared;
 use crate::profile::{Profile, ProfileRegistry};
 use crate::report_db::{ReportDb, ReportLimits};
+use crate::sources::{RunningSource, SourceConfig, SourceMonitor};
+use crate::spool::{SpoolConfig, SpoolRoot};
 use crate::tail::Tailer;
 use crate::timeline::{TimeMark, TimelineQuery};
 use crate::timestamp::TimestampParser;
@@ -70,6 +72,15 @@ pub struct OpenOptions {
     pub report_dir: Option<PathBuf>,
     /// Limits of dashboard queries (tests use smaller ones).
     pub report_limits: ReportLimits,
+    /// The source writing the file (prompt 016): its state goes into every update.
+    pub source: Option<Arc<SourceMonitor>>,
+    /// Files kept after rotations before the session starts over (a spool deletes its oldest file
+    /// at its own limit, which must not be one the session still holds).
+    pub max_segments: usize,
+    /// The profile is fixed from the start (a source knows its format), no suggestion replaces it.
+    pub fixed_profile: bool,
+    /// Files of a merge that are spools of running sources, with their file limit (prompt 016).
+    pub segment_limits: Vec<(crate::platform::FileId, usize)>,
 }
 
 impl Default for OpenOptions {
@@ -79,6 +90,10 @@ impl Default for OpenOptions {
             rules: Arc::default(),
             report_dir: None,
             report_limits: ReportLimits::default(),
+            source: None,
+            max_segments: crate::tail::MAX_SEGMENTS,
+            fixed_profile: false,
+            segment_limits: Vec::new(),
         }
     }
 }
@@ -207,6 +222,10 @@ pub struct SessionData {
     pub rule_book: Arc<RuleBook>,
     /// The dashboard database (prompt 012), written by its builder.
     pub report: Option<ReportStatus>,
+    /// The source writing the file (prompt 016).
+    pub source: Option<Arc<SourceMonitor>>,
+    /// Files kept after rotations before the session starts over (`OpenOptions::max_segments`).
+    pub max_segments: usize,
 }
 
 impl SessionData {
@@ -247,6 +266,8 @@ impl SessionData {
             resort_requested: false,
             rule_book: Arc::clone(&options.rules),
             report: None,
+            source: options.source.clone(),
+            max_segments: options.max_segments.clamp(1, crate::tail::MAX_SEGMENTS),
         }
     }
 
@@ -376,6 +397,7 @@ impl SessionData {
             frozen_stale: self.frozen_stale,
             sources: self.sources.clone(),
             report: self.report.clone(),
+            source_status: self.source.as_ref().map(|s| s.status()),
         }
     }
 
@@ -506,6 +528,7 @@ fn differs(sent: &SessionUpdate, next: &SessionUpdate) -> bool {
         pending_bytes: 0,
         sources: Vec::new(),
         report: None,
+        source_status: None,
         ..u.clone()
     };
     quiet(sent) != quiet(next)
@@ -579,6 +602,9 @@ pub struct LogSession {
     report: Mutex<Option<Arc<ReportDb>>>,
     report_dir: Option<PathBuf>,
     report_limits: ReportLimits,
+    /// A source without a file (prompt 016) writing the spool this session follows. Last, so it
+    /// is dropped (stopped, spool deleted) after the worker let go of the files.
+    source: Option<RunningSource>,
 }
 
 impl LogSession {
@@ -603,7 +629,11 @@ impl LogSession {
         let report_dir = options.report_dir.clone();
         let report_limits = options.report_limits;
         let detector = Arc::new(default_profile.detector()?);
-        let data = SessionData::new(detector, default_profile.id.clone(), meta.len(), &options);
+        let mut data = SessionData::new(detector, default_profile.id.clone(), meta.len(), &options);
+        if options.fixed_profile {
+            data.profile_auto = false;
+            data.chosen_profile = Some(default_profile.clone());
+        }
         let (wake, wake_rx): (Sender<()>, Receiver<()>) = channel();
         let shared = Arc::new(Shared::new(data, wake, sink));
         let mut tailer = Tailer::new(Arc::clone(&shared), path.clone(), file)
@@ -626,7 +656,44 @@ impl LogSession {
             report: Mutex::new(None),
             report_dir,
             report_limits,
+            source: None,
         })
+    }
+
+    /// Hands the running source to the session (prompt 016): its state reaches the updates, and
+    /// closing the session stops it.
+    pub fn attach_source(&mut self, source: RunningSource) {
+        let weak = Arc::downgrade(&self.shared);
+        source.monitor().set_notify(Box::new(move || {
+            if let Some(shared) = weak.upgrade() {
+                shared.data.write().dirty = true;
+                shared.wake();
+            }
+        }));
+        self.shared.data.write().dirty = true;
+        self.source = Some(source);
+    }
+
+    /// Stops receiving; the spool is deleted (unless kept) when the session is dropped.
+    pub fn stop_source(&self) {
+        if let Some(source) = &self.source {
+            source.stop();
+        }
+    }
+
+    /// Keep the spool when the tab closes, or not.
+    pub fn set_spool_keep(&self, keep: bool) -> AppResult<()> {
+        let source = self
+            .source
+            .as_ref()
+            .ok_or_else(|| AppError::new(ErrorCode::InvalidSource, "this tab has no source"))?;
+        source.set_keep(keep);
+        self.shared.data.write().dirty = true;
+        Ok(())
+    }
+
+    pub fn source(&self) -> Option<&RunningSource> {
+        self.source.as_ref()
     }
 
     /// Opens several files as one session, their entries in time order (prompt 006). Checks every
@@ -637,7 +704,8 @@ impl LogSession {
         options: OpenOptions,
         sink: UpdateSink,
     ) -> AppResult<Self> {
-        let worker = MergeWorker::prepare(sources)?;
+        let mut worker = MergeWorker::prepare(sources)?;
+        worker.limit_segments(&options.segment_limits);
         let report_dir = options.report_dir.clone();
         let report_limits = options.report_limits;
         let first = worker.first_profile();
@@ -671,6 +739,7 @@ impl LogSession {
             report: Mutex::new(None),
             report_dir,
             report_limits,
+            source: None,
         })
     }
 
@@ -680,7 +749,10 @@ impl LogSession {
 
     pub fn info(&self) -> SessionInfo {
         let data = self.shared.data.read();
-        let file_name = if self.is_merge() {
+        let source = self.source.as_ref().map(RunningSource::descriptor);
+        let file_name = if let Some(source) = &source {
+            source.label.clone()
+        } else if self.is_merge() {
             self.sources
                 .iter()
                 .map(|s| s.file_name.as_str())
@@ -701,6 +773,7 @@ impl LogSession {
                 .unwrap_or_else(|| data.profile_id.clone()),
             update: data.update(),
             sources: self.sources.clone(),
+            source,
         }
     }
 
@@ -2183,6 +2256,10 @@ pub struct SessionManager {
     rules: Arc<RuleBook>,
     /// Folder for dashboard databases (prompt 012), set at start.
     report_dir: RwLock<Option<PathBuf>>,
+    /// Folders for spools of sources (prompt 016), set at start.
+    spool_root: RwLock<Option<Arc<SpoolRoot>>>,
+    /// Total bytes per spool (settings).
+    spool_limit: AtomicU64,
 }
 
 impl Default for SessionManager {
@@ -2193,6 +2270,8 @@ impl Default for SessionManager {
             profiles: RwLock::new(ProfileRegistry::default()),
             rules: Arc::default(),
             report_dir: RwLock::new(None),
+            spool_root: RwLock::new(None),
+            spool_limit: AtomicU64::new(crate::spool::DEFAULT_MAX_TOTAL),
         }
     }
 }
@@ -2226,6 +2305,17 @@ impl SessionManager {
         if options.report_dir.is_none() {
             options.report_dir = self.report_dir.read().clone();
         }
+        // A spool in the merge (prompt 016) keeps no more files than its source does.
+        options.segment_limits = self
+            .sessions
+            .read()
+            .values()
+            .filter_map(|s| {
+                let source = s.source()?;
+                let id = crate::platform::file_id(&source.spool_path()).ok()?;
+                Some((id, source.max_files()))
+            })
+            .collect();
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let session = LogSession::open_merged(id, sources, options, sink)?;
         let info = session.info();
@@ -2235,9 +2325,107 @@ impl SessionManager {
 
     pub fn close(&self, id: u64) -> AppResult<()> {
         let session = self.sessions.write().remove(&id);
-        session
-            .map(drop)
-            .ok_or_else(|| AppError::unknown_session(id))
+        let session = session.ok_or_else(|| AppError::unknown_session(id))?;
+        // The port is free at once, even if a query or an export still holds the session.
+        session.stop_source();
+        drop(session);
+        Ok(())
+    }
+
+    /// Closes every session (the app quits): sources stop, spools are deleted or kept.
+    pub fn close_all(&self) {
+        let sessions: Vec<_> = self.sessions.write().drain().map(|(_, s)| s).collect();
+        for session in &sessions {
+            session.stop_source();
+        }
+        drop(sessions);
+    }
+
+    /// Where spools go (prompt 016), set at start.
+    pub fn set_spool_root(&self, root: Arc<SpoolRoot>) {
+        *self.spool_root.write() = Some(root);
+    }
+
+    /// Total bytes per spool for sources opened from now on.
+    pub fn set_spool_limit(&self, bytes: u64) {
+        self.spool_limit.store(
+            bytes.clamp(crate::spool::MIN_MAX_TOTAL, crate::spool::MAX_MAX_TOTAL),
+            Ordering::SeqCst,
+        );
+    }
+
+    /// Starts a source (prompt 016): checks it (binds its port), creates its spool, then opens a
+    /// session on the spool like on a file. Errors (port in use …) come back before anything stays.
+    pub fn open_source(
+        &self,
+        config: SourceConfig,
+        keep: bool,
+        options: OpenOptions,
+        sink: UpdateSink,
+    ) -> AppResult<SessionInfo> {
+        let root = self.spool_root()?;
+        let source = crate::sources::prepare(config)?;
+        let spool = SpoolConfig::new(root.new_dir(), self.spool_limit.load(Ordering::SeqCst));
+        self.open_prepared_source(source, spool, keep, options, sink)
+    }
+
+    /// The spool folders, once set.
+    pub fn spool_root(&self) -> AppResult<Arc<SpoolRoot>> {
+        self.spool_root
+            .read()
+            .clone()
+            .ok_or_else(|| AppError::new(ErrorCode::Io, "no cache folder for the spool"))
+    }
+
+    /// `open_source` with a prepared source and given spool sizes (tests use small ones).
+    pub fn open_prepared_source(
+        &self,
+        source: Box<dyn crate::sources::Source>,
+        spool: SpoolConfig,
+        keep: bool,
+        mut options: OpenOptions,
+        sink: UpdateSink,
+    ) -> AppResult<SessionInfo> {
+        let root = self.spool_root()?;
+        // Disk use of all sources together stays bounded: at most MAX_SOURCES spools at a time.
+        let running = self
+            .sessions
+            .read()
+            .values()
+            .filter(|s| s.source().is_some())
+            .count();
+        if running >= crate::sources::MAX_SOURCES {
+            return Err(AppError::new(
+                ErrorCode::TooLarge,
+                format!(
+                    "at most {} sources at a time, close one first",
+                    crate::sources::MAX_SOURCES
+                ),
+            ));
+        }
+        let max_files = spool.max_files;
+        let running = RunningSource::start(source, spool, keep, Some(root.kept.clone()))?;
+        let profile = match running.profile() {
+            Some(id) => self.profiles.read().find(id)?,
+            None => self.profiles.read().find(crate::profile::GENERIC_PROFILE)?,
+        };
+        options.rules = Arc::clone(&self.rules);
+        if options.report_dir.is_none() {
+            options.report_dir = self.report_dir.read().clone();
+        }
+        options.source = Some(Arc::clone(running.monitor()));
+        options.max_segments = max_files;
+        options.fixed_profile = running.profile().is_some();
+        // The spool keeps everything; rotation only splits it into files.
+        options.keep_on_rotate = true;
+        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+        let path = running.spool_path();
+        // On an error `running` is dropped: stopped, spool deleted.
+        let mut session = LogSession::open(id, &path, options, &profile, sink)?;
+        session.attach_source(running);
+        let info = session.info();
+        self.sessions.write().insert(id, Arc::new(session));
+        Ok(info)
     }
 
     /// The folder of this process for dashboard databases (prompt 012).

@@ -10,12 +10,15 @@ import {
   viewChild,
 } from '@angular/core';
 import { LogApi } from '../../core/log/log-api';
+import { formatBytes } from '../../shared/format';
 import { Profile } from '../../core/log/log.models';
 import { describeError, toAppError } from '../../core/errors/app-error';
 import {
   COLOR_TOKENS,
   MAX_FONT_SIZE,
   MIN_FONT_SIZE,
+  MAX_SPOOL_LIMIT_MB,
+  MIN_SPOOL_LIMIT_MB,
   ThemeChoice,
 } from '../../core/settings/settings.models';
 import { SettingsService } from '../../core/settings/settings.service';
@@ -87,6 +90,27 @@ import { draftFromInference, parseLayouts } from '../sessions/format-logic';
             <input type="checkbox" [checked]="settings().keepOnRotate" (change)="setKeep($event)" />
             Bei Rotation alte Zeilen behalten (sonst neu beginnen)
           </label>
+          <label>
+            Spool je Quelle (MB)
+            <input
+              type="number"
+              [min]="minSpool"
+              [max]="maxSpool"
+              step="64"
+              [value]="settings().spoolLimitMb"
+              title="Syslog und andere Quellen ohne Datei schreiben in eine Spool-Datei im Cache-Ordner; darüber fällt die älteste Datei weg und die Anzeige beginnt neu. Gilt für neu geöffnete Quellen."
+              (change)="setSpoolLimit($event)"
+            />
+          </label>
+          <!-- Security review of 016 (L4): kept spools stay until deleted here. -->
+          <p class="kept" role="status">
+            @if (kept(); as k) {
+              Behaltene Spools: {{ k.count }} ({{ keptSize() }})
+              <button type="button" [disabled]="!k.count" (click)="deleteKept()">Löschen</button>
+            } @else {
+              Behaltene Spools: –
+            }
+          </p>
         </section>
 
         <section>
@@ -198,6 +222,13 @@ import { draftFromInference, parseLayouts } from '../sessions/format-logic';
     </dialog>
   `,
   styles: `
+    .kept {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      margin: 6px 0 0;
+      font-size: 12px;
+    }
     dialog {
       width: min(620px, calc(100vw - 32px));
       max-height: calc(100vh - 48px);
@@ -345,6 +376,8 @@ export class SettingsDialogComponent implements OnInit {
   protected readonly colorTokens = COLOR_TOKENS;
   protected readonly minFont = MIN_FONT_SIZE;
   protected readonly maxFont = MAX_FONT_SIZE;
+  protected readonly minSpool = MIN_SPOOL_LIMIT_MB;
+  protected readonly maxSpool = MAX_SPOOL_LIMIT_MB;
   protected readonly profileError = signal<string | null>(null);
   protected readonly draft = signal({ id: '', name: '', pattern: '', mapping: '', layouts: '' });
   protected readonly preview = signal<{
@@ -363,6 +396,28 @@ export class SettingsDialogComponent implements OnInit {
 
   ngOnInit(): void {
     this.dialog().nativeElement.showModal();
+    void this.loadKept();
+  }
+
+  /** Spools kept after their tab closed (prompt 016), in the cache folder until deleted here. */
+  protected readonly kept = signal<{ count: number; bytes: number } | null>(null);
+  protected readonly keptSize = computed(() => formatBytes(this.kept()?.bytes ?? 0));
+
+  private async loadKept(): Promise<void> {
+    try {
+      this.kept.set(await this.api.keptSpools());
+    } catch {
+      this.kept.set(null);
+    }
+  }
+
+  protected async deleteKept(): Promise<void> {
+    try {
+      await this.api.deleteKeptSpools();
+    } catch (e) {
+      this.sessions.showError(toAppError(e));
+    }
+    await this.loadKept();
   }
 
   protected setTheme(event: Event): void {
@@ -380,6 +435,12 @@ export class SettingsDialogComponent implements OnInit {
     event: Event,
   ): void {
     this.settingsService.update({ [key]: (event.target as HTMLInputElement).checked });
+  }
+
+  /** Prompt 016: total size of a spool; the backend takes it when the next source opens. */
+  protected setSpoolLimit(event: Event): void {
+    const mb = Number((event.target as HTMLInputElement).value);
+    if (Number.isFinite(mb)) this.settingsService.update({ spoolLimitMb: mb });
   }
 
   protected setKeep(event: Event): void {

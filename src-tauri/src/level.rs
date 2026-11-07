@@ -242,10 +242,32 @@ fn detect_json(line: &[u8]) -> Option<Level> {
 }
 
 fn detect_syslog_pri(line: &[u8]) -> Option<Level> {
+    let line = skip_received_prefix(line).unwrap_or(line);
     let rest = line.strip_prefix(b"<")?;
     let end = rest.iter().take(4).position(|b| *b == b'>')?;
     let pri: u16 = std::str::from_utf8(&rest[..end]).ok()?.parse().ok()?;
     (pri <= 191).then(|| Level::from_syslog_severity((pri % 8) as u8))
+}
+
+/// A spool line of received syslog (prompt 016) starts with the time of receipt and the sender:
+/// `2026-11-07T10:15:30.123+01:00 10.0.0.5 <34>…`. Returns what follows them.
+fn skip_received_prefix(line: &[u8]) -> Option<&[u8]> {
+    let digits = |r: std::ops::Range<usize>| {
+        line.get(r)
+            .is_some_and(|b| b.iter().all(u8::is_ascii_digit))
+    };
+    if !(digits(0..4)
+        && line.get(4) == Some(&b'-')
+        && line.get(10) == Some(&b'T')
+        && digits(11..13))
+    {
+        return None;
+    }
+    let time_end = memchr::memchr(b' ', &line[..line.len().min(40)])?;
+    let rest = &line[time_end + 1..];
+    // An IPv6 address has at most 45 characters.
+    let sender_end = memchr::memchr(b' ', &rest[..rest.len().min(48)])?;
+    Some(&rest[sender_end + 1..])
 }
 
 #[cfg(test)]
@@ -459,6 +481,30 @@ mod tests {
             detector.detect(b"Jan 15 10:00:00 host app[12]: error: disk full"),
             Some(Level::Error)
         );
+        // Received syslog (prompt 016): the priority behind time of receipt and sender.
+        let received = profile("syslog-received");
+        assert_eq!(
+            received.detect(b"2026-11-07T10:15:30.123+01:00 127.0.0.1 <34>Oct 11 22:14:15 h su: x"),
+            Some(Level::Fatal)
+        );
+        assert_eq!(
+            received.detect(b"2026-11-07T10:15:30.123Z ::1 <11>1 - h a - - - x"),
+            Some(Level::Error)
+        );
+        assert_eq!(
+            received.detect(b"2026-11-07T10:15:30.123Z 10.0.0.1 warning without pri"),
+            Some(Level::Warn)
+        );
+        // No priority, no word: still an entry, not a continuation.
+        let mut prev = PrevLine::default();
+        received.classify(b"2026-11-07T10:15:30.123Z 10.0.0.1 <11>x", &mut prev);
+        assert_eq!(
+            received.classify(b"2026-11-07T10:15:31.000Z 10.0.0.1 plain", &mut prev),
+            (Level::Unknown, false)
+        );
+        assert_eq!(skip_received_prefix(b"2026-11-07T10:15:30"), None);
+        assert_eq!(skip_received_prefix(b"x"), None);
+        assert_eq!(skip_received_prefix(b""), None);
         // A syslog line without any level is an entry of its own.
         assert_eq!(
             detector.detect(b"Jan 15 10:00:00 host sshd[12]: Accepted key"),
