@@ -24,6 +24,10 @@ export interface Settings {
   columnMode: ColumnMode;
   /** Per `ColumnSet.profileId`: two logs of the same format look the same. */
   columnLayouts: Record<string, ColumnLayout>;
+  /** Detail panel below the log (prompt 004): shown, its height in px, wrapping long lines. */
+  detailVisible: boolean;
+  detailHeight: number;
+  detailWrap: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -36,11 +40,17 @@ export const DEFAULT_SETTINGS: Settings = {
   recentFiles: [],
   columnMode: 'columns',
   columnLayouts: {},
+  detailVisible: false,
+  detailHeight: 240,
+  detailWrap: true,
 };
 
 export const MIN_FONT_SIZE = 9;
 export const MAX_FONT_SIZE = 24;
 export const MAX_RECENT_FILES = 15;
+/** Bounds of a stored detail height; the layout limits it further to the window. */
+export const MIN_DETAIL_HEIGHT = 80;
+export const MAX_DETAIL_HEIGHT = 4000;
 
 /** The tokens the colour settings offer. */
 export const COLOR_TOKENS: readonly { token: string; level: Level | null; label: string }[] = [
@@ -78,6 +88,13 @@ export function mergeSettings(saved: Partial<Settings> | null | undefined): Sett
     merged.columnMode = DEFAULT_SETTINGS.columnMode;
   }
   merged.columnLayouts = mergeColumnLayouts(merged.columnLayouts);
+  if (typeof merged.detailVisible !== 'boolean')
+    merged.detailVisible = DEFAULT_SETTINGS.detailVisible;
+  if (typeof merged.detailWrap !== 'boolean') merged.detailWrap = DEFAULT_SETTINGS.detailWrap;
+  const height = Number(merged.detailHeight);
+  merged.detailHeight = Number.isFinite(height)
+    ? Math.round(Math.min(MAX_DETAIL_HEIGHT, Math.max(MIN_DETAIL_HEIGHT, height)))
+    : DEFAULT_SETTINGS.detailHeight;
   return merged;
 }
 

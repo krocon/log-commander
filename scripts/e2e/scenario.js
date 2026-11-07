@@ -325,6 +325,85 @@
     });
     await waitFor('copy text is the entry', () => text.startsWith('2026-01-15T10:00:07') && text.includes('... 12 more'));
 
+    // Detail panel (prompt 004): double click opens it with the entry the first click chose, a click changes
+    // it, D closes it, the splitter moves by keyboard (synthetic pointers cannot be captured).
+    const panel = () => $('app-detail-panel');
+    const panelBody = () => panel()?.querySelector('pre.body');
+    const panelText = () => panelBody()?.textContent ?? '';
+    const panelRange = () => panel()?.querySelector('.range')?.textContent.trim();
+    const panelButton = (label) => [...panel().querySelectorAll('button')].find((b) => b.textContent.trim() === label);
+    const splitter = () => $('app-splitter');
+    const panelHeight = () => panel().getBoundingClientRect().height;
+    const detailButton = () => button('▤');
+    await waitFor('detail panel is closed at first', () => !panel() && detailButton().getAttribute('aria-pressed') === 'false');
+    rows()
+      .find((r) => r.textContent.includes('Caused by'))
+      .dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
+    await waitFor('double click opens the panel with the selected entry', () =>
+      panelText().startsWith('2026-01-15T10:00:07') && detailButton().getAttribute('aria-pressed') === 'true',
+    );
+    await waitFor('the stack trace is complete in the panel', () =>
+      panelText().split('\n').length === 8 &&
+      panelText().includes('Caused by: java.net.SocketTimeoutException') &&
+      panelText().endsWith('... 12 more') &&
+      panel().querySelector('.badge')?.textContent.trim() === 'ERROR' &&
+      panelRange() === `Zeile ${first + 1}–${first + 8}`,
+    );
+    await waitFor('the selected rows stay in view above the panel', () =>
+      inView($$('.lt-cell.selected')).length === 8 &&
+      Math.max(...$$('.lt-cell.selected').map((c) => c.getBoundingClientRect().bottom)) <=
+        splitter().getBoundingClientRect().top + 1,
+    );
+    click(rows().find((r) => r.textContent.includes('Starting ShopApplication')));
+    await waitFor('a single click changes the entry in the open panel', () =>
+      panelText() === rowTexts()[0] && panelRange() === 'Zeile 1',
+    );
+    const logTop = topLine();
+    panelBody().focus();
+    for (const key of ['ArrowDown', 'PageDown', 'End']) {
+      panelBody().dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+    }
+    await sleep(200);
+    await waitFor('keys in the panel leave the log alone', () => topLine() === logTop && status().includes('Pausiert'));
+    const separator = splitter();
+    await waitFor('the splitter is a focusable separator', () =>
+      separator.getAttribute('role') === 'separator' &&
+      separator.getAttribute('aria-orientation') === 'horizontal' &&
+      separator.tabIndex === 0 &&
+      Math.abs(Number(separator.getAttribute('aria-valuenow')) - panelHeight()) < 1,
+    );
+    const height0 = panelHeight();
+    separator.focus();
+    separator.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true, cancelable: true }));
+    await waitFor('ArrowUp on the splitter makes the panel taller', () =>
+      Math.abs(panelHeight() - (height0 + 10)) < 1 &&
+      Math.abs(Number(separator.getAttribute('aria-valuenow')) - (height0 + 10)) < 1,
+    );
+    separator.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', shiftKey: true, bubbles: true, cancelable: true }));
+    await waitFor('Shift+ArrowDown makes it 100 px lower', () => Math.abs(panelHeight() - (height0 - 90)) < 1);
+    await waitFor('the splitter keys leave the log alone', () => topLine() === logTop);
+    separator.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
+    await waitFor('double click on the splitter restores the default height', () => Math.abs(panelHeight() - 240) < 1);
+    const jsonLine =
+      '2026-01-15T10:00:30.000+01:00  INFO 4711 --- [t] a.B : payload {"id":9007199254740993,"items":[{"sku":"A-1","qty":2}],"ok":true}';
+    await act(`append ${jsonLine}`);
+    press('End');
+    await waitFor('the JSON line arrived', () => rowTexts().some((t) => t.includes('payload {')));
+    click(rows().find((r) => r.textContent.includes('payload {')));
+    await waitFor('JSON is formatted in the panel, the big id exact', () =>
+      panelText().includes('payload {\n  "id": 9007199254740993,\n  "items": [\n    {\n      "sku": "A-1",') &&
+      panel().querySelector('.f-key')?.textContent === '"id"',
+    );
+    click(panelButton('Roh'));
+    await waitFor('the raw view shows the line as written', () =>
+      panelText() === jsonLine && panelButton('Roh').getAttribute('aria-pressed') === 'true',
+    );
+    click(panelButton('Formatiert'));
+    await waitFor('formatted again', () => panelText().includes('\n  "ok": true\n}'));
+    press('d');
+    await waitFor('D closes the panel', () => !panel() && detailButton().getAttribute('aria-pressed') === 'false');
+    press('Escape');
+
     // Font size.
     const fontOf = () => getComputedStyle($('app-log-table-view .lt-table')).fontSize;
     const before = fontOf();
@@ -436,14 +515,24 @@
     };
     loop.port2.postMessage(0);
     await waitFor('rows are loaded before the burst', () => !$('.lt-cell.loading'));
+    // The detail panel stays on its entry while the tail runs (prompt 004).
+    click(rows()[0]);
+    press('d');
+    await waitFor('panel open on the first row in view', () => panelText() && panelRange() && status().includes('Live'));
+    const heldEntry = panelText();
+    const heldRange = panelRange();
     let tail = watchTail();
     await act('rate 10000 3');
     await waitFor('all lines of the burst arrived', () => lineCount() === linesBefore + 30000, 20000);
     await waitFor('follow kept up', () => rowTexts().some((t) => t.includes('rate line 30000')));
+    await waitFor('the panel kept its entry during the burst', () => panelText() === heldEntry && panelRange() === heldRange);
     measuring = false;
     await report(`PASS worst event loop lag during 3 s at 10k lines/s: ${Math.round(worstLag)} ms (${turns} turns)`);
     if (worstLag > 250) throw new Error(`event loop blocked for ${Math.round(worstLag)} ms`);
     await tail.check('all levels');
+    press('d');
+    press('Escape');
+    await waitFor('panel closed after the burst', () => !panel());
 
     // The same with only errors on screen, where a row without its colour stands out most. The custom
     // profile from above would call every line FATAL.

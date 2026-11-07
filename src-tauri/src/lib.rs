@@ -70,6 +70,7 @@ pub fn run() {
             commands::find_prev,
             commands::get_position,
             commands::get_entry_range,
+            commands::get_entry,
             commands::copy_lines,
             commands::set_keep_on_rotate,
             commands::set_frozen,

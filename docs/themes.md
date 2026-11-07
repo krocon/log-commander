@@ -51,6 +51,10 @@ läuft als erster Schritt in `npm run check`.
 
 - Kopfzeile und Spaltenmenü der Spaltenansicht (Prompt 009) nutzen vorhandene Tokens (`--text` auf `--bg-panel`,
   `--bg-raised` und `--bg-hover`, `--text-dim` auf `--bg-raised`, Linien `--border`); diese Paare stehen in `PAIRS`.
+- Das Detail-Panel (Prompt 004) nutzt ebenfalls nur vorhandene Tokens: Text und Inline-Tokens (`--tok-*`) auf `--bg-app`,
+  JSON/XML-Farben aus denselben `--tok-*` (Schlüssel und Tags `--tok-url`, Strings `--tok-string`, Zahlen `--tok-number`,
+  Attribute und Literale `--tok-id`, Satzzeichen und Kommentare `--tok-time`), Kopf auf `--bg-panel`, Level-Badge aus den
+  Level-Paaren. Die Paare auf `--bg-app` stehen in `PAIRS`; der Splitter hat keinen Text.
 - Wird ein neues Vordergrund/Hintergrund-Paar gebraucht, gehört es in `PAIRS`. Ein Token ohne Paar wird nicht geprüft.
 - Grafische Elemente ohne Text (Ruler-Marken, Diagramme) brauchen 3:1 zum Hintergrund. Die Prüfung kennt das noch nicht. Wer
   solche Tokens einführt, ergänzt eine zweite Liste mit Schwelle 3.

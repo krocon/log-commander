@@ -12,7 +12,8 @@ use crate::indexer::{
 };
 use crate::level::{Level, LevelDetector, PrevLine};
 use crate::model::{
-    ColumnSet, EntryRange, FilterInfo, FindHit, LogLine, SessionInfo, SessionUpdate, Status,
+    ColumnSet, EntryDetail, EntryRange, FilterInfo, FindHit, LogLine, SessionInfo, SessionUpdate,
+    Status,
 };
 use crate::platform::open_shared;
 use crate::profile::{Profile, ProfileRegistry};
@@ -587,44 +588,109 @@ impl LogSession {
     /// First and last line of the entry (head + continuations) a line belongs to.
     pub fn entry_range(&self, line: u32) -> EntryRange {
         let data = self.shared.data.read();
-        let entries = &data.index.entries;
-        let line = (line as usize).min(entries.len().saturating_sub(1));
-        let mut first = line;
-        let lower = line.saturating_sub(MAX_ENTRY_WALK);
-        while first > lower && entries.get(first).is_some_and(LineEntry::is_continuation) {
-            first -= 1;
-        }
-        let mut last = line;
-        let upper = (line + MAX_ENTRY_WALK).min(entries.len());
-        while last + 1 < upper && entries[last + 1].is_continuation() {
-            last += 1;
-        }
+        let (first, last) = range_of(&data.index.entries, line as usize);
         EntryRange {
             first: first as u32,
             last: last as u32,
         }
     }
 
+    /// The whole entry of a line straight from the index (no filter), for the detail panel. The
+    /// text stops after `MAX_DETAIL_BYTES` at a character boundary; a file that shrank meanwhile
+    /// gives shorter text, which is no error.
+    pub fn get_entry(&self, line: u32) -> AppResult<EntryDetail> {
+        let (first, lines, segments) = {
+            let data = self.shared.data.read();
+            let entries = &data.index.entries;
+            if entries.is_empty() {
+                return Err(AppError::new(ErrorCode::NotFound, "the log has no lines"));
+            }
+            let (first, last) = range_of(entries, line as usize);
+            (first, entries[first..=last].to_vec(), data.segments.clone())
+        };
+        let mut reader = LineReader::new(segments, SCAN_BLOCK);
+        let mut text = String::new();
+        let mut truncated = false;
+        for (i, entry) in lines.iter().enumerate() {
+            if i > 0 {
+                if text.len() >= MAX_DETAIL_BYTES {
+                    truncated = true;
+                    break;
+                }
+                text.push('\n');
+            }
+            let room = MAX_DETAIL_BYTES - text.len();
+            // Two raw bytes give at least one byte of text in every encoding, a few more cover the
+            // last character.
+            let limit = room.saturating_mul(2).saturating_add(4).min(MAX_LINE_COPY);
+            let (raw, encoding) = reader
+                .raw(entry, limit)
+                .map_err(|e| AppError::from_io(&e, &self.path))?;
+            let cut = raw.len() < entry.len as usize && raw.len() == limit;
+            let decoded = display_text(raw, encoding);
+            if decoded.len() > room {
+                text.push_str(&decoded[..floor_char_boundary(&decoded, room)]);
+                truncated = true;
+                break;
+            }
+            text.push_str(&decoded);
+            if cut {
+                // Fewer characters than bytes (ANSI removed): the line still went on.
+                truncated = true;
+                break;
+            }
+        }
+        let first_entry = lines[0];
+        Ok(EntryDetail {
+            first: first as u32,
+            last: (first + lines.len() - 1) as u32,
+            level: first_entry.level(),
+            line_count: lines.len() as u32,
+            total_bytes: lines.iter().map(|e| u64::from(e.len)).sum(),
+            text,
+            truncated,
+        })
+    }
+
     /// The visible lines between two line numbers as text, for the clipboard.
     pub fn copy_lines(&self, first: u32, last: u32) -> AppResult<String> {
+        self.copy(true, first, last)
+    }
+
+    /// All lines between two line numbers, whatever the filter hides (an entry of the detail panel).
+    pub fn copy_all_lines(&self, first: u32, last: u32) -> AppResult<String> {
+        self.copy(false, first, last)
+    }
+
+    fn copy(&self, filtered: bool, first: u32, last: u32) -> AppResult<String> {
         let (lines, segments) = {
             let data = self.shared.data.read();
             let total = data.index.len();
-            let from = data.filter.position_of(first, total);
-            let to = data
-                .filter
-                .position_of(last.saturating_add(1), total)
-                .min(data.filter.len(total));
+            let (from, to) = if filtered {
+                let from = data.filter.position_of(first, total);
+                let to = data
+                    .filter
+                    .position_of(last.saturating_add(1), total)
+                    .min(data.filter.len(total));
+                (from, to)
+            } else {
+                let to = (last as usize).saturating_add(1).min(total);
+                ((first as usize).min(to), to)
+            };
             if to.saturating_sub(from) > MAX_COPY_LINES {
                 return Err(AppError::new(
                     ErrorCode::TooLarge,
                     format!("more than {MAX_COPY_LINES} lines selected"),
                 ));
             }
-            let lines = (from..to)
-                .filter_map(|p| data.filter.line_at(p, total))
-                .map(|line| data.index.entries[line as usize])
-                .collect::<Vec<_>>();
+            let lines = if filtered {
+                (from..to)
+                    .filter_map(|p| data.filter.line_at(p, total))
+                    .map(|line| data.index.entries[line as usize])
+                    .collect::<Vec<_>>()
+            } else {
+                data.index.entries[from..to].to_vec()
+            };
             (lines, data.segments.clone())
         };
         let mut reader = LineReader::new(segments, SCAN_BLOCK);
@@ -647,6 +713,34 @@ impl LogSession {
 }
 
 const MAX_LINE_COPY: usize = crate::indexer::MAX_LINE_BYTES;
+/// Text of an entry in the detail panel; copying is not limited by it.
+pub const MAX_DETAIL_BYTES: usize = 1024 * 1024;
+
+/// First and last index of the entry a line belongs to, at most `MAX_ENTRY_WALK` lines each way.
+/// `entries` must not be empty.
+fn range_of(entries: &[LineEntry], line: usize) -> (usize, usize) {
+    let line = line.min(entries.len().saturating_sub(1));
+    let mut first = line;
+    let lower = line.saturating_sub(MAX_ENTRY_WALK);
+    while first > lower && entries.get(first).is_some_and(LineEntry::is_continuation) {
+        first -= 1;
+    }
+    let mut last = line;
+    let upper = (line + MAX_ENTRY_WALK).min(entries.len());
+    while last + 1 < upper && entries[last + 1].is_continuation() {
+        last += 1;
+    }
+    (first, last)
+}
+
+/// The largest index at or below `index` that starts a character.
+fn floor_char_boundary(text: &str, index: usize) -> usize {
+    let mut index = index.min(text.len());
+    while !text.is_char_boundary(index) {
+        index -= 1;
+    }
+    index
+}
 
 impl Drop for LogSession {
     fn drop(&mut self) {

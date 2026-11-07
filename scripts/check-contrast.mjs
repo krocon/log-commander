@@ -30,6 +30,13 @@ const PAIRS = [
   ['tok-id', 'lv-info-bg'],
   ['tok-url', 'lv-info-bg'],
   ['accent-text', 'accent'],
+  // Detail panel (prompt 004): text, inline tokens and JSON/XML colours on its background.
+  ['text-dim', 'bg-app'],
+  ['tok-time', 'bg-app'],
+  ['tok-number', 'bg-app'],
+  ['tok-string', 'bg-app'],
+  ['tok-id', 'bg-app'],
+  ['tok-url', 'bg-app'],
 ];
 
 function luminance(hex) {

@@ -108,6 +108,20 @@ export interface EntryRange {
   last: number;
 }
 
+/** The whole entry of a line (detail panel): head and continuations, without filter. */
+export interface EntryDetail {
+  first: number;
+  last: number;
+  level: Level;
+  lineCount: number;
+  /** Bytes of the lines in the file, without line ends. */
+  totalBytes: number;
+  /** The lines joined by `\n`, at most 1 MiB. */
+  text: string;
+  /** The text stops early; copying returns everything. */
+  truncated: boolean;
+}
+
 export interface Profile {
   id: string;
   name: string;

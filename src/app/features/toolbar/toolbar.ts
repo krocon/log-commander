@@ -63,6 +63,20 @@ const SEARCH_DEBOUNCE_MS = 200;
       >
         ▦ Spalten
       </button>
+      <button
+        type="button"
+        class="detail-toggle"
+        aria-controls="detail-panel"
+        [attr.aria-pressed]="settings().detailVisible"
+        [title]="
+          settings().detailVisible
+            ? 'Detail-Panel ausblenden (D)'
+            : 'Detail-Panel: ganzer Eintrag der gewählten Zeile (D, Doppelklick auf eine Zeile)'
+        "
+        (click)="toggleDetail()"
+      >
+        ▤ Detail
+      </button>
     </div>
     <div class="group chips" role="group" [hidden]="!s" aria-label="Log-Level">
       @for (level of visibleLevels(); track level) {
@@ -255,7 +269,8 @@ const SEARCH_DEBOUNCE_MS = 200;
       --chip: var(--lv-error-edge);
     }
     .freeze,
-    .columns {
+    .columns,
+    .detail-toggle {
       white-space: nowrap;
     }
     .find-message {
@@ -362,6 +377,10 @@ export class ToolbarComponent implements OnInit, OnDestroy {
   protected toggleFreeze(): void {
     const session = this.session();
     if (session) void this.sessions.toggleFreeze(session);
+  }
+
+  protected toggleDetail(): void {
+    this.settingsService.update({ detailVisible: !this.settings().detailVisible });
   }
 
   protected toggleColumns(): void {
