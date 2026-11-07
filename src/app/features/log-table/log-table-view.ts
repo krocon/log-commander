@@ -218,7 +218,7 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
   });
 
   /** What the table drew last; a hard repaint only when count or height changed. */
-  private drawn = { count: -1, rowH: -1, top: -1, left: -1, height: -1 };
+  private drawn = { count: -1, rowH: -1, top: -1, left: -1, height: -1, width: -1 };
   private expectedScrollTop = -1;
   /** The table `draw()` placed last; a new one reports its first scroll position before it is drawn. */
   private drawnConfig: TableConfig | null = null;
@@ -299,7 +299,7 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
         api.setHeaderVisible(this.config().area.columnView);
         api.setColumnVisible(COL_NUMBER, lineNumbers);
         // A new table (or gutter) draws everything at its place again.
-        this.drawn = { count: -1, rowH: -1, top: -1, left: -1, height: -1 };
+        this.drawn = { count: -1, rowH: -1, top: -1, left: -1, height: -1, width: -1 };
         this.filled = null;
         this.redraw.update((r) => r + 1);
       });
@@ -475,11 +475,13 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
     this.heldForSelection = false;
     const start = performance.now();
     const area = this.config().area;
-    // A new height (window, detail panel) as well: the table follows its host only after a 500 ms debounce.
+    // A new height or width (window, detail panel, sidebar) as well: the table follows its host only
+    // after a 500 ms debounce.
     let hard =
       state.count !== this.drawn.count ||
       state.rowH !== this.drawn.rowH ||
-      this.viewportH() !== this.drawn.height;
+      this.viewportH() !== this.drawn.height ||
+      this.viewportW() !== this.drawn.width;
     const gutter = this.lineNumbers() ? this.gutterWidth() : 0;
     const free = Math.max(0, this.viewportW() - gutter);
     let spanMoved = false;
@@ -523,6 +525,7 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
       top,
       left: state.left,
       height: this.viewportH(),
+      width: this.viewportW(),
     };
     this.measureText(area);
     this.drawTimes.push(performance.now() - start);
@@ -897,8 +900,8 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
   private readonly onKey = (event: KeyboardEvent): void => {
     const target = event.target as HTMLElement;
     if (target.closest?.('input, textarea, select, dialog, .lt-colmenu')) return;
-    // The detail panel and splitters scroll and move with their own keys; only D closes the panel there.
-    const inPanel = !!target.closest?.('.detail, [role=separator]');
+    // The detail panel, splitters, sidebar tree and statistics have their own keys; only D closes the panel there.
+    const inPanel = !!target.closest?.('.detail, [role=separator], [role=tree], .stats');
     if (inPanel && event.key !== 'd' && event.key !== 'D') return;
     const session = this.session();
     const mod = event.metaKey || event.ctrlKey;

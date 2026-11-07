@@ -132,6 +132,9 @@ impl FilterSpec {
     }
 }
 
+/// Lines per level, indexed by `Level as usize`.
+pub type Counts = [u64; Level::COUNT];
+
 /// The incrementally maintained list. `None` as list = identity.
 #[derive(Debug, Default)]
 pub struct FilteredLines {
@@ -140,6 +143,14 @@ pub struct FilteredLines {
     entry_start: u32,
     entry_included: bool,
     next_line: u32,
+    /// Lines in `list` per level (the "Ansicht" column of the statistics).
+    counts: Counts,
+    /// Level of the line at `entry_start`.
+    entry_head: Level,
+    /// Lines after `entry_start` not taken yet: a later hit in the entry brings them in.
+    entry_counts: Counts,
+    /// `entry_counts` is not all zero.
+    entry_pending: bool,
 }
 
 /// State to restore when a provisional last line is withdrawn.
@@ -149,6 +160,10 @@ pub struct FilterCheckpoint {
     entry_included: bool,
     next_line: u32,
     list_len: usize,
+    counts: Counts,
+    entry_head: Level,
+    entry_counts: Counts,
+    entry_pending: bool,
 }
 
 impl FilteredLines {
@@ -160,6 +175,10 @@ impl FilteredLines {
             entry_start: 0,
             entry_included: false,
             next_line: 0,
+            counts: [0; Level::COUNT],
+            entry_head: Level::Unknown,
+            entry_counts: [0; Level::COUNT],
+            entry_pending: false,
         }
     }
 
@@ -178,6 +197,15 @@ impl FilteredLines {
 
     pub fn is_identity(&self) -> bool {
         self.list.is_none()
+    }
+
+    /// Visible lines per level; for the identity that is `all`, the counts of the index.
+    pub fn counts(&self, all: &Counts) -> Counts {
+        if self.list.is_some() {
+            self.counts
+        } else {
+            *all
+        }
     }
 
     /// The line number at a position in the view.
@@ -203,6 +231,10 @@ impl FilteredLines {
         self.entry_start = 0;
         self.entry_included = false;
         self.next_line = 0;
+        self.counts = [0; Level::COUNT];
+        self.entry_head = Level::Unknown;
+        self.entry_counts = [0; Level::COUNT];
+        self.entry_pending = false;
     }
 
     pub fn checkpoint(&self) -> FilterCheckpoint {
@@ -211,6 +243,10 @@ impl FilteredLines {
             entry_included: self.entry_included,
             next_line: self.next_line,
             list_len: self.list.as_ref().map_or(0, Vec::len),
+            counts: self.counts,
+            entry_head: self.entry_head,
+            entry_counts: self.entry_counts,
+            entry_pending: self.entry_pending,
         }
     }
 
@@ -218,6 +254,10 @@ impl FilteredLines {
         self.entry_start = checkpoint.entry_start;
         self.entry_included = checkpoint.entry_included;
         self.next_line = checkpoint.next_line;
+        self.counts = checkpoint.counts;
+        self.entry_head = checkpoint.entry_head;
+        self.entry_counts = checkpoint.entry_counts;
+        self.entry_pending = checkpoint.entry_pending;
         if let Some(list) = &mut self.list {
             list.truncate(checkpoint.list_len);
         }
@@ -235,26 +275,46 @@ impl FilteredLines {
         let Some(list) = &mut self.list else {
             return;
         };
-        if !continuation {
+        // The first line has no entry before it to continue: it is a head.
+        if !continuation || line == 0 {
             self.entry_start = line;
             self.entry_included = false;
-        }
-        if self.entry_included {
+            self.entry_head = level;
+            if self.entry_pending {
+                self.entry_counts = [0; Level::COUNT];
+                self.entry_pending = false;
+            }
+        } else if self.entry_included {
             list.push(line);
+            self.counts[level as usize] += 1;
             return;
         }
-        if !self.spec.levels.contains(level) {
+        if !self.spec.levels.contains(level)
+            || self.spec.filtering_matcher().is_some() && !text_matches()
+        {
+            // A later hit in the entry brings this line in; its level is gone by then. The head
+            // keeps its level apart, so a single-line entry costs no array.
+            if line != self.entry_start {
+                self.entry_counts[level as usize] += 1;
+                self.entry_pending = true;
+            }
             return;
         }
-        let matched = match self.spec.filtering_matcher() {
-            None => true,
-            Some(_) => text_matches(),
-        };
-        if matched {
-            // A hit in a stack trace also brings in the head of the entry and the lines between.
-            list.extend(self.entry_start..=line);
-            self.entry_included = true;
+        // A hit in a stack trace also brings in the head of the entry and the lines between.
+        if line != self.entry_start {
+            list.extend(self.entry_start..line);
+            self.counts[self.entry_head as usize] += 1;
+            if self.entry_pending {
+                for (count, pending) in self.counts.iter_mut().zip(self.entry_counts) {
+                    *count += pending;
+                }
+                self.entry_counts = [0; Level::COUNT];
+                self.entry_pending = false;
+            }
         }
+        list.push(line);
+        self.counts[level as usize] += 1;
+        self.entry_included = true;
     }
 
     /// Number of lines taken so far.
@@ -291,6 +351,135 @@ mod tests {
                 matcher.is_some_and(|m| m.is_match(text))
             });
         }
+    }
+
+    fn view_counts(filter: &FilteredLines) -> Counts {
+        filter.counts(&[0; Level::COUNT])
+    }
+
+    fn count_of(counts: &Counts, level: Level) -> u64 {
+        counts[level as usize]
+    }
+
+    #[test]
+    fn level_filter_counts_the_shown_lines_per_level() {
+        let mut filter = FilteredLines::new(spec(&[Level::Error, Level::Warn], None));
+        feed(
+            &mut filter,
+            &[
+                (Level::Info, false, "a"),
+                (Level::Error, false, "b"),
+                (Level::Warn, false, "c"),
+                (Level::Error, false, "d"),
+                (Level::Debug, false, "e"),
+            ],
+        );
+        let counts = view_counts(&filter);
+        assert_eq!(count_of(&counts, Level::Error), 2);
+        assert_eq!(count_of(&counts, Level::Warn), 1);
+        assert_eq!(count_of(&counts, Level::Info), 0);
+        assert_eq!(counts.iter().sum::<u64>(), filter.len(5) as u64);
+    }
+
+    #[test]
+    fn a_hit_in_the_stack_trace_counts_head_and_lines_between() {
+        // Continuations of other levels (as a detector might give them) keep their own level.
+        let mut filter = FilteredLines::new(spec(&Level::ALL, Some("needle")));
+        feed(
+            &mut filter,
+            &[
+                (Level::Info, false, "before"),
+                (Level::Error, false, "head"),
+                (Level::Error, true, "  at a"),
+                (Level::Unknown, true, "  plain"),
+                (Level::Error, true, "  at needle"),
+                (Level::Error, true, "  at b"),
+                (Level::Info, false, "after"),
+            ],
+        );
+        let counts = view_counts(&filter);
+        assert_eq!(count_of(&counts, Level::Error), 4);
+        assert_eq!(count_of(&counts, Level::Unknown), 1);
+        assert_eq!(count_of(&counts, Level::Info), 0);
+        assert_eq!(counts.iter().sum::<u64>(), filter.len(7) as u64);
+    }
+
+    #[test]
+    fn lines_of_an_entry_without_a_hit_are_not_counted() {
+        let mut filter = FilteredLines::new(spec(&[Level::Error], Some("needle")));
+        feed(
+            &mut filter,
+            &[
+                (Level::Error, false, "head"),
+                (Level::Error, true, "  at a"),
+                (Level::Error, false, "needle"),
+            ],
+        );
+        let counts = view_counts(&filter);
+        assert_eq!(count_of(&counts, Level::Error), 1);
+        assert_eq!(filter.len(3), 1);
+    }
+
+    #[test]
+    fn checkpoint_restores_the_counts_of_a_withdrawn_line() {
+        let mut filter = FilteredLines::new(spec(&[Level::Error], Some("needle")));
+        feed(
+            &mut filter,
+            &[
+                (Level::Error, false, "head"),
+                (Level::Error, true, "  at a"),
+            ],
+        );
+        let checkpoint = filter.checkpoint();
+        // A provisional continuation with the hit brings in the whole entry ...
+        feed(&mut filter, &[(Level::Error, true, "  at needle")]);
+        assert_eq!(count_of(&view_counts(&filter), Level::Error), 3);
+        // ... withdrawn, the entry is pending again, and the real line counts it once.
+        filter.restore(checkpoint);
+        assert_eq!(count_of(&view_counts(&filter), Level::Error), 0);
+        feed(&mut filter, &[(Level::Error, true, "  at needle, longer")]);
+        assert_eq!(count_of(&view_counts(&filter), Level::Error), 3);
+        assert_eq!(filter.len(3), 3);
+    }
+
+    #[test]
+    fn a_file_starting_with_continuations_counts_each_line_once() {
+        let mut filter = FilteredLines::new(spec(&Level::ALL, Some("needle")));
+        feed(
+            &mut filter,
+            &[
+                (Level::Warn, true, "  orphan"),
+                (Level::Debug, true, "  more"),
+                (Level::Debug, true, "  needle"),
+            ],
+        );
+        let counts = view_counts(&filter);
+        assert_eq!(filter.len(3), 3);
+        assert_eq!(
+            (
+                count_of(&counts, Level::Warn),
+                count_of(&counts, Level::Debug)
+            ),
+            (1, 2)
+        );
+    }
+
+    #[test]
+    fn clear_resets_the_counts() {
+        let mut filter = FilteredLines::new(spec(&[Level::Error], None));
+        feed(&mut filter, &[(Level::Error, false, "a")]);
+        filter.clear();
+        assert_eq!(view_counts(&filter), [0; Level::COUNT]);
+        feed(&mut filter, &[(Level::Error, false, "b")]);
+        assert_eq!(count_of(&view_counts(&filter), Level::Error), 1);
+    }
+
+    #[test]
+    fn identity_counts_are_the_counts_of_all_lines() {
+        let mut filter = FilteredLines::new(FilterSpec::default());
+        feed(&mut filter, &[(Level::Info, false, "a")]);
+        let all = [1, 2, 3, 4, 5, 6, 7];
+        assert_eq!(filter.counts(&all), all);
     }
 
     #[test]

@@ -65,10 +65,14 @@
   function update(session) {
     const counts = Object.fromEntries(LEVELS.map((l) => [l, 0]));
     for (const line of session.lines) counts[line.level]++;
+    const shown = visible(session);
+    const viewCounts = Object.fromEntries(LEVELS.map((l) => [l, 0]));
+    for (const line of shown) viewCounts[line.level]++;
     return {
       totalLines: session.lines.length,
-      filteredLines: visible(session).length,
+      filteredLines: shown.length,
       counts,
+      viewCounts,
       status: { kind: 'live' },
       fileSize: session.size,
       epoch: 0,

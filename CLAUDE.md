@@ -39,6 +39,8 @@ src/                         Angular 22 (zoneless, Signals, OnPush, Standalone)
                              (Spaltenansicht: Layout, Breiten, Spannen), column-menu (Spaltenmenü)
   app/features/detail/       DetailPanel (Prompt 004), detail-format (JSON/XML-Tokenizer), detail-logic (Layout, Neuladen)
   app/shared/splitter.ts     wiederverwendbarer Splitter (Pointer Events, Tastatur), Rechnung in splitter-logic.ts
+  app/features/sidebar/      Seitenleiste: Baum (tree-model, log-tree), Statistik (stats-panel), Layout (sidebar-logic/-state)
+  app/shared/                splitter (wiederverwendbar), session-marks (Tabs und Baum), format
   app/features/toolbar|statusbar|tabs|start|settings/   UI
 src-tauri/src/               Rust; alles außer commands.rs und lib.rs ist frei von Tauri
   session.rs                 LogSession, Abfragen, Hintergrund-Jobs (Filter, Level neu), SessionManager
@@ -94,6 +96,11 @@ samples/                     Beispiel-Logs
   geladen wird nur bei anderer Zeile/Tab/`epoch`/`viewGeneration` oder wenn der Eintrag am Dateiende liegt, höchstens
   ein Aufruf zugleich. Sichtbarkeit, Höhe und Umbruch global in den Settings, gespeichert am Ende des Ziehens.
   `onKey` der Tabelle nimmt `.detail` und `[role=separator]` aus (außer `D`).
+- **Seitenleiste (Prompt 005):** Der Baum ist eine zweite Sicht auf `SessionState`, keine eigene Quelle; Knoten rechnet
+  `tree-model.ts`. Die Spalte „Ansicht“ kommt als `view_counts` aus `FilteredLines` (Zähler je Level, für Einträge mit
+  Treffer im Stacktrace ein Zwischenzähler seit `entry_start`, beides im `FilterCheckpoint`). `applyPreset` setzt
+  Level, Suche und Modus und startet **einen** Filter-Job; `presetRevision` verwirft eine noch laufende Eingabe in der
+  Suche. Unter 900 px blendet sich die Leiste aus, ohne die Einstellung zu ändern (`sidebar-logic.ts`).
 - **Fortsetzungszeilen:** Einrücken, `at `, `Caused by:`, `Traceback`, `... ` wird vor der Regex geprüft
   (`at com.acme.error.Handler` ist keine ERROR-Zeile). Zeilen mit Zeitstempel ohne Level beginnen einen neuen Eintrag.
 - **Felder beim Ausliefern, nicht beim Indexieren (Prompt 008):** `get_lines` zerlegt jede Zeile mit dem `FieldParser`

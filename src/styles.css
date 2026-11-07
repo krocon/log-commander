@@ -47,6 +47,10 @@
   --tok-string: #9ccc8a;
   --tok-id: #d9a6d2;
   --tok-url: #7fb4f5;
+
+  --splitter-bg: #2a303a;
+  --splitter-grip: #8d97a6;
+  --splitter-hover-bg: #3a4250;
 }
 /* @end */
 
@@ -93,6 +97,10 @@
   --tok-string: #2c6e1d;
   --tok-id: #8d2f83;
   --tok-url: #1a5fc4;
+
+  --splitter-bg: #dce0e6;
+  --splitter-grip: #5f6b7a;
+  --splitter-hover-bg: #c8ced7;
 }
 /* @end */
 

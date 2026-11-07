@@ -76,6 +76,17 @@ await dark.waitForTimeout(150);
 await dark.click('button:text-is("ERROR+")');
 await dark.waitForTimeout(150);
 await shot(dark, 'filter-error');
+
+// Sidebar (prompt 005): the active filter in the tree, saved under a name, the statistics below.
+await dark.fill('input[type=search]', 'order');
+await dark.waitForTimeout(350);
+await dark.click('app-log-tree button.save');
+await dark.fill('app-log-tree input.name', 'Fehler zu Bestellungen');
+await dark.keyboard.press('Enter');
+await dark.waitForTimeout(200);
+await shot(dark, 'sidebar');
+await dark.fill('input[type=search]', '');
+await dark.waitForTimeout(350);
 await dark.click('button:text-is("Alle")');
 
 await dark.selectOption('select[aria-label=Suchmodus]', 'highlight');

@@ -44,6 +44,8 @@ export class SessionState {
   readonly query = signal<SearchQuery>({ text: '', isRegex: false, caseSensitive: false });
   readonly searchMode = signal<SearchMode>('filter');
   readonly searchError = signal<string | null>(null);
+  /** Counts filters set from outside the toolbar (sidebar); a search still being typed yields to them. */
+  readonly presetRevision = signal(0);
 
   readonly scroll = signal<ScrollPos>({ top: 0, subPx: 0 });
   readonly scrollLeft = signal(0);

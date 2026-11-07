@@ -15,6 +15,9 @@ Architektur verbaut nichts davon.
   Reihenfolge ziehen, Spaltenmenü (`Shift+F10`, Rechtsklick), Layout je Profil, Rohansicht per `T`
 - Detail-Panel (Prompt 004): ganzer Eintrag der gewählten Zeile ohne Filter und Kürzung, JSON/XML formatiert (eigener
   Tokenizer), Höhe per Splitter, `D` und Doppelklick
+- Seitenleiste (Prompt 005): Baum mit Dateien, aktivem Filter (`×` entfernt) und gespeicherten Filtern, Statistik
+  „Alle“/„Ansicht“ je Level samt Dateigröße, Klick filtert; Breite und Teilung per Splitter, `Cmd/Ctrl+B`, unter
+  900 px automatisch ausgeblendet. Splitter mit sichtbarem Griff
 
 ## Offen
 
@@ -25,6 +28,9 @@ beobachten, Remote-Logs über SSH, `stdin`/Pipe-Modus.
 Filtern aus der Kopfzeile (010), fixierte Spalten, eigene Felder aus der Nachricht (011),
 Layout je Quelle beim Merge (006), einklappbare Stacktraces, Zeilenumbruch als Folgezeilen fester Höhe (eine Logzeile belegt
 mehrere Tabellenzeilen; braucht eine Zeilen-zu-Bildschirmzeilen-Liste im Backend, neu je Breite und Schrift).
+
+**Seitenleiste:** verschachtelte Filter als Baum (010), Thread/Logger als Knoten und Statistik-Zeilen (011),
+Zeitfilter (006/014), Tortendiagramme, Lesezeichen und Notizen.
 
 **Filter:** Feld-Filter (Klasse, Thread, Mandant), Query-DSL (`level:ERROR AND NOT "x"`), Zeitfenster, eigene Regex-Marker,
 persistente Lesezeichen und Notizen.

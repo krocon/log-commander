@@ -24,6 +24,9 @@ import { LogTableViewComponent } from './features/log-table/log-table-view';
 import { OpenPathDialogComponent } from './features/open-path/open-path-dialog';
 import { LogSessionService } from './features/sessions/log-session.service';
 import { SettingsDialogComponent } from './features/settings/settings-dialog';
+import { SidebarComponent } from './features/sidebar/sidebar';
+import { SIDEBAR_MIN, sidebarMax, sidebarWidth } from './features/sidebar/sidebar-logic';
+import { SidebarState } from './features/sidebar/sidebar-state';
 import { StartScreenComponent } from './features/start/start-screen';
 import { StatusBarComponent } from './features/statusbar/status-bar';
 import { TabsComponent } from './features/tabs/tabs';
@@ -38,6 +41,7 @@ import { SplitterComponent } from './shared/splitter';
     LogTableViewComponent,
     OpenPathDialogComponent,
     SettingsDialogComponent,
+    SidebarComponent,
     StartScreenComponent,
     SplitterComponent,
     StatusBarComponent,
@@ -49,23 +53,41 @@ import { SplitterComponent } from './shared/splitter';
     <app-toolbar (openSettings)="settingsOpen.set(true)" />
     @if (active(); as session) {
       <div #workspace class="main workspace">
-        <app-log-table-view class="log" [session]="session" />
-        @if (panelH() > 0) {
+        @if (sidebar.shown()) {
+          <app-sidebar id="sidebar" [session]="session" [style.width.px]="sidebarW()" />
           <app-splitter
-            orientation="horizontal"
-            pane="after"
-            label="Höhe des Detail-Panels"
-            title="Höhe ziehen, Pfeiltasten verschieben, Doppelklick: Standardhöhe"
-            controls="detail-panel"
-            [size]="panelH()"
-            [min]="panelMin"
-            [max]="panelMaxH()"
-            [defaultSize]="defaultDetailHeight"
-            (sizeChange)="dragHeight.set($event)"
-            (sizeCommit)="commitHeight($event)"
+            orientation="vertical"
+            pane="before"
+            label="Breite der Seitenleiste"
+            title="Breite ziehen, Pfeiltasten verschieben, Doppelklick: Standardbreite"
+            controls="sidebar"
+            [size]="sidebarW()"
+            [min]="sidebarMin"
+            [max]="sidebarMaxW()"
+            [defaultSize]="defaultSidebarWidth"
+            (sizeChange)="dragWidth.set($event)"
+            (sizeCommit)="commitWidth($event)"
           />
-          <app-detail-panel id="detail-panel" [session]="session" [style.height.px]="panelH()" />
         }
+        <div class="column">
+          <app-log-table-view class="log" [session]="session" />
+          @if (panelH() > 0) {
+            <app-splitter
+              orientation="horizontal"
+              pane="after"
+              label="Höhe des Detail-Panels"
+              title="Höhe ziehen, Pfeiltasten verschieben, Doppelklick: Standardhöhe"
+              controls="detail-panel"
+              [size]="panelH()"
+              [min]="panelMin"
+              [max]="panelMaxH()"
+              [defaultSize]="defaultDetailHeight"
+              (sizeChange)="dragHeight.set($event)"
+              (sizeCommit)="commitHeight($event)"
+            />
+            <app-detail-panel id="detail-panel" [session]="session" [style.height.px]="panelH()" />
+          }
+        </div>
       </div>
     } @else {
       <app-start-screen
@@ -104,6 +126,14 @@ import { SplitterComponent } from './shared/splitter';
       min-height: 0;
     }
     .workspace {
+      display: flex;
+    }
+    app-sidebar {
+      flex: none;
+    }
+    .column {
+      flex: 1 1 0;
+      min-width: 0;
       display: flex;
       flex-direction: column;
     }
@@ -147,6 +177,7 @@ import { SplitterComponent } from './shared/splitter';
 export class App implements OnInit, OnDestroy {
   protected readonly sessions = inject(LogSessionService);
   protected readonly settings = inject(SettingsService);
+  protected readonly sidebar = inject(SidebarState);
 
   protected readonly active = computed(() => this.sessions.active());
   protected readonly settingsOpen = signal(false);
@@ -166,6 +197,15 @@ export class App implements OnInit, OnDestroy {
       ? panelHeight(this.dragHeight() ?? this.settings.settings().detailHeight, this.workspaceH())
       : 0,
   );
+  // Sidebar (prompt 005): the width is stored when a drag ends, like the detail height.
+  protected readonly sidebarMin = SIDEBAR_MIN;
+  protected readonly defaultSidebarWidth = DEFAULT_SETTINGS.sidebarWidth;
+  protected readonly dragWidth = signal<number | null>(null);
+  private readonly workspaceW = signal(0);
+  protected readonly sidebarMaxW = computed(() => sidebarMax(this.workspaceW()));
+  protected readonly sidebarW = computed(() =>
+    sidebarWidth(this.dragWidth() ?? this.settings.settings().sidebarWidth, this.workspaceW()),
+  );
   private workspaceObserver: ResizeObserver | null = null;
   private dialogOpen = false;
   private readonly cleanups: (() => void)[] = [];
@@ -176,8 +216,13 @@ export class App implements OnInit, OnDestroy {
       this.workspaceObserver?.disconnect();
       this.workspaceObserver = null;
       if (!element) return;
-      this.workspaceH.set(element.clientHeight);
-      this.workspaceObserver = new ResizeObserver(() => this.workspaceH.set(element.clientHeight));
+      const measure = () => {
+        this.workspaceH.set(element.clientHeight);
+        this.workspaceW.set(element.clientWidth);
+        this.sidebar.setWidth(element.clientWidth);
+      };
+      measure();
+      this.workspaceObserver = new ResizeObserver(measure);
       this.workspaceObserver.observe(element);
     });
     if (isTauri()) {
@@ -217,6 +262,11 @@ export class App implements OnInit, OnDestroy {
     this.workspaceObserver?.disconnect();
     document.removeEventListener('keydown', this.onKey);
     for (const cleanup of this.cleanups) cleanup();
+  }
+
+  protected commitWidth(width: number): void {
+    this.dragWidth.set(null);
+    this.settings.update({ sidebarWidth: width });
   }
 
   protected commitHeight(height: number): void {
@@ -264,6 +314,9 @@ export class App implements OnInit, OnDestroy {
     } else if (event.key === 'Tab') {
       event.preventDefault();
       this.sessions.cycle(event.shiftKey ? -1 : 1);
+    } else if (key === 'b' && !event.shiftKey && !event.altKey) {
+      event.preventDefault();
+      this.sidebar.toggle();
     } else if (key === ',') {
       event.preventDefault();
       this.settingsOpen.set(true);

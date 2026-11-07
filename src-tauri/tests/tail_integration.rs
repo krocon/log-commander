@@ -1070,3 +1070,187 @@ fn entry_of_a_file_that_shrank_is_shorter_but_no_error() {
     fx.wait("live", |s| s.status == Status::Live);
     assert!(fx.session.get_entry(0).is_err());
 }
+
+// --- Counts of the view (prompt 005) ---
+
+fn view_sum(stats: &SessionUpdate) -> u64 {
+    let c = stats.view_counts;
+    c.unknown + c.trace + c.debug + c.info + c.warn + c.error + c.fatal
+}
+
+fn set_filter_and_wait(fx: &Fixture, levels: &[Level], text: &str) {
+    let query = SearchQuery {
+        text: text.into(),
+        is_regex: false,
+        case_sensitive: false,
+    };
+    let info = fx
+        .session
+        .set_filter(levels, &query, SearchMode::Filter)
+        .unwrap();
+    fx.wait("filter", |s| {
+        !s.filter_pending && s.view_generation == info.view_generation
+    });
+}
+
+#[test]
+fn view_counts_follow_the_filter_the_tail_and_a_filter_change() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("app.log");
+    let mut content = String::new();
+    for i in 0..20_000 {
+        let level = ["INFO", "WARN", "ERROR", "DEBUG"][i % 4];
+        content.push_str(&format!("2024-01-01 {level} line {i} äöü 😀\n"));
+    }
+    fs::write(&path, content).unwrap();
+    let fx = open(&path, true);
+    fx.wait("loaded", |s| s.total_lines == 20_000);
+
+    // Identity: the view is everything.
+    let stats = fx.session.stats();
+    assert_eq!(stats.view_counts, stats.counts);
+    assert_eq!(view_sum(&stats), stats.filtered_lines);
+
+    set_filter_and_wait(&fx, &[Level::Warn, Level::Error], "");
+    let stats = fx.session.stats();
+    assert_eq!(
+        (
+            stats.view_counts.warn,
+            stats.view_counts.error,
+            stats.view_counts.info
+        ),
+        (5_000, 5_000, 0)
+    );
+    assert_eq!(view_sum(&stats), stats.filtered_lines);
+
+    // The tail adds to the counts incrementally.
+    append(&path, "2024-01-01 ERROR more\r\n2024-01-01 INFO quiet\r\n");
+    fx.wait("grown", |s| s.total_lines == 20_002);
+    let stats = fx.session.stats();
+    assert_eq!((stats.view_counts.error, stats.counts.info), (5_001, 5_001));
+    assert_eq!(view_sum(&stats), stats.filtered_lines);
+
+    // Another filter: counts start over with it.
+    set_filter_and_wait(&fx, &Level::ALL, "line 1999");
+    let stats = fx.session.stats();
+    assert_eq!(stats.filtered_lines, 1 + 10);
+    assert_eq!(view_sum(&stats), stats.filtered_lines);
+
+    // Back to everything.
+    set_filter_and_wait(&fx, &Level::ALL, "");
+    let stats = fx.session.stats();
+    assert_eq!(stats.view_counts, stats.counts);
+}
+
+#[test]
+fn view_counts_take_the_whole_entry_of_a_hit_in_a_stack_trace() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("app.log");
+    fs::write(
+        &path,
+        "2024-01-01 INFO start\n\
+         2024-01-01 ERROR failed\n\
+         \tat com.acme.A.run(A.java:1)\n\
+         \tat com.acme.needle.B(B.java:2)\n\
+         Caused by: java.io.IOException\n\
+         2024-01-01 WARN after\n\
+         2024-01-01 ERROR other\n",
+    )
+    .unwrap();
+    let fx = open(&path, true);
+    fx.wait("loaded", |s| s.total_lines == 7);
+
+    set_filter_and_wait(&fx, &Level::ALL, "needle");
+    let stats = fx.session.stats();
+    assert_eq!(stats.filtered_lines, 4);
+    assert_eq!(stats.view_counts.error, 4);
+    assert_eq!(view_sum(&stats), 4);
+
+    // A level the entry does not have: nothing.
+    set_filter_and_wait(&fx, &[Level::Warn], "needle");
+    let stats = fx.session.stats();
+    assert_eq!((stats.filtered_lines, view_sum(&stats)), (0, 0));
+}
+
+#[test]
+fn view_counts_survive_a_withdrawn_provisional_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("app.log");
+    fs::write(&path, "2024-01-01 ERROR head\n\tat a\n").unwrap();
+    let fx = open(&path, true);
+    fx.wait("loaded", |s| s.total_lines == 2);
+    set_filter_and_wait(&fx, &[Level::Error], "needle");
+    assert_eq!(fx.session.stats().filtered_lines, 0);
+
+    // A continuation without end and with the hit: shown provisionally with its whole entry.
+    append(&path, "\tat needle");
+    fx.wait("provisional", |s| {
+        s.total_lines == 3 && s.filtered_lines == 3
+    });
+    assert_eq!(fx.session.stats().view_counts.error, 3);
+
+    // It grows: withdrawn and taken again, counted once.
+    append(&path, " longer\n2024-01-01 ERROR next\n");
+    fx.wait("completed", |s| s.total_lines == 4);
+    let stats = fx.session.stats();
+    assert_eq!(stats.filtered_lines, 3);
+    assert_eq!(stats.view_counts.error, 3);
+    assert_eq!(view_sum(&stats), stats.filtered_lines);
+}
+
+#[test]
+fn view_counts_use_the_new_levels_after_a_profile_change() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("app.log");
+    fs::write(&path, "OOPS one\nMEH two\nOOPS three\n").unwrap();
+    let fx = open(&path, true);
+    fx.wait("loaded", |s| s.total_lines == 3);
+    set_filter_and_wait(&fx, &[Level::Fatal, Level::Unknown], "");
+    assert_eq!(fx.session.stats().view_counts.unknown, 3);
+
+    let profile = Profile {
+        id: "mine".into(),
+        name: "Mine".into(),
+        builtin: false,
+        patterns: vec!["^(?P<level>OOPS|MEH) ".into()],
+        mapping: [
+            ("oops".to_string(), Level::Fatal),
+            ("meh".to_string(), Level::Warn),
+        ]
+        .into(),
+        json: false,
+        syslog_pri: false,
+        head: None,
+        ..Profile::default()
+    };
+    let info = fx.session.set_profile(&profile).unwrap();
+    fx.wait("relevel", |s| {
+        s.view_generation == info.view_generation && !s.filter_pending
+    });
+    let stats = fx.session.stats();
+    assert_eq!(
+        (
+            stats.view_counts.fatal,
+            stats.view_counts.warn,
+            stats.view_counts.unknown
+        ),
+        (2, 0, 0)
+    );
+    assert_eq!(view_sum(&stats), stats.filtered_lines);
+}
+
+#[test]
+fn view_counts_of_an_empty_file_and_after_truncation_are_zero() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("app.log");
+    fs::write(&path, "").unwrap();
+    let fx = open(&path, true);
+    set_filter_and_wait(&fx, &[Level::Error], "");
+    assert_eq!(view_sum(&fx.session.stats()), 0);
+    append(&path, "2024-01-01 ERROR a\n2024-01-01 ERROR b\n");
+    fx.wait("grown", |s| s.view_counts.error == 2);
+    fs::write(&path, "2024-01-01 ERROR c\n").unwrap();
+    fx.wait("truncated", |s| {
+        s.total_lines == 1 && s.view_counts.error == 1
+    });
+}

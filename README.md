@@ -33,6 +33,11 @@ Like <code>tail -f</code> with a GUI: millions of lines, instant filters, no wai
   cut at the screen edge and whatever the filter hides. Embedded JSON or XML is indented and coloured by its own
   tokenizer, so 64-bit ids stay exact and fragments work. Double click a line (or `D`) to open it, click other lines
   to browse, drag or use the arrow keys on the bar above it to change its height.
+- **Sidebar** – left of the log, a tree with the open files (state, new errors, frozen), the active filter of each
+  file (remove a part with `×`) and filters saved under a name (click applies one to the active tab). Below it a
+  statistics table with lines per level for the whole file and for the current view; click a level to show only it,
+  Alt-click to switch it on or off. Width and the split between tree and statistics are draggable; `Cmd/Ctrl+B` or
+  the toolbar shows and hides it, below 900 px window width it steps aside by itself.
 - **Search** – filter or highlight, regular expressions, case sensitivity, jump between matches.
 - **Follow** – stays at the end while you are there; scroll up and it pauses and counts the new lines.
 - **Freeze** – holds a tab to read in peace: lines, counts and the position stay put while filters and search keep
@@ -44,7 +49,7 @@ Like <code>tail -f</code> with a GUI: millions of lines, instant filters, no wai
 | | |
 |---|---|
 | ![Search](docs/screenshots/search.png) | ![Light theme](docs/screenshots/light.png) |
-| ![Detail panel](docs/screenshots/detail.png) | |
+| ![Detail panel](docs/screenshots/detail.png) | ![Sidebar](docs/screenshots/sidebar.png) |
 
 ## Install
 
@@ -67,6 +72,9 @@ log-commander /var/log/app.log /var/log/other.log
 | `T` | Columns or raw lines |
 | `D`, double click on a line | Detail panel with the whole entry; in it the arrows scroll the panel |
 | `↑`, `↓` on the panel's bar | Panel height (`Shift`: bigger steps, `Home`/`End`, double click: default) |
+| `Cmd/Ctrl+B` | Show or hide the sidebar |
+| `↑`, `↓`, `←`, `→`, `Home`, `End` in the tree | Move, open and close nodes; `Enter`/`Space` activates, `Enter` on „Aktiver Filter“ saves it, `Delete` removes a filter |
+| `←`, `→` on the sidebar's bar | Sidebar width (`Shift`: bigger steps, double click: default) |
 | `Shift+F10` | Column menu (show, hide, move, resize, reset) |
 | `Home`, `PageUp`, `PageDown`, `↑`, `↓` | Move through the file |
 | `Cmd/Ctrl+F` | Search; `Enter` next match, `Shift+Enter` previous, `Esc` clear |

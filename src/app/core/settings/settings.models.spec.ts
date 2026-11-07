@@ -74,4 +74,70 @@ describe('settings', () => {
     expect(mergeSettings({ detailHeight: 5 }).detailHeight).toBe(80);
     expect(mergeSettings({ detailHeight: 1e9 }).detailHeight).toBe(4000);
   });
+
+  it('defaults the sidebar and keeps valid values', () => {
+    const fresh = mergeSettings({});
+    expect([fresh.sidebarVisible, fresh.sidebarWidth, fresh.sidebarTreeShare]).toEqual([
+      true,
+      240,
+      0.55,
+    ]);
+    expect(fresh.savedFilters).toEqual([]);
+    const kept = mergeSettings({
+      sidebarVisible: false,
+      sidebarWidth: 300.4,
+      sidebarTreeShare: 0.3,
+    });
+    expect([kept.sidebarVisible, kept.sidebarWidth, kept.sidebarTreeShare]).toEqual([
+      false,
+      300,
+      0.3,
+    ]);
+    const broken = mergeSettings({
+      sidebarVisible: 'no' as never,
+      sidebarWidth: null as never,
+      sidebarTreeShare: 'half' as never,
+      savedFilters: {} as never,
+    });
+    expect([broken.sidebarVisible, broken.sidebarTreeShare, broken.savedFilters]).toEqual([
+      true,
+      0.55,
+      [],
+    ]);
+    expect(mergeSettings({ sidebarWidth: 10 }).sidebarWidth).toBe(180);
+    expect(mergeSettings({ sidebarTreeShare: 2 }).sidebarTreeShare).toBe(0.9);
+  });
+
+  it('repairs saved filters from an old or broken file', () => {
+    const merged = mergeSettings({
+      savedFilters: [
+        null,
+        { id: 'a', name: '  Fehler ', levels: ['ERROR', 'BOGUS'], query: { text: 'x' }, mode: 'x' },
+        { id: 'a', name: 'Doppelt', levels: [], query: null, mode: 'filter' },
+        { id: 'b', name: '', levels: [] },
+        {
+          id: 'c',
+          name: 'Ohne Level-Liste',
+          query: { text: '(', isRegex: true },
+          mode: 'highlight',
+        },
+      ] as never,
+    });
+    expect(merged.savedFilters).toEqual([
+      {
+        id: 'a',
+        name: 'Fehler',
+        levels: ['ERROR'],
+        query: { text: 'x', isRegex: false, caseSensitive: false },
+        mode: 'filter',
+      },
+      {
+        id: 'c',
+        name: 'Ohne Level-Liste',
+        levels: ['UNKNOWN', 'TRACE', 'DEBUG', 'INFO', 'WARN', 'ERROR', 'FATAL'],
+        query: { text: '(', isRegex: true, caseSensitive: false },
+        mode: 'highlight',
+      },
+    ]);
+  });
 });

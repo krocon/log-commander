@@ -1,9 +1,11 @@
 import { ChangeDetectionStrategy, Component, inject, output } from '@angular/core';
+import { SessionMarksComponent } from '../../shared/session-marks';
 import { LogSessionService } from '../sessions/log-session.service';
 
 @Component({
   selector: 'app-tabs',
   changeDetection: ChangeDetectionStrategy.OnPush,
+  imports: [SessionMarksComponent],
   template: `
     <div class="tabs" role="tablist" aria-label="Geöffnete Dateien">
       @for (session of sessions.sessions(); track session.id) {
@@ -16,12 +18,7 @@ import { LogSessionService } from '../sessions/log-session.service';
             [title]="session.path"
             (click)="sessions.activate(session.id)"
           >
-            @if (session.hasNewErrors()) {
-              <span class="alert" title="Neue ERROR-/FATAL-Zeilen" aria-label="Neue Fehler"></span>
-            }
-            @if (session.frozen()) {
-              <span class="frozen" title="Eingefroren" aria-label="Eingefroren">⏸</span>
-            }
+            <app-session-marks [session]="session" />
             {{ session.fileName }}
           </button>
           <button
@@ -90,17 +87,6 @@ import { LogSessionService } from '../sessions/log-session.service';
       padding: 0 6px;
       margin-right: 4px;
       color: var(--text-dim);
-    }
-    .alert {
-      flex: none;
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: var(--danger);
-    }
-    .frozen {
-      flex: none;
-      color: var(--accent);
     }
     .open {
       flex: none;

@@ -129,6 +129,109 @@
     }
     await report('PASS fields of the first line');
 
+    // Sidebar (prompt 005): tree with files and filters, statistics with the columns "Alle" and "Ansicht".
+    const statRow = (label) =>
+      $$('app-stats-panel tbody tr').find((tr) => tr.querySelector('th').textContent.trim() === label);
+    const stat = (label, column) => {
+      const text = statRow(label).querySelectorAll('td')[column === 'all' ? 0 : 1].textContent.trim();
+      return text === '…' ? NaN : Number(text.replace(/\D/g, ''));
+    };
+    const treeItem = (text) =>
+      $$('app-log-tree [role=treeitem]').find((n) => n.querySelector('.label')?.textContent.trim() === text);
+    const treeKind = (kind) => $(`app-log-tree [role=treeitem].kind-${kind}`);
+    const searchValue = () => $('input[type=search]').value;
+    const pressed = (level) => chip(level).getAttribute('aria-pressed') === 'true';
+    const keyOn = (el, key, options = {}) =>
+      el.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...options }));
+    await waitFor('sidebar with tree and statistics', () => $('app-sidebar [role=tree]') && $('app-stats-panel table'));
+    await waitFor('statistics of the sample', () =>
+      stat('Zeilen', 'all') === 15 && stat('Zeilen', 'view') === 15 &&
+      stat('ERROR', 'all') === 8 && stat('FATAL', 'all') === 1 && stat('INFO', 'all') === 3 &&
+      stat('WARN', 'all') === 1 && stat('TRACE', 'all') === 1 && stat('DEBUG', 'all') === 1 &&
+      stat('Ohne Level', 'all') === 0 && stat('ERROR', 'view') === 8);
+    await waitFor('statistics match the level chips', () =>
+      ['TRACE', 'DEBUG', 'INFO', 'WARN', 'ERROR', 'FATAL'].every((l) => stat(l, 'all') === count(l)));
+    await waitFor('file size in the statistics', () => statRow('Dateigröße').textContent.includes('KB'));
+    await waitFor('tree lists the open files', () => treeItem('e2e.log') && treeItem('other.log') && treeItem('big.log'));
+    await waitFor('active file is selected in the tree', () => treeItem('e2e.log').getAttribute('aria-selected') === 'true');
+
+    // Toggle: Cmd/Ctrl+B and the toolbar button.
+    press('b', { metaKey: true });
+    await waitFor('Cmd+B hides the sidebar', () => !$('app-sidebar') && button('◧').getAttribute('aria-pressed') === 'false');
+    click(button('◧'));
+    await waitFor('toolbar button shows it again', () => $('app-sidebar') && button('◧').getAttribute('aria-pressed') === 'true');
+
+    // Width by keyboard on its splitter.
+    const widthSplitter = () => $('app-splitter[aria-label="Breite der Seitenleiste"]');
+    const sidebarWidth = () => $('app-sidebar').getBoundingClientRect().width;
+    const widthBefore = sidebarWidth();
+    widthSplitter().focus();
+    keyOn(widthSplitter(), 'ArrowRight');
+    await waitFor('splitter widens the sidebar', () => Math.round(sidebarWidth() - widthBefore) === 10);
+    keyOn(widthSplitter(), 'ArrowLeft');
+    await waitFor('and back', () => Math.round(sidebarWidth()) === Math.round(widthBefore));
+
+    // Switching files through the tree.
+    click(treeItem('other.log'));
+    await waitFor('tree activates the other tab', () => $('.tab.active')?.textContent.includes('other.log'));
+    click(treeItem('e2e.log'));
+    await waitFor('and back through the tree', () => $('.tab.active')?.textContent.includes('e2e.log') &&
+      rowTexts().some((t) => t.includes('Starting ShopApplication')));
+
+    // Arrow keys move in the tree, not in the log; Space there does not stop following.
+    const topBefore = topLine();
+    treeItem('e2e.log').focus();
+    keyOn(treeItem('e2e.log'), 'ArrowDown');
+    await waitFor('ArrowDown moves the focus in the tree', () => document.activeElement === treeItem('other.log'));
+    keyOn(document.activeElement, ' ');
+    await waitFor('Space in the tree activates the file and leaves following alone', () =>
+      $('.tab.active')?.textContent.includes('other.log') && $('app-status-bar .pill').textContent.trim() === 'Live');
+    click(treeItem('e2e.log'));
+    await waitFor('e2e.log active again, same top line', () =>
+      $('.tab.active')?.textContent.includes('e2e.log') && topLine() === topBefore);
+
+    // A click on ERROR in the statistics filters on it, the × in the tree removes it again.
+    click($('app-stats-panel button[data-level=ERROR]'));
+    await waitFor('click on ERROR filters on it', () =>
+      pressed('ERROR') && !pressed('INFO') && !pressed('FATAL') && stat('Zeilen', 'view') === 8 &&
+      stat('ERROR', 'view') === 8 && stat('INFO', 'view') === 0 && stat('INFO', 'all') === 3);
+    await waitFor('tree shows the active filter', () => treeKind('filter-levels')?.textContent.includes('ERROR'));
+    click($('app-stats-panel button[data-level=FATAL]'), { altKey: true });
+    await waitFor('Alt-click adds FATAL', () => pressed('ERROR') && pressed('FATAL') && stat('Zeilen', 'view') === 9);
+    click(treeKind('filter-levels').querySelector('.remove'));
+    await waitFor('× in the tree shows all levels again, the toolbar follows', () =>
+      ['TRACE', 'DEBUG', 'INFO', 'WARN', 'ERROR', 'FATAL'].every(pressed) && !treeKind('active-filter') &&
+      stat('Zeilen', 'view') === 15);
+
+    // Save a filter, remove the search by ×, apply the saved filter again.
+    search('order');
+    await waitFor('search shows in the tree', () => treeKind('filter-query')?.textContent.includes('order'));
+    click(treeKind('active-filter').querySelector('.save'));
+    await waitFor('name field in the tree', () => document.activeElement === $('app-log-tree input.name'));
+    $('app-log-tree input.name').value = 'Bestellungen';
+    keyOn($('app-log-tree input.name'), 'Enter');
+    await waitFor('saved filter in the tree, marked as in use', () => treeItem('Bestellungen')?.classList.contains('current'));
+    const filteredWithSearch = stat('Zeilen', 'view');
+    click(treeKind('filter-query').querySelector('.remove'));
+    await waitFor('× removes the search, the toolbar shows it', () =>
+      searchValue() === '' && !treeKind('active-filter') && stat('Zeilen', 'view') === 15);
+    click(treeItem('Bestellungen'));
+    await waitFor('saved filter applies', () =>
+      searchValue() === 'order' && stat('Zeilen', 'view') === filteredWithSearch &&
+      treeItem('Bestellungen').classList.contains('current'));
+    // A search still being typed must not overwrite a saved filter applied right after.
+    click(treeKind('filter-query').querySelector('.remove'));
+    await waitFor('search removed again', () => searchValue() === '' && stat('Zeilen', 'view') === 15);
+    search('typed but not done');
+    click(treeItem('Bestellungen'));
+    await sleep(400);
+    await waitFor('typing yields to the saved filter', () =>
+      searchValue() === 'order' && treeKind('filter-query')?.textContent.includes('order'));
+    click(treeItem('Bestellungen').querySelector('.remove'));
+    await waitFor('saved filter deleted', () => !treeItem('Bestellungen') && !treeKind('saved-group'));
+    click(treeKind('filter-query').querySelector('.remove'));
+    await waitFor('back to everything', () => searchValue() === '' && stat('Zeilen', 'view') === 15);
+
     // Column view (prompt 009): the table's header shows the fields, one cell per field. Afterwards the raw
     // view (T), in which every check below runs as before.
     const heads = () =>
@@ -332,7 +435,7 @@
     const panelText = () => panelBody()?.textContent ?? '';
     const panelRange = () => panel()?.querySelector('.range')?.textContent.trim();
     const panelButton = (label) => [...panel().querySelectorAll('button')].find((b) => b.textContent.trim() === label);
-    const splitter = () => $('app-splitter');
+    const splitter = () => $('app-splitter[aria-controls="detail-panel"]');
     const panelHeight = () => panel().getBoundingClientRect().height;
     const detailButton = () => button('▤');
     await waitFor('detail panel is closed at first', () => !panel() && detailButton().getAttribute('aria-pressed') === 'false');
