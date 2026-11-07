@@ -18,6 +18,9 @@ describe('row menu', () => {
       'filter-value-tab',
       'from-here',
       'to-here',
+      'note',
+      'share-markdown',
+      'share-jira',
     ]);
     expect(all[0].label).toBe('Filtern auf „req-42“');
     expect(all[2].label).toBe('In neuem Tab filtern auf „req-42“');

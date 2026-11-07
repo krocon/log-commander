@@ -118,6 +118,17 @@ import { EntryKey, lineRangeLabel, needsReload } from './detail-logic';
     @if (notice(); as text) {
       <div class="notice" role="status">{{ text }}</div>
     }
+    @if (note(); as text) {
+      <!-- Prompt 015: the note of the entry. -->
+      <div class="note-row">
+        <span class="note-icon" aria-hidden="true">✎</span>
+        <span class="sr-only">Notiz:</span>
+        <span class="note-text">{{ text }}</span>
+        <button type="button" title="Notiz bearbeiten (Shift+M)" (click)="editNote()">
+          Bearbeiten
+        </button>
+      </div>
+    }
     @if (!entry()) {
       <div class="empty">{{ emptyText() }}</div>
     }
@@ -206,6 +217,31 @@ import { EntryKey, lineRangeLabel, needsReload } from './detail-logic';
       color: var(--lv-fatal-fg);
       background: var(--lv-fatal-bg);
     }
+    .note-row {
+      flex: none;
+      display: flex;
+      gap: 6px;
+      align-items: baseline;
+      padding: 3px 8px;
+      background: var(--bg-panel);
+      border-bottom: 1px solid var(--border);
+      font-size: 12px;
+    }
+    .note-icon {
+      color: var(--note);
+    }
+    .note-text {
+      flex: 1;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+    }
     .notice {
       flex: none;
       padding: 2px 8px;
@@ -284,6 +320,16 @@ export class DetailPanelComponent {
   /** The line whose entry is shown: the anchor of the selection, nothing else. */
   protected readonly anchor = computed(() => this.session().selection()?.anchor ?? null);
   protected readonly entry = signal<EntryDetail | null>(null);
+  /** The note on the head of the entry (prompt 015). */
+  protected readonly note = computed(() => {
+    const entry = this.entry();
+    return entry ? (this.session().notes().get(entry.first) ?? null) : null;
+  });
+
+  protected editNote(): void {
+    const entry = this.entry();
+    if (entry) this.sessions.openNote(this.session(), entry.first);
+  }
   protected readonly loading = signal(false);
   private readonly error = signal<string | null>(null);
   /** Raw or formatted; formatted wins whenever a block is found. */

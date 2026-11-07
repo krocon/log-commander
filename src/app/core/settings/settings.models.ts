@@ -251,23 +251,43 @@ export function mergeExtractRules(saved: unknown): Record<string, ExtractRule[]>
 const isStringArray = (v: unknown): v is string[] =>
   Array.isArray(v) && v.every((x) => typeof x === 'string');
 
+/** Column layouts: entries per list and characters per column id, profiles kept (a workspace may bring them). */
+export const MAX_LAYOUT_ENTRIES = 256;
+export const MAX_LAYOUT_ID = 128;
+export const MAX_LAYOUT_PROFILES = 256;
+
+/** Column ids of a layout: strings up to `MAX_LAYOUT_ID`, at most `MAX_LAYOUT_ENTRIES`. */
+function layoutIds(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  return v
+    .filter((x): x is string => typeof x === 'string' && x.length > 0 && x.length <= MAX_LAYOUT_ID)
+    .slice(0, MAX_LAYOUT_ENTRIES);
+}
+
 /** Broken entries are dropped, broken parts of an entry fall back to empty. */
-function mergeColumnLayouts(saved: unknown): Record<string, ColumnLayout> {
+export function mergeColumnLayouts(saved: unknown): Record<string, ColumnLayout> {
   if (typeof saved !== 'object' || saved === null || Array.isArray(saved)) return {};
   const result: Record<string, ColumnLayout> = {};
-  for (const [profileId, value] of Object.entries(saved as Record<string, unknown>)) {
-    if (typeof value !== 'object' || value === null) continue;
+  for (const [profileId, value] of Object.entries(saved as Record<string, unknown>).slice(
+    0,
+    MAX_LAYOUT_PROFILES,
+  )) {
+    if (typeof value !== 'object' || value === null || profileId.length > MAX_LAYOUT_ID) continue;
     const layout = value as Partial<Record<keyof ColumnLayout, unknown>>;
     const widths: Record<string, number> = {};
     if (typeof layout.widths === 'object' && layout.widths !== null) {
-      for (const [id, w] of Object.entries(layout.widths as Record<string, unknown>)) {
+      for (const [id, w] of Object.entries(layout.widths as Record<string, unknown>).slice(
+        0,
+        MAX_LAYOUT_ENTRIES,
+      )) {
+        if (id.length > MAX_LAYOUT_ID) continue;
         if (typeof w === 'number' && Number.isFinite(w) && w > 0) widths[id] = Math.round(w);
       }
     }
     result[profileId] = {
-      order: isStringArray(layout.order) ? layout.order : [],
+      order: layoutIds(layout.order),
       widths,
-      hidden: isStringArray(layout.hidden) ? layout.hidden : [],
+      hidden: layoutIds(layout.hidden),
     };
   }
   return result;

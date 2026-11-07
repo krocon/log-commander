@@ -196,9 +196,9 @@ export function band(
   return { y: Math.max(0, Math.min(height - h, y)), h: Math.min(h, height) };
 }
 
-/** A line the ruler points at: a bookmark or the selection. */
+/** A line the ruler points at: a bookmark, a note (prompt 015) or the selection. */
 export interface RulerPin {
-  kind: 'bookmark' | 'selection';
+  kind: 'bookmark' | 'note' | 'selection';
   line: number;
   position: number;
   /** The filter shows the line itself (otherwise `position` is that of the next shown line). */
@@ -291,7 +291,8 @@ function percent(density: number): string {
 export function rulerTooltip(y: number, view: RulerView): string {
   const pin = pinAt(view.pins, y, view.count, view.height);
   if (pin) {
-    const what = pin.kind === 'bookmark' ? 'Lesezeichen' : 'Gewählte Zeile';
+    const what =
+      pin.kind === 'bookmark' ? 'Lesezeichen' : pin.kind === 'note' ? 'Notiz' : 'Gewählte Zeile';
     const hidden = pin.visible ? '' : ' (vom Filter ausgeblendet)';
     return `${what}: Zeile ${formatCount(pin.line + 1)}${hidden}`;
   }

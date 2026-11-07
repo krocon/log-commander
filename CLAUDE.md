@@ -18,6 +18,7 @@
 | E2E im echten WebView | `npm run e2e` (Debug-Build, echtes Backend, echte Datei; `-- --no-build` zum Wiederholen). Das Fenster öffnet ohne Fokus hinter den anderen |
 | Spike-Messung (Frames) | `node scripts/e2e/run.mjs --scenario scripts/e2e/spike-003.js --foreground` (`--foreground`: Fenster vorn und mit Fokus wie beim normalen Start, sonst misst es verdeckt) |
 | Messung 500 MB | `cd src-tauri && cargo test --release --test tail_integration -- --ignored --nocapture measure_` |
+| Messung Export 500 MB | `cd src-tauri && cargo test --release --test export_integration -- --ignored --nocapture measure_` |
 | Messung Dashboard | `cd src-tauri && cargo test --release --test report_integration -- --ignored --nocapture measure_` |
 | Messung Feld-Regeln | `cd src-tauri && cargo test --release --test extract_integration -- --ignored --nocapture measure_` |
 | Messung Merge 2 × 500 MB | `cd src-tauri && cargo test --release --test merge_integration -- --ignored --nocapture measure_merge` |
@@ -52,6 +53,8 @@ src/                         Angular 22 (zoneless, Signals, OnPush, Standalone)
   app/shared/                splitter (wiederverwendbar), session-marks (Tabs und Baum), format
   app/features/timeline/     Zeitstrahl über dem Log (014): timeline.ts zeichnet, timeline-logic.ts rein (Säulen, Lücken, Ticks)
   app/features/toolbar|statusbar|tabs|start|settings/   UI
+  app/features/export|workspace|share|notes/   Export-Dialog und Jobs, Arbeitsstand (.lcw), Teilen, Notizen (Prompt 015)
+  app/core/dialog/native-dialog.ts   nativer Öffnen/Speichern-Dialog; e2e legt Antworten in window.__lcDialogPaths
 src-tauri/src/               Rust; alles außer commands.rs und lib.rs ist frei von Tauri
   session.rs                 LogSession, Ansichten (ViewState), Abfragen, Hintergrund-Jobs (Filter, Level neu), SessionManager
   views.rs                   Filter-Tabs (013): ViewFilter, Kette zu einem Filter zusammensetzen, MAX_VIEWS
@@ -68,6 +71,8 @@ src-tauri/src/               Rust; alles außer commands.rs und lib.rs ist frei 
   merge.rs                   mehrere Dateien als eine Sitzung: Merger (rein), Worker (Folgen, Rotation, Haltepuffer)
   encoding.rs, platform.rs   Encodings, ANSI; Share-Flags und Datei-Identität je OS
   report_db.rs               Dashboard (012): SQLite je Sitzung, Builder-Thread, abgesicherte Abfragen, bucket()
+  export.rs, anchor.rs       Export als Job (Temp-Datei, Umbenennen, CSV/JSONL), Anker für Lesezeichen/Notizen
+  workspace.rs               .lcw lesen/schreiben (nur diese Endung, ≤ 8 MB), Pfade prüfen
   e2e.rs                     nur Debug-Build: Szenario im WebView (Fenster im Hintergrund), siehe scripts/e2e/
 scripts/e2e/                 run.mjs (Harness), scenario.js (läuft im WebView), mock-ipc.js (nur für Screenshots)
 samples/                     Beispiel-Logs
@@ -219,6 +224,12 @@ samples/                     Beispiel-Logs
   unterbricht laufende (`sqlite3_interrupt`), Heap-Limit 768 MiB prozessweit,
   Extension-Loading per `.cargo/config.toml` nicht gebaut. Neuer Fehlercode `invalid_query`. Rust ≥ 1.89
   (`File::try_lock`). Details: `prompts/done/012-dashboard-sql-timeline.design.md`.
+
+- **Export und Arbeitsstand (Prompt 015):** Das Backend schreibt Exporte selbst (nie durch IPC), in Schritten unter kurzer
+  Lesesperre, Ende fest beim Start, Temp-Datei + Umbenennen, Ziel ≠ offene Datei (Pfad und Datei-Identität), Endung passend
+  zum Format. CSV mit `'` vor Formel-Zellen. Ein `.lcw` ist fremde Eingabe: `parseWorkspace` prüft alles, Backend liest
+  und schreibt nur `.lcw`. Lesezeichen/Notizen gehören zur Datei, Anker = Zeile + Offset + Länge + Hash der ersten 256 Byte.
+  Details und Grenzen: `prompts/done/015-export-und-arbeitsstand.design.md`.
 
 ## Arbeitsweise
 

@@ -9,6 +9,7 @@
     "core:path:allow-resolve-directory",
     "core:window:allow-set-title",
     "dialog:allow-open",
+    "dialog:allow-save",
     "store:default",
     "cli:allow-cli-matches"
   ]

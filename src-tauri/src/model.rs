@@ -394,3 +394,42 @@ pub struct ReportSchema {
     pub sources: Vec<String>,
     pub status: Option<ReportStatus>,
 }
+
+/// A line found again after a restart or a change of the file (prompt 015): its number, the source of a
+/// merge, its byte offset in that file, its length and a hash of its first bytes (`anchor::hash_line`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Anchor {
+    pub line: u32,
+    #[serde(default)]
+    pub source: u8,
+    pub offset: u64,
+    pub len: u32,
+    /// FNV-1a (64 bit) of the first `ANCHOR_HASH_BYTES` raw bytes, 16 hex digits.
+    pub hash: String,
+}
+
+/// Where an export (prompt 015) stands; sent at most every 100 ms and once at the end.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportProgress {
+    pub job_id: u64,
+    pub state: ExportState,
+    /// Lines written so far.
+    pub lines: u64,
+    /// Lines the export will write at most (fixed at the start; a filter may change it on the way).
+    pub total: u64,
+    pub bytes: u64,
+    /// The target, for the message at the end.
+    pub path: String,
+    pub error: Option<crate::error::AppError>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExportState {
+    Running,
+    Done,
+    Cancelled,
+    Failed,
+}

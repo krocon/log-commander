@@ -71,6 +71,8 @@
   --ruler-warn: #f0a94b;
   --ruler-bookmark: #5aa2f7;
   --ruler-selection: #d7dce3;
+  /* Notes (prompt 015): pencil in the gutter, mark on the ruler, symbol in the detail panel. */
+  --note: #4cc38a;
   /* Timeline (prompt 014): neutral columns and the hatching of an outage; levels, band from the ruler. */
   --tl-all: #7d8899;
   --tl-gap: #9aa3b0;
@@ -159,6 +161,7 @@
   --ruler-warn: #975b00;
   --ruler-bookmark: #1a66d6;
   --ruler-selection: #1f2933;
+  --note: #0f7a4a;
   --tl-all: #69737f;
   --tl-gap: #7d8794;
   --chart-1: #1a66d6;

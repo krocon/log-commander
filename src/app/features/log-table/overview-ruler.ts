@@ -41,6 +41,7 @@ interface RulerColors {
   bandEdge: string;
   levels: Record<RulerLevel, string>;
   bookmark: string;
+  note: string;
   selection: string;
 }
 
@@ -168,10 +169,12 @@ export class OverviewRulerComponent implements OnInit, OnDestroy {
     if (!current) return [];
     const session = this.session();
     const bookmarks = session.bookmarks();
+    const notes = session.notes();
     const anchor = session.selection()?.anchor;
     const pins: RulerPin[] = [];
     for (const mark of current.marks) {
       if (bookmarks.has(mark.line)) pins.push({ kind: 'bookmark', ...mark });
+      if (notes.has(mark.line)) pins.push({ kind: 'note', ...mark });
       if (mark.line === anchor) pins.push({ kind: 'selection', ...mark });
     }
     return pins;
@@ -198,7 +201,7 @@ export class OverviewRulerComponent implements OnInit, OnDestroy {
     const session = this.session();
     const { filteredLines, viewGeneration, epoch } = session.update();
     const anchor = session.selection()?.anchor ?? -1;
-    return `${session.id}|${filteredLines}|${viewGeneration}|${epoch}|${anchor}|${[...session.bookmarks()].join(',')}|${this.height()}`;
+    return `${session.id}|${filteredLines}|${viewGeneration}|${epoch}|${anchor}|${[...session.bookmarks()].join(',')}|${[...session.notes().keys()].join(',')}|${this.height()}`;
   });
 
   private resizeObserver: ResizeObserver | null = null;
@@ -270,7 +273,7 @@ export class OverviewRulerComponent implements OnInit, OnDestroy {
     const lines = new Set<number>();
     const anchor = session.selection()?.anchor;
     if (anchor !== undefined) lines.add(anchor);
-    for (const line of session.bookmarks()) {
+    for (const line of [...session.bookmarks(), ...session.notes().keys()]) {
       if (lines.size >= MAX_LINES) break;
       lines.add(line);
     }
@@ -312,6 +315,7 @@ export class OverviewRulerComponent implements OnInit, OnDestroy {
         WARN: token('ruler-warn'),
       },
       bookmark: token('ruler-bookmark'),
+      note: token('note'),
       selection: token('ruler-selection'),
     };
     this.colorsFor = revision;
@@ -379,6 +383,19 @@ export class OverviewRulerComponent implements OnInit, OnDestroy {
         ctx.moveTo(width, y - 5);
         ctx.lineTo(width - 6, y - 2);
         ctx.lineTo(width, y + 1);
+        ctx.closePath();
+        if (pin.visible) ctx.fill();
+        else ctx.stroke();
+      } else if (pin.kind === 'note') {
+        // A small diamond in the middle of the ruler.
+        ctx.fillStyle = colors.note;
+        ctx.strokeStyle = colors.note;
+        const x = Math.round(width / 2);
+        ctx.beginPath();
+        ctx.moveTo(x, y - 4);
+        ctx.lineTo(x + 4, y);
+        ctx.lineTo(x, y + 4);
+        ctx.lineTo(x - 4, y);
         ctx.closePath();
         if (pin.visible) ctx.fill();
         else ctx.stroke();

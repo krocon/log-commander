@@ -1,15 +1,16 @@
 //! Thin command layer: argument mapping only, the logic lives in the session.
 
 use crate::error::{AppError, AppResult, ErrorCode};
+use crate::export::{ExportFormat, ExportJobs, ExportRange, ExportRequest};
 use crate::extract::{ExtractRule, FieldSuggestion, RulePreview};
 use crate::filter::{SearchMode, SearchQuery};
 use crate::filter_expr::FilterExpr;
 use crate::level::Level;
 use crate::merge::MergeSource;
 use crate::model::{
-    ColumnSet, EntryDetail, EntryRange, FieldPreview, FilterInfo, FindHit, LogLine, MergeCandidate,
-    Overview, ReportResult, ReportSchema, SessionInfo, SessionUpdate, Stats, TimeHit, Timeline,
-    ViewInfo,
+    Anchor, ColumnSet, EntryDetail, EntryRange, ExportProgress, ExportState, FieldPreview,
+    FilterInfo, FindHit, LogLine, MergeCandidate, Overview, ReportResult, ReportSchema,
+    SessionInfo, SessionUpdate, Stats, TimeHit, Timeline, ViewInfo,
 };
 use crate::profile::Profile;
 use crate::session::{LogSession, OpenOptions, SessionManager};
@@ -490,4 +491,121 @@ pub async fn get_report_schema(
 ) -> AppResult<ReportSchema> {
     let session = session(&state, session_id)?;
     blocking(move || session.report_schema()).await
+}
+
+// ---- Export, anchors and workspaces (prompt 015) ----
+
+/// Writes a view, a selection or the whole file into `target_path` as a background job; returns its
+/// id at once. Progress (at most every 100 ms, and the end) goes to `on_progress`. The target is
+/// checked first (absolute, extension of the format, not the open log itself).
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn export_view(
+    app: AppHandle,
+    session_id: u64,
+    view_id: Option<u32>,
+    range: ExportRange,
+    format: ExportFormat,
+    columns: Option<Vec<String>>,
+    target_path: String,
+    on_progress: Channel<ExportProgress>,
+) -> AppResult<u64> {
+    let session = session(&app.state::<SessionManager>(), session_id)?;
+    let request = ExportRequest {
+        view: view_id.unwrap_or(0),
+        range,
+        format,
+        columns: columns.unwrap_or_default(),
+        target: PathBuf::from(target_path),
+    };
+    let checked = request.clone();
+    let check_session = Arc::clone(&session);
+    blocking(move || {
+        let target = crate::export::validate_target(&checked.target, checked.format)?;
+        crate::export::check_not_source(&target, &check_session)
+    })
+    .await?;
+    let (job, cancel) = app.state::<ExportJobs>().start(&request.target)?;
+    let handle = app.clone();
+    std::thread::Builder::new()
+        .name(format!("export-{job}"))
+        .spawn(move || {
+            let result = crate::export::run_export(&session, &request, job, &cancel, |p| {
+                let _ = on_progress.send(p.clone());
+            });
+            if let Err(error) = result {
+                let _ = on_progress.send(ExportProgress {
+                    job_id: job,
+                    state: ExportState::Failed,
+                    lines: 0,
+                    total: 0,
+                    bytes: 0,
+                    path: request.target.display().to_string(),
+                    error: Some(error),
+                });
+            }
+            handle.state::<ExportJobs>().finish(job);
+        })
+        .map_err(|e| AppError::new(ErrorCode::Io, e.to_string()))?;
+    Ok(job)
+}
+
+/// Stops a running export; its temporary file is removed. False if it is over already.
+#[tauri::command]
+pub async fn cancel_export(jobs: State<'_, ExportJobs>, job_id: u64) -> AppResult<bool> {
+    Ok(jobs.cancel(job_id))
+}
+
+/// Anchors of lines (bookmarks, notes, scroll position of a workspace); `None` past the end.
+#[tauri::command]
+pub async fn line_anchors(
+    state: State<'_, SessionManager>,
+    session_id: u64,
+    lines: Vec<u32>,
+) -> AppResult<Vec<Option<Anchor>>> {
+    let session = session(&state, session_id)?;
+    blocking(move || session.line_anchors(&lines)).await
+}
+
+/// The lines of anchors in the file as it is now; `None` where none fits.
+#[tauri::command]
+pub async fn resolve_anchors(
+    state: State<'_, SessionManager>,
+    session_id: u64,
+    anchors: Vec<Anchor>,
+) -> AppResult<Vec<Option<u32>>> {
+    let session = session(&state, session_id)?;
+    blocking(move || session.resolve_anchors(&anchors)).await
+}
+
+/// The text of a `.lcw` file (at most 8 MB); the frontend validates it.
+#[tauri::command]
+pub async fn read_workspace(path: String) -> AppResult<String> {
+    blocking(move || crate::workspace::read(&PathBuf::from(path))).await
+}
+
+/// Writes a `.lcw` file (and only such a file).
+#[tauri::command]
+pub async fn write_workspace(path: String, content: String) -> AppResult<()> {
+    blocking(move || crate::workspace::write(&PathBuf::from(path), &content)).await
+}
+
+/// Whether native dialogs may take scripted answers (`window.__lcDialogPaths`): only in a debug
+/// build running an end-to-end scenario, never in a release build.
+#[tauri::command]
+pub fn scripted_dialogs() -> bool {
+    #[cfg(debug_assertions)]
+    {
+        crate::e2e::scenario_active()
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        false
+    }
+}
+
+/// Which of the files of a workspace exist (network paths are never touched).
+#[tauri::command]
+pub async fn probe_paths(paths: Vec<String>) -> AppResult<Vec<crate::workspace::PathProbe>> {
+    blocking(move || crate::workspace::probe(&paths)).await
 }

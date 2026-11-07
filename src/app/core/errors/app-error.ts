@@ -15,6 +15,9 @@ export type ErrorCode =
   | 'invalid_query'
   | 'unknown_view'
   | 'too_many_views'
+  | 'invalid_export'
+  | 'file_changed'
+  | 'invalid_workspace'
   | 'backend_unavailable'
   | 'unknown';
 
@@ -54,6 +57,12 @@ export function describeError(error: AppError): string {
       return 'Dieser Filter-Tab ist nicht mehr offen';
     case 'too_many_views':
       return 'Höchstens 8 Tabs je Datei, zuerst einen Filter-Tab schließen';
+    case 'invalid_export':
+      return `Export nicht möglich: ${error.message}${where}`;
+    case 'file_changed':
+      return 'Die Datei wurde während des Exports geleert oder neu begonnen, Export abgebrochen';
+    case 'invalid_workspace':
+      return `Kein gültiger Arbeitsstand: ${error.message}${where}`;
     case 'backend_unavailable':
       return 'Desktop-Backend nicht verfügbar (läuft die App im Browser?)';
     default:

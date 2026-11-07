@@ -42,6 +42,11 @@ Architektur verbaut nichts davon.
   ein Zeitfenster „Als Filter“ (Zeit-Bedingung im Filterbaum des Tabs) oder zum Hineinzoomen, Mausrad zoomt, `Z`;
   Perzentil-Achse gegen Ausreißer
 
+- Export, Arbeitsstand und Teilen (Prompt 015): Export der Auswahl, Ansicht oder Datei als TXT, CSV (RFC 4180, Schutz vor
+  Formeln) oder JSON Lines mit Spalten, als Hintergrund-Job mit Fortschritt und Abbruch; Notizen (`Shift+M`) in Gutter,
+  Ruler und Detail-Panel; Arbeitsstand `.lcw` mit Dateien, Merges, Filter-Tabs samt Baum, Lesezeichen und Notizen als Anker,
+  Layout; fehlende Dateien suchen oder überspringen; Teilen als Markdown oder Jira
+
 ## Offen
 
 **Dateien:** Rotierte Archive als durchgehende Timeline, `.gz`/`.zip`/`.zst` lesen, Ordner/Glob
@@ -60,7 +65,7 @@ mehrere Tabellenzeilen; braucht eine Zeilen-zu-Bildschirmzeilen-Liste im Backend
 Stacktrace, Regeln je Datei statt je Format.
 
 **Seitenleiste:** Thread/Logger als Knoten und Statistik-Zeilen (011),
-Tortendiagramme, Lesezeichen und Notizen.
+Tortendiagramme, Lesezeichen und Notizen als Liste.
 
 **Overview Ruler (Nachfragen zu 007):** Treffer der Suche im Ruler (im Highlight-Modus nur mit Textscan, eigener
 Hintergrund-Job), Anzahlen je Marke im Tooltip (heute Level und Zeilenbereich, die Zusammenfassung kennt nur Bits),
@@ -69,8 +74,7 @@ Ziehen im Ruler, Mini-Vorschau beim Hover, eigene Regex-Marker. Zähler je Absch
 `prompts/done/007-overview-ruler.design.md`).
 
 **Filter:** Query-DSL (`level:ERROR AND NOT "x"`) auf dem Ausdruck aus 010, Bedingungen des Baums als Highlight-Farben,
-Filter-Vorlagen teilen, eigene Regex-Marker, persistente Lesezeichen und
-Notizen. Nachfragen zu 010: Zeit-Bedingung je Quelle beim Merge, Zeilenbedingungen über eine Truncation hinweg.
+Filter-Vorlagen teilen, eigene Regex-Marker. Nachfragen zu 010: Zeit-Bedingung je Quelle beim Merge, Zeilenbedingungen über eine Truncation hinweg.
 
 **Dashboard (Nachfragen zu 012):** Teilen und Export (auch PDF), Alarme aus Abfragen, nur die gefilterte Ansicht
 auswerten (würde die Filterliste in die Datenbank kopieren), Nachricht als durchsuchbare Spalte (FTS), Abfragen über
@@ -91,6 +95,9 @@ Zeitzone/Versatz je Datei beim Merge, Ausfälle innerhalb eines Abschnitts genau
 
 **Analyse:** Trace-ID-Isolation, Gruppierung gleicher Meldungen, Diff zweier Dateien.
 
-**Export:** CSV/JSON/TXT/PDF, Workspace speichern und teilen, Plugin-Schnittstelle.
+**Export und Arbeitsstand (Nachfragen zu 015):** PDF, Export als Excel-Datei, Notizen mit Markdown, Arbeitsstand
+automatisch beim Beenden, Filter geschlossener Eltern-Tabs im Arbeitsstand (das Frontend kennt nur ihre Beschriftung),
+Zoom des Zeitstrahls im Arbeitsstand, Quellen aus 016–019 (ohne Geheimnisse), Spalten-Layout nur für den Arbeitsstand
+statt in den Settings, Plugin-Schnittstelle.
 
 **Plattform:** Signierung einrichten (Secrets, siehe `.github/workflows/release.yml`), UI-Sprachen.

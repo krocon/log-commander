@@ -403,3 +403,37 @@ export interface ReportSchema {
   sources: string[];
   status: ReportStatus | null;
 }
+
+/** A line to find again (prompt 015): number, source of a merge, byte offset, length, hash of its first 256 bytes. */
+export interface Anchor {
+  line: number;
+  source: number;
+  offset: number;
+  len: number;
+  /** 16 hex digits; empty for a bookmark of an old workspace that only knew the line number. */
+  hash: string;
+}
+
+export type ExportFormat = 'txt' | 'csv' | 'jsonl';
+
+/** What an export covers: the selection (line numbers in the view), the view, or every line of the file. */
+export type ExportRange =
+  { kind: 'selection'; first: number; last: number } | { kind: 'view' } | { kind: 'all' };
+
+export type ExportState = 'running' | 'done' | 'cancelled' | 'failed';
+
+/** Progress of an export job, at most every 100 ms and once at the end. */
+export interface ExportProgress {
+  jobId: number;
+  state: ExportState;
+  lines: number;
+  total: number;
+  bytes: number;
+  path: string;
+  error: { code: string; message: string; path?: string } | null;
+}
+
+export interface PathProbe {
+  path: string;
+  exists: boolean;
+}

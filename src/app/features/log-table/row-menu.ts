@@ -26,7 +26,10 @@ export type RowMenuAction =
   | 'filter-value-tab'
   | 'column-from-selection'
   | 'from-here'
-  | 'to-here';
+  | 'to-here'
+  | 'note'
+  | 'share-markdown'
+  | 'share-jira';
 
 /** Where the menu was opened: marked text, a cell with a value (column view), a line. */
 export interface RowMenuContext {
@@ -36,6 +39,8 @@ export interface RowMenuContext {
   hasLine: boolean;
   /** Why no filter tab can open (prompt 013: 8 per file), or null. */
   tabLimit?: string | null;
+  /** The entry under the pointer has a note (prompt 015). */
+  hasNote?: boolean;
 }
 
 const short = (text: string): string => (text.length > 30 ? `${text.slice(0, 30)}…` : text);
@@ -71,6 +76,14 @@ export function rowMenuItems(context: RowMenuContext): RowMenuItem[] {
   if (context.hasLine) {
     items.push({ id: 'from-here', label: 'Abschnitt ab hier', key: '>' });
     items.push({ id: 'to-here', label: 'Abschnitt bis hier', key: '<' });
+    // Prompt 015: a note on the entry, the selection for a ticket.
+    items.push({
+      id: 'note',
+      label: context.hasNote ? 'Notiz bearbeiten …' : 'Notiz …',
+      key: 'Shift+M',
+    });
+    items.push({ id: 'share-markdown', label: 'Als Markdown kopieren' });
+    items.push({ id: 'share-jira', label: 'Als Jira kopieren' });
   }
   return items;
 }
