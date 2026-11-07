@@ -37,6 +37,45 @@ export interface SessionUpdate {
   pendingBytes: number;
   /** The file shrank while frozen: the text of the frozen lines may be gone or different. */
   frozenStale: boolean;
+  /** Per source of a merge (empty for a single file); `fileSize` is their sum. */
+  sources: SourceUpdate[];
+}
+
+/** Live state of one source of a merge. */
+export interface SourceUpdate {
+  status: Status;
+  fileSize: number;
+  /** Lines in the merge from this source. */
+  lines: number;
+  /** Lines that came after later ones were shown, appended at the end. */
+  lateLines: number;
+}
+
+/** One file of a merge, fixed for the session. */
+export interface SourceInfo {
+  index: number;
+  path: string;
+  fileName: string;
+  profileId: string;
+  encoding: string;
+}
+
+/** What the merge dialog shows of a file before merging it. */
+export interface MergeCandidate {
+  path: string;
+  fileName: string;
+  suggestedProfileId: string;
+  encoding: string;
+  /** Microseconds since the epoch (UTC) of the first and last timestamp found. */
+  firstTime: number | null;
+  lastTime: number | null;
+  fileSize: number;
+}
+
+/** A file to merge; without a profile the suggestion applies. */
+export interface MergeSourceSpec {
+  path: string;
+  profileId?: string | null;
 }
 
 export interface SessionInfo {
@@ -45,11 +84,15 @@ export interface SessionInfo {
   fileName: string;
   suggestedProfileId: string;
   update: SessionUpdate;
+  /** The files of a merge in source order; empty for a single file. */
+  sources: SourceInfo[];
 }
 
 export interface LogLine {
   line: number;
   level: Level;
+  /** Index into `SessionInfo.sources` (0 for a single file). */
+  source: number;
   text: string;
   isContinuation: boolean;
   truncated: boolean;
@@ -122,6 +165,9 @@ export interface EntryDetail {
   text: string;
   /** The text stops early; copying returns everything. */
   truncated: boolean;
+  /** Source of the entry (merge) and the byte offset of its head in that file. */
+  source: number;
+  byteOffset: number;
 }
 
 export interface Profile {

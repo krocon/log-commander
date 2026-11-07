@@ -7,8 +7,10 @@ import {
   SearchQuery,
   SessionInfo,
   SessionUpdate,
+  SourceInfo,
   Status,
 } from '../../core/log/log.models';
+import { ALL_SOURCES, mergeKey, mergeTitle, sourceLabels } from '../merge/merge-logic';
 import { nextDisplayedLines } from './displayed-lines';
 import { ALL_LEVELS } from './filter-logic';
 import { isNewerColumns } from './format-logic';
@@ -30,9 +32,21 @@ const TRANSIENT_STATUS_MS = 4000;
 /** Everything one tab knows; a single viewport component renders the active one. */
 export class SessionState {
   readonly id: number;
+  /** Empty for a merge. */
   readonly path: string;
   readonly fileName: string;
   readonly suggestedProfileId: string;
+  /** The files of a merge (prompt 006), empty for a single file. */
+  readonly sources: readonly SourceInfo[];
+  readonly isMerge: boolean;
+  /** Same files in any order: the merge is open already. Null for a single file. */
+  readonly mergeKey: string | null;
+  /** Short names of the sources for the gutter. */
+  readonly sourceLabels: readonly string[];
+  /** Tooltip of the tab: the path, or the files of a merge. */
+  readonly title: string;
+  /** Visible sources of a merge (bit = source index). */
+  readonly sourceMask = signal(ALL_SOURCES);
 
   readonly update = signal<SessionUpdate>(null as unknown as SessionUpdate);
   /** How lines split into fields; reloaded when `columnsRevision` changes. */
@@ -129,7 +143,12 @@ export class SessionState {
   ) {
     this.id = info.sessionId;
     this.path = info.path;
-    this.fileName = info.fileName;
+    this.sources = info.sources ?? [];
+    this.isMerge = this.sources.length > 0;
+    this.fileName = this.isMerge ? mergeTitle(this.sources.length) : info.fileName;
+    this.mergeKey = this.isMerge ? mergeKey(this.sources.map((s) => s.path)) : null;
+    this.sourceLabels = sourceLabels(this.sources.map((s) => s.fileName));
+    this.title = this.isMerge ? this.sources.map((s) => s.path).join('\n') : info.path;
     this.suggestedProfileId = info.suggestedProfileId;
     this.cache = new PageCache((start, count) =>
       this.api.getLines(this.id, 'filtered', start, count),

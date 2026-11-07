@@ -9,6 +9,8 @@ export type ErrorCode =
   | 'invalid_profile'
   | 'invalid_search'
   | 'too_large'
+  | 'no_timestamps'
+  | 'invalid_merge'
   | 'backend_unavailable'
   | 'unknown';
 
@@ -34,6 +36,10 @@ export function describeError(error: AppError): string {
       return `Keine Leserechte${where}`;
     case 'is_a_directory':
       return `Das ist ein Ordner, keine Datei${where}`;
+    case 'no_timestamps':
+      return `Keine Zeitstempel in den ersten 200 Zeilen, Zusammenführen nicht möglich${where}`;
+    case 'invalid_merge':
+      return `Zusammenführen nicht möglich: ${error.message}${where}`;
     case 'backend_unavailable':
       return 'Desktop-Backend nicht verfügbar (läuft die App im Browser?)';
     default:

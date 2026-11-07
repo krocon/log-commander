@@ -45,8 +45,29 @@ const other = join(dir, 'other.log');
 writeFileSync(other, 'ERROR:root:other file\nINFO:root:still here\n');
 // No structure at all: no columns (prompt 009), opened by the scenario through the path dialog.
 writeFileSync(join(dir, 'plain.log'), 'just some words\nand some more words\n');
-// No structure at all: no columns (prompt 009), opened by the scenario through the path dialog.
-writeFileSync(join(dir, 'plain.log'), 'just some words\nand some more words\n');
+// Merge (prompt 006): two formats whose entries interleave in time; generators make them grow later.
+const mergeA = join(dir, 'merge-a.log');
+const mergeB = join(dir, 'merge-b.log');
+writeFileSync(
+  mergeA,
+  [1, 3, 5]
+    .map((s) => `2026-01-15T09:00:0${s}.000Z  INFO 4711 --- [main] c.a.A : merge a${s}\n`)
+    .join(''),
+);
+writeFileSync(
+  mergeB,
+  '2026-01-15 09:00:02,000 - app.b - INFO - merge b2\n'.replace('09:00', localHour(9)) +
+    '2026-01-15 09:00:04,000 - app.b - ERROR - merge b4\nTraceback (most recent call last):\nValueError: b4\n'.replace(
+      '09:00',
+      localHour(9),
+    ),
+);
+/** `HH:00` local for 09:00 UTC on that day, so both files mean the same moment without a zone. */
+function localHour(utcHour) {
+  const d = new Date(Date.UTC(2026, 0, 15, utcHour, 0, 0));
+  return `${String(d.getHours()).padStart(2, '0')}:00`;
+}
+const generators = [];
 const big = join(dir, 'big.log');
 // `--big-lines N` for measurements with larger files (the spike of prompt 003 reads at 10 million).
 const bigLinesAt = process.argv.indexOf('--big-lines');
@@ -137,6 +158,22 @@ function act(action) {
       );
       break;
     }
+    case 'genstart': {
+      // A busy and a quiet source; the busy one rotates (prompt 006).
+      const gen = join(root, 'scripts/gen-log.mjs');
+      generators.push(
+        spawn(process.execPath, [gen, mergeA, '--rate', '5000', '--rotate-every', '20000'], {
+          stdio: 'ignore',
+        }),
+        spawn(process.execPath, [gen, mergeB, '--rate', '20'], {
+          stdio: 'ignore',
+        }),
+      );
+      break;
+    }
+    case 'genstop':
+      for (const g of generators) g.kill();
+      break;
     case 'truncate':
       truncateSync(log);
       break;
@@ -194,6 +231,7 @@ createInterface({ input: app.stdout }).on('line', (line) => {
 
 app.on('exit', () => {
   clearTimeout(timer);
+  for (const g of generators) g.kill();
   rmSync(dir, { recursive: true, force: true });
   process.exit(exitCode);
 });

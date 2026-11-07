@@ -15,6 +15,7 @@ import { LogApi } from '../../core/log/log-api';
 import { EntryDetail } from '../../core/log/log.models';
 import { SettingsService } from '../../core/settings/settings.service';
 import { formatBytes, formatCount } from '../../shared/format';
+import { sourceColor } from '../merge/merge-logic';
 import { TextSegment } from '../log-table/highlight';
 import { LogSessionService } from '../sessions/log-session.service';
 import { SessionState } from '../sessions/session-state';
@@ -41,6 +42,14 @@ import { EntryKey, lineRangeLabel, needsReload } from './detail-logic';
         <span class="badge" [attr.data-level]="e.level">{{ e.level }}</span>
         <span class="range">{{ rangeLabel() }}</span>
         <span class="size">{{ sizeLabel() }}</span>
+        @if (sourceLabel(); as source) {
+          <span
+            class="source"
+            [class]="'source src-' + sourceColorOf(e.source)"
+            [title]="sourcePath()"
+            >{{ source }}</span
+          >
+        }
       } @else {
         <span class="title">Detail</span>
       }
@@ -125,6 +134,14 @@ import { EntryKey, lineRangeLabel, needsReload } from './detail-logic';
     .title,
     .size {
       color: var(--text-dim);
+    }
+    .source {
+      padding-left: 6px;
+      border-left: 3px solid var(--src);
+      color: var(--text-dim);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     .range {
       font-variant-numeric: tabular-nums;
@@ -277,6 +294,23 @@ export class DetailPanelComponent {
     const lines = entry.lineCount === 1 ? '1 Zeile' : `${formatCount(entry.lineCount)} Zeilen`;
     return `${lines} · ${formatBytes(entry.totalBytes)}`;
   });
+  /** A merge: the file of the entry and where its head starts in it (no line number of that file). */
+  protected readonly sourceLabel = computed(() => {
+    const entry = this.entry();
+    const session = this.session();
+    if (!entry || !session.isMerge) return '';
+    const file = session.sources[entry.source]?.fileName ?? '?';
+    return `${file} @ Byte ${formatCount(entry.byteOffset)}`;
+  });
+  protected readonly sourcePath = computed(() => {
+    const entry = this.entry();
+    return entry ? (this.session().sources[entry.source]?.path ?? '') : '';
+  });
+
+  protected sourceColorOf(index: number): number {
+    return sourceColor(index);
+  }
+
   protected readonly notice = computed(() => {
     const notes: string[] = [];
     const error = this.error();

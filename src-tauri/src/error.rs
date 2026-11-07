@@ -17,6 +17,10 @@ pub enum ErrorCode {
     InvalidProfile,
     InvalidSearch,
     TooLarge,
+    /// A file of a merge has no recognisable timestamp in its first lines.
+    NoTimestamps,
+    /// Not possible for a merge, or a merge that cannot be (count, duplicates).
+    InvalidMerge,
 }
 
 #[derive(Debug, Clone, Serialize, thiserror::Error)]

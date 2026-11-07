@@ -4,6 +4,7 @@ import { formatBytes, formatCount } from '../../shared/format';
 import { SEVERITIES, onlyLevel, toggleLevel } from '../sessions/filter-logic';
 import { LogSessionService } from '../sessions/log-session.service';
 import { SessionState } from '../sessions/session-state';
+import { sourceColor } from '../merge/merge-logic';
 
 interface LevelRow {
   level: Level;
@@ -63,6 +64,18 @@ const LEVEL_ROWS: readonly LevelRow[] = [
           <td>{{ size(u.fileSize) }}</td>
           <td><span aria-label="entfällt">–</span></td>
         </tr>
+        @for (source of session().sources; track source.index; let first = $first) {
+          <tr class="src-row" [class.first]="first">
+            <th scope="row" [title]="source.path">
+              <span [class]="'src-mark src-' + color(source.index)" aria-hidden="true"></span
+              >{{ session().sourceLabels[source.index] }}
+            </th>
+            <td [title]="lateTitle(u.sources[source.index]?.lateLines ?? 0)">
+              {{ count(u.sources[source.index]?.lines ?? 0) }}
+            </td>
+            <td><span aria-label="entfällt">–</span></td>
+          </tr>
+        }
       </tbody>
     </table>
   `,
@@ -106,6 +119,23 @@ const LEVEL_ROWS: readonly LevelRow[] = [
     .size td {
       border-top: 1px solid var(--border);
       color: var(--text-dim);
+    }
+    .src-row.first th,
+    .src-row.first td {
+      border-top: 1px solid var(--border);
+    }
+    .src-row th {
+      max-width: 120px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .src-mark {
+      display: inline-block;
+      width: 4px;
+      height: 10px;
+      margin-right: 5px;
+      border-radius: 1px;
+      background: var(--src);
     }
     .level {
       width: 100%;
@@ -173,6 +203,16 @@ export class StatsPanelComponent {
 
   protected viewCount(counts: LevelCounts | undefined, level: Level): number {
     return counts?.[level] ?? 0;
+  }
+
+  protected color(index: number): number {
+    return sourceColor(index);
+  }
+
+  protected lateTitle(late: number): string {
+    return late
+      ? `Zeilen dieser Datei, davon ${formatCount(late)} verspätet`
+      : 'Zeilen dieser Datei';
   }
 
   protected size(bytes: number): string {

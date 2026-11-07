@@ -38,6 +38,7 @@ Einstellung `theme`: `system` (Standard), `dark`, `light`. Der `SettingsService`
 | Auswahl und Treffer | `--row-selected`, `--hit-bg`, `--hit-text`, `--hit-current-bg`, `--hit-current-text` | Gewählter Eintrag, Suchtreffer, aktueller Treffer |
 | Level | `--lv-<level>-fg`, `--lv-<level>-bg` für `trace`, `debug`, `info`, `warn`, `error`, `fatal`, `unknown`; dazu `--lv-info-badge`, `--lv-error-edge` | Zeilenfarbe je Level, Markierung am Zeilenrand |
 | Splitter | `--splitter-bg`, `--splitter-grip`, `--splitter-hover-bg` | Leiste, Griff in der Mitte, Hover/Ziehen (`shared/splitter.ts`) |
+| Quellen (Merge) | `--src-1` … `--src-8`, Klasse `src-N` setzt `--src` | Streifen im Zeilenrand, Chips, Dialog, Baum und Statistik (Prompt 006); ab der neunten Quelle wiederholt, der Dateiname unterscheidet |
 | Inline-Tokens | `--tok-time`, `--tok-number`, `--tok-string`, `--tok-id`, `--tok-url` | Hervorhebung in der Zeile (`highlight.ts`) |
 
 Alle Zellen einer Zeile (Rohansicht: Nummer und Text, Spaltenansicht: jede Spalte) tragen die Klasse `lv-<LEVEL>` (`table-logic.ts`). `log-table-view.css` setzt daraus Vorder- und
@@ -61,6 +62,9 @@ läuft als erster Schritt in `npm run check`.
   der Griff der Splitter (`--splitter-grip`) auf der Leiste, im Hover und auf `--bg-app`/`--bg-panel`, `--accent` als
   Griff beim Ziehen, und die Level-Punkte der Statistik in der Seitenleiste auf `--bg-panel`. Die Leiste selbst hebt sich
   nur leicht ab, erkennbar ist sie am Griff; die Trefferfläche reicht 5 px über die 6 px breite Leiste hinaus.
+- Quellfarben (Prompt 006): `--src-1` … `--src-8` sind Grafik (Streifen, Farbfeld) und stehen in `GRAPHIC_PAIRS` gegen
+  `--bg-gutter`, `--row-selected`, `--bg-panel` und `--bg-raised`. Text in ihnen gibt es nicht, die Quelle steht immer als
+  Name daneben.
 - Seitenleiste (Prompt 005): aktuelle Datei mit `--text` auf `--row-selected` (in `PAIRS`), sonst vorhandene Tokens.
 - Farbe ist nie die einzige Information: Level steht als Wort in der Zeile, Zustände haben Text oder Symbol.
 

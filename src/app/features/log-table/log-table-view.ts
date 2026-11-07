@@ -37,6 +37,7 @@ import {
   visibleRowCount,
 } from './viewport-logic';
 import { LogSessionService } from '../sessions/log-session.service';
+import { labelWidth } from '../merge/merge-logic';
 import { ColumnMenuComponent } from './column-menu';
 import { SessionState } from '../sessions/session-state';
 import { COL_NUMBER, COL_TEXT, ID_NUMBER, ID_TEXT, LogAreaModel } from './log-area-model';
@@ -171,7 +172,10 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
 
   protected readonly formatCount = formatCount;
   protected readonly fontSize = computed(() => this.settings().fontSize);
-  protected readonly lineNumbers = computed(() => this.settings().showLineNumbers);
+  /** The gutter is shown: line numbers on, or a merge (it carries the source of each line). */
+  protected readonly lineNumbers = computed(
+    () => this.settings().showLineNumbers || this.session().isMerge,
+  );
   protected readonly rowH = computed(() => Math.round(this.fontSize() * LINE_HEIGHT_FACTOR));
   protected readonly headerH = computed(() => this.rowH() + 8);
 
@@ -398,6 +402,7 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
         () => this.session(),
         () => this.rowH(),
       );
+      area.showNumbers = () => this.settings().showLineNumbers;
       return {
         area,
         profileId: null,
@@ -420,6 +425,7 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
       () => this.rowH(),
       [{ id: ID_NUMBER, field: -1 }, ...columns.map((c) => ({ id: c.id, field: c.field }))],
     );
+    area.showNumbers = () => this.settings().showLineNumbers;
     const message = set.columns.findIndex((c) => c.id === MESSAGE_ID);
     area.messageField = message >= 0 ? message : set.columns.length - 1;
     return {
@@ -571,8 +577,13 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
   }
 
   private gutterWidth(): number {
-    const digits = Math.max(4, String(this.session().update().totalLines).length + 1);
-    return Math.ceil(digits * this.fontSize() * CHAR_WIDTH_FACTOR + 12);
+    const session = this.session();
+    const numbers = this.settings().showLineNumbers;
+    const digits = numbers ? Math.max(4, String(session.update().totalLines).length + 1) : 0;
+    // A merge: the short file name in front, plus the colour stripe.
+    const names = session.isMerge ? labelWidth(session.sourceLabels) + (numbers ? 1 : 0) : 0;
+    const stripe = session.isMerge ? 6 : 0;
+    return Math.ceil((digits + names) * this.fontSize() * CHAR_WIDTH_FACTOR + 12 + stripe);
   }
 
   private measureText(area: LogAreaModel): void {

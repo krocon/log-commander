@@ -77,6 +77,45 @@ pub struct SessionUpdate {
     pub pending_bytes: u64,
     /// The file shrank while frozen: the text of the frozen lines may be gone or different.
     pub frozen_stale: bool,
+    /// Per source of a merge (empty for a single file); `file_size` is their sum.
+    pub sources: Vec<SourceUpdate>,
+}
+
+/// Live state of one source of a merge.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceUpdate {
+    pub status: Status,
+    pub file_size: u64,
+    /// Lines in the merge from this source.
+    pub lines: u64,
+    /// Entries that came after a later one was already shown, appended at the end.
+    pub late_lines: u64,
+}
+
+/// One file of a merge, fixed for the session.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceInfo {
+    pub index: u8,
+    pub path: String,
+    pub file_name: String,
+    pub profile_id: String,
+    pub encoding: Encoding,
+}
+
+/// What the merge dialog shows about a file before merging it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MergeCandidate {
+    pub path: String,
+    pub file_name: String,
+    pub suggested_profile_id: String,
+    pub encoding: Encoding,
+    /// Microseconds since the epoch (UTC) of the first and last timestamp found, if any.
+    pub first_time: Option<i64>,
+    pub last_time: Option<i64>,
+    pub file_size: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -87,6 +126,8 @@ pub struct SessionInfo {
     pub file_name: String,
     pub suggested_profile_id: String,
     pub update: SessionUpdate,
+    /// The files of a merge in source order; empty for a single file.
+    pub sources: Vec<SourceInfo>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -95,6 +136,8 @@ pub struct LogLine {
     /// Zero-based number of the line in the file (the index).
     pub line: u32,
     pub level: Level,
+    /// Index into `SessionInfo.sources` (0 for a single file).
+    pub source: u8,
     pub text: String,
     pub is_continuation: bool,
     /// The line is longer than what was sent.
@@ -171,4 +214,7 @@ pub struct EntryDetail {
     pub text: String,
     /// The text stops early; copying (`copy_lines`) still returns everything.
     pub truncated: bool,
+    /// Source of the entry (merge) and the byte offset of its head in that file.
+    pub source: u8,
+    pub byte_offset: u64,
 }

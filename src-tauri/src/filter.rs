@@ -95,12 +95,26 @@ impl LevelMask {
     }
 }
 
+/// Bit mask of the visible sources of a merge (bit = source index); a single file is source 0.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SourceMask(pub u16);
+
+impl SourceMask {
+    pub const ALL: SourceMask = SourceMask(u16::MAX);
+
+    pub fn contains(self, source: usize) -> bool {
+        source >= 16 || self.0 & (1 << source) != 0
+    }
+}
+
 /// What the user asked for, after compiling the search.
 #[derive(Debug, Clone)]
 pub struct FilterSpec {
     pub levels: LevelMask,
     pub matcher: Option<Arc<TextMatcher>>,
     pub mode: SearchMode,
+    /// Sources of a merge; decided at the head of an entry, the entry stays whole.
+    pub sources: SourceMask,
 }
 
 impl Default for FilterSpec {
@@ -109,6 +123,7 @@ impl Default for FilterSpec {
             levels: LevelMask::ALL,
             matcher: None,
             mode: SearchMode::Filter,
+            sources: SourceMask::ALL,
         }
     }
 }
@@ -124,7 +139,9 @@ impl FilterSpec {
 
     /// Every line is visible: no list needed, position and line number are the same.
     pub fn is_identity(&self) -> bool {
-        self.levels == LevelMask::ALL && self.filtering_matcher().is_none()
+        self.levels == LevelMask::ALL
+            && self.filtering_matcher().is_none()
+            && self.sources == SourceMask::ALL
     }
 
     pub fn needs_text(&self) -> bool {
@@ -142,6 +159,8 @@ pub struct FilteredLines {
     list: Option<Vec<u32>>,
     entry_start: u32,
     entry_included: bool,
+    /// The entry's head is from a source the filter hides: no line of it is shown.
+    entry_excluded: bool,
     next_line: u32,
     /// Lines in `list` per level (the "Ansicht" column of the statistics).
     counts: Counts,
@@ -158,6 +177,7 @@ pub struct FilteredLines {
 pub struct FilterCheckpoint {
     entry_start: u32,
     entry_included: bool,
+    entry_excluded: bool,
     next_line: u32,
     list_len: usize,
     counts: Counts,
@@ -174,6 +194,7 @@ impl FilteredLines {
             list,
             entry_start: 0,
             entry_included: false,
+            entry_excluded: false,
             next_line: 0,
             counts: [0; Level::COUNT],
             entry_head: Level::Unknown,
@@ -230,6 +251,7 @@ impl FilteredLines {
         }
         self.entry_start = 0;
         self.entry_included = false;
+        self.entry_excluded = false;
         self.next_line = 0;
         self.counts = [0; Level::COUNT];
         self.entry_head = Level::Unknown;
@@ -241,6 +263,7 @@ impl FilteredLines {
         FilterCheckpoint {
             entry_start: self.entry_start,
             entry_included: self.entry_included,
+            entry_excluded: self.entry_excluded,
             next_line: self.next_line,
             list_len: self.list.as_ref().map_or(0, Vec::len),
             counts: self.counts,
@@ -253,6 +276,7 @@ impl FilteredLines {
     pub fn restore(&mut self, checkpoint: FilterCheckpoint) {
         self.entry_start = checkpoint.entry_start;
         self.entry_included = checkpoint.entry_included;
+        self.entry_excluded = checkpoint.entry_excluded;
         self.next_line = checkpoint.next_line;
         self.counts = checkpoint.counts;
         self.entry_head = checkpoint.entry_head;
@@ -270,6 +294,17 @@ impl FilteredLines {
         continuation: bool,
         text_matches: impl FnOnce() -> bool,
     ) {
+        self.append_from(0, level, continuation, text_matches);
+    }
+
+    /// Takes the next line of a source (merge). The source of the head decides for the entry.
+    pub fn append_from(
+        &mut self,
+        source: usize,
+        level: Level,
+        continuation: bool,
+        text_matches: impl FnOnce() -> bool,
+    ) {
         let line = self.next_line;
         self.next_line += 1;
         let Some(list) = &mut self.list else {
@@ -279,6 +314,7 @@ impl FilteredLines {
         if !continuation || line == 0 {
             self.entry_start = line;
             self.entry_included = false;
+            self.entry_excluded = !self.spec.sources.contains(source);
             self.entry_head = level;
             if self.entry_pending {
                 self.entry_counts = [0; Level::COUNT];
@@ -289,7 +325,8 @@ impl FilteredLines {
             self.counts[level as usize] += 1;
             return;
         }
-        if !self.spec.levels.contains(level)
+        if self.entry_excluded
+            || !self.spec.levels.contains(level)
             || self.spec.filtering_matcher().is_some() && !text_matches()
         {
             // A later hit in the entry brings this line in; its level is gone by then. The head
@@ -341,7 +378,34 @@ mod tests {
                 )
             }),
             mode: SearchMode::Filter,
+            sources: SourceMask::ALL,
         }
+    }
+
+    #[test]
+    fn source_filter_takes_whole_entries_by_their_head() {
+        let mut filter = FilteredLines::new(FilterSpec {
+            sources: SourceMask(0b10),
+            ..FilterSpec::default()
+        });
+        assert!(!filter.spec.is_identity());
+        let lines = [
+            (0, Level::Info, false),
+            (1, Level::Error, false),
+            (1, Level::Error, true),
+            (0, Level::Warn, false),
+            (0, Level::Warn, true),
+            (1, Level::Info, false),
+        ];
+        for (source, level, continuation) in lines {
+            filter.append_from(source, level, continuation, || true);
+        }
+        assert_eq!(filter.len(6), 3);
+        assert_eq!(
+            (0..3).map(|p| filter.line_at(p, 6)).collect::<Vec<_>>(),
+            vec![Some(1), Some(2), Some(5)]
+        );
+        assert_eq!(count_of(&view_counts(&filter), Level::Warn), 0);
     }
 
     fn feed(filter: &mut FilteredLines, lines: &[(Level, bool, &str)]) {

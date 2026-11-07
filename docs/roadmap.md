@@ -18,11 +18,18 @@ Architektur verbaut nichts davon.
 - Seitenleiste (Prompt 005): Baum mit Dateien, aktivem Filter (`×` entfernt) und gespeicherten Filtern, Statistik
   „Alle“/„Ansicht“ je Level samt Dateigröße, Klick filtert; Breite und Teilung per Splitter, `Cmd/Ctrl+B`, unter
   900 px automatisch ausgeblendet. Splitter mit sichtbarem Griff
+- Dateien zusammenführen (Prompt 006): bis 16 Dateien als ein Tab nach Zeitstempel, Quelle im Zeilenrand (Name und
+  Farbe), Quellenfilter als Chips, Quelldateien im Baum und in der Statistik, live mit 1 s Haltepuffer, verspätete
+  Zeilen gezählt, „Neu sortieren“
 
 ## Offen
 
-**Dateien:** Rotierte Archive als durchgehende Timeline, `.gz`/`.zip`/`.zst` lesen, Merge-View nach Zeitstempel, Ordner/Glob
+**Dateien:** Rotierte Archive als durchgehende Timeline, `.gz`/`.zip`/`.zst` lesen, Ordner/Glob
 beobachten, Remote-Logs über SSH, `stdin`/Pipe-Modus.
+
+**Merge (Nachfragen zu 006):** Zeitversatz je Datei für Hosts mit abweichender Uhr, Zeitzone je Datei (heute gilt ohne
+Angabe die lokale Zone), Zeilennummer in der Quelldatei (bräuchte eine Spalte im Index), Merge speichern, exportieren und
+in „Zuletzt geöffnet“, Archive und Ordner im Merge, Spalten je Quelle bei verschiedenen Formaten.
 
 **Struktur:** Im Detail-Panel vorheriger/nächster Eintrag, Felder eines Eintrags als Tabelle, YAML/SQL formatieren;
 Filtern aus der Kopfzeile (010), fixierte Spalten, eigene Felder aus der Nachricht (011),

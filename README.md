@@ -38,6 +38,12 @@ Like <code>tail -f</code> with a GUI: millions of lines, instant filters, no wai
   statistics table with lines per level for the whole file and for the current view; click a level to show only it,
   Alt-click to switch it on or off. Width and the split between tree and statistics are draggable; `Cmd/Ctrl+B` or
   the toolbar shows and hides it, below 900 px window width it steps aside by itself.
+- **Merge files** – several logs (2 to 16) in one tab, their entries sorted by timestamp so they read like the log of
+  one process. Each line shows its file as a short name and a colour stripe in the gutter; chips in the toolbar (and
+  nodes in the sidebar) filter by file. New lines keep coming in live, held back up to 1 s so the files can catch up;
+  an entry that arrives later than that is appended at the end and counted („N verspätet · Neu sortieren“). Open it
+  with `Cmd/Ctrl+Shift+M`, the button in the tab bar or the menu: tick open tabs or pick files, the profile of each
+  file is suggested and can be changed, the dialog shows its first and last time.
 - **Search** – filter or highlight, regular expressions, case sensitivity, jump between matches.
 - **Follow** – stays at the end while you are there; scroll up and it pauses and counts the new lines.
 - **Freeze** – holds a tab to read in peace: lines, counts and the position stay put while filters and search keep
@@ -50,6 +56,7 @@ Like <code>tail -f</code> with a GUI: millions of lines, instant filters, no wai
 |---|---|
 | ![Search](docs/screenshots/search.png) | ![Light theme](docs/screenshots/light.png) |
 | ![Detail panel](docs/screenshots/detail.png) | ![Sidebar](docs/screenshots/sidebar.png) |
+| ![Merged files](docs/screenshots/merge.png) | ![Merge dialog](docs/screenshots/merge-dialog.png) |
 
 ## Install
 
@@ -66,6 +73,7 @@ log-commander /var/log/app.log /var/log/other.log
 |---|---|
 | `Cmd/Ctrl+O` | Open a file |
 | `Cmd/Ctrl+Shift+O` | Type or paste a path to open (`~` works) |
+| `Cmd/Ctrl+Shift+M` | Merge files into one tab, sorted by time |
 | `End`, `F` | Go to the end and follow |
 | `Space` | Pause or resume following |
 | `P` | Freeze: hold or resume reading the file of this tab |

@@ -11,6 +11,8 @@ import {
   Level,
   LogLine,
   LogViewKind,
+  MergeCandidate,
+  MergeSourceSpec,
   Profile,
   SearchMode,
   SearchQuery,
@@ -30,6 +32,27 @@ export class LogApi {
     return call('open_log', { path, keepOnRotate, onUpdate: channel });
   }
 
+  /** Several files as one tab, their entries in time order. */
+  openMerged(
+    sources: readonly MergeSourceSpec[],
+    keepOnRotate: boolean,
+    onUpdate: (update: SessionUpdate) => void,
+  ): Promise<SessionInfo> {
+    const channel = new Channel<SessionUpdate>();
+    channel.onmessage = onUpdate;
+    return call('open_merged', { sources, keepOnRotate, onUpdate: channel });
+  }
+
+  /** Profile suggestion, encoding, first and last time of a file, for the merge dialog. */
+  inspectMergeSource(path: string): Promise<MergeCandidate> {
+    return call('inspect_merge_source', { path });
+  }
+
+  /** Merges all files of a merge again, late lines in their place (new epoch). */
+  resort(sessionId: number): Promise<void> {
+    return call('resort', { sessionId });
+  }
+
   close(sessionId: number): Promise<void> {
     return call('close_log', { sessionId });
   }
@@ -43,6 +66,7 @@ export class LogApi {
     levels: readonly Level[],
     query: SearchQuery,
     mode: SearchMode,
+    sources: number | null = null,
   ): Promise<FilterInfo> {
     return call('set_filter', {
       sessionId,
@@ -51,6 +75,7 @@ export class LogApi {
       isRegex: query.isRegex,
       caseSensitive: query.caseSensitive,
       mode,
+      sources,
     });
   }
 

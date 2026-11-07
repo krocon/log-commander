@@ -10,6 +10,7 @@ import { cellSegments, lineSegments, TextSegment } from './highlight';
 import { SessionState } from '../sessions/session-state';
 import { rowClasses } from './table-logic';
 import { spansRow } from './columns-logic';
+import { gutterText, labelWidth, sourceColor } from '../merge/merge-logic';
 
 export const COL_NUMBER = 0;
 export const COL_TEXT = 1;
@@ -58,11 +59,11 @@ class LogCellRenderer implements CellRendererIf {
   ): RendererCleanupFnType | undefined {
     if (!cellValue) return undefined;
     cellDiv.dataset['line'] = String(cellValue.line);
+    const model = areaModel as LogAreaModel;
     if (columnIndex === COL_NUMBER) {
-      cellDiv.textContent = String(cellValue.line + 1);
+      cellDiv.textContent = model.gutterText(cellValue);
       return undefined;
     }
-    const model = areaModel as LogAreaModel;
     const column = model.columnAt(columnIndex);
     const text = document.createElement('span');
     text.className = 'lt-text';
@@ -107,6 +108,8 @@ export class LogAreaModel extends AreaModel {
   spanOffset = 0;
   /** First shown data column: it carries the level mark. */
   leadColumn = COL_TEXT;
+  /** Line numbers in the gutter (a merge shows it for the source name also without them). */
+  showNumbers: () => boolean = () => true;
 
   constructor(
     private readonly session: () => SessionState,
@@ -131,6 +134,15 @@ export class LogAreaModel extends AreaModel {
 
   columnIds(): string[] {
     return this.columns.map((c) => c.id);
+  }
+
+  /** The gutter: the line number, in a merge the short file name in front of it. */
+  gutterText(line: LogLine): string {
+    const session = this.session();
+    const number = this.showNumbers() ? line.line : null;
+    if (!session.isMerge) return number === null ? '' : String(number + 1);
+    const labels = session.sourceLabels;
+    return gutterText(labels[line.source] ?? '?', labelWidth(labels), number);
   }
 
   spans(line: LogLine): boolean {
@@ -161,7 +173,7 @@ export class LogAreaModel extends AreaModel {
   override getTextValueAt(rowIndex: number, columnIndex: number): string {
     const line = this.session().cache.line(rowIndex);
     if (!line) return '';
-    if (columnIndex === COL_NUMBER) return String(line.line + 1);
+    if (columnIndex === COL_NUMBER) return this.gutterText(line);
     const column = this.columnAt(columnIndex);
     if (column.field < 0) return line.text;
     if (this.spans(line)) return columnIndex === this.spanFrom ? line.text : '';
@@ -181,6 +193,7 @@ export class LogAreaModel extends AreaModel {
     const classes = rowClasses(line, session.selection(), session.currentHitLine());
     if (columnIndex === COL_NUMBER) {
       classes.push('lt-gutter');
+      if (line && session.isMerge) classes.push('lt-src', `src-${sourceColor(line.source)}`);
       return classes;
     }
     classes.push('lt-cell');

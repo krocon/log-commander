@@ -26,6 +26,7 @@ import { LogSessionService } from '../sessions/log-session.service';
 import { formatSummary } from '../sessions/format-logic';
 import { columnsActive, columnsAvailable } from '../log-table/columns-logic';
 import { SidebarState } from '../sidebar/sidebar-state';
+import { isVisible, onlySource, sourceColor, toggleSource } from '../merge/merge-logic';
 
 const SEARCH_DEBOUNCE_MS = 200;
 
@@ -112,6 +113,21 @@ const SEARCH_DEBOUNCE_MS = 200;
         </button>
       }
     </div>
+    @if (s?.isMerge) {
+      <div class="group chips sources" role="group" aria-label="Quellen">
+        @for (source of s!.sources; track source.index) {
+          <button
+            type="button"
+            [class]="'chip src src-' + color(source.index)"
+            [attr.aria-pressed]="sourceVisible(source.index)"
+            [title]="source.path + ': Klick an/aus · Alt-Klick nur diese Datei'"
+            (click)="onSource($event, source.index)"
+          >
+            <span class="swatch" aria-hidden="true"></span>{{ s!.sourceLabels[source.index] }}
+          </button>
+        }
+      </div>
+    }
     <div class="group" role="group" aria-label="Presets" [hidden]="!s">
       <button type="button" [disabled]="!s" [attr.aria-pressed]="isAll()" (click)="preset(null)">
         Alle
@@ -192,8 +208,12 @@ const SEARCH_DEBOUNCE_MS = 200;
       <select
         aria-label="Profil"
         [hidden]="!s"
-        [title]="profileTitle()"
-        [disabled]="!s"
+        [title]="
+          s?.isMerge
+            ? 'Ein Merge hat ein Profil je Datei, gewählt beim Zusammenführen'
+            : profileTitle()
+        "
+        [disabled]="!s || s.isMerge"
         (change)="onProfile($event)"
       >
         @for (profile of sessions.profiles(); track profile.id) {
@@ -262,6 +282,21 @@ const SEARCH_DEBOUNCE_MS = 200;
     .count {
       font-variant-numeric: tabular-nums;
       opacity: 0.85;
+    }
+    .chip.src {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      --chip: var(--text);
+    }
+    .chip.src[aria-pressed='true'] {
+      border-color: var(--src);
+    }
+    .swatch {
+      width: 8px;
+      height: 8px;
+      border-radius: 2px;
+      background: var(--src);
     }
     .chip-UNKNOWN {
       --chip: var(--text-dim);
@@ -388,6 +423,25 @@ export class ToolbarComponent implements OnInit, OnDestroy {
     if (!session) return;
     const next = event.altKey ? onlyLevel(level) : toggleLevel(session.levels(), level);
     void this.sessions.setLevels(session, next);
+  }
+
+  protected color(index: number): number {
+    return sourceColor(index);
+  }
+
+  protected sourceVisible(index: number): boolean {
+    const session = this.session();
+    return !session || isVisible(session.sourceMask(), index);
+  }
+
+  /** Like the level chips: a click switches the file, Alt-click shows only it. */
+  protected onSource(event: MouseEvent, index: number): void {
+    const session = this.session();
+    if (!session) return;
+    const count = session.sources.length;
+    const mask = session.sourceMask();
+    const next = event.altKey ? onlySource(mask, index, count) : toggleSource(mask, index, count);
+    void this.sessions.setSources(session, next);
   }
 
   protected onChipDouble(level: Level): void {

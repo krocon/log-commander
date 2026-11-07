@@ -19,20 +19,20 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-const BLOCK_SIZE: usize = 1024 * 1024;
+pub(crate) const BLOCK_SIZE: usize = 1024 * 1024;
 /// `notify` is unreliable on network drives and in Docker volumes: the size is checked regardless.
-const POLL_INTERVAL: Duration = Duration::from_millis(250);
+pub(crate) const POLL_INTERVAL: Duration = Duration::from_millis(250);
 /// While a writer is active the poll follows the update rate.
-const ACTIVE_POLL_INTERVAL: Duration = Duration::from_millis(100);
-const ACTIVE_FOR: Duration = Duration::from_secs(2);
+pub(crate) const ACTIVE_POLL_INTERVAL: Duration = Duration::from_millis(100);
+pub(crate) const ACTIVE_FOR: Duration = Duration::from_secs(2);
 /// Bundling: at most ~10 updates per second.
-const EMIT_INTERVAL: Duration = Duration::from_millis(100);
+pub(crate) const EMIT_INTERVAL: Duration = Duration::from_millis(100);
 /// Waking per write of a busy logger would be wasted work.
-const MIN_TICK: Duration = Duration::from_millis(40);
+pub(crate) const MIN_TICK: Duration = Duration::from_millis(40);
 /// A last line without a line end is shown after this pause, and replaced if it grows.
-const PARTIAL_COMMIT_AFTER: Duration = Duration::from_secs(1);
+pub(crate) const PARTIAL_COMMIT_AFTER: Duration = Duration::from_secs(1);
 /// Old files kept open after rotations; more would pile up file descriptors.
-const MAX_SEGMENTS: usize = 32;
+pub(crate) const MAX_SEGMENTS: usize = 32;
 /// Lines of the first block that decide the profile and the format.
 pub const SAMPLE_LINES: usize = 200;
 /// Text of the sample kept per line; the format only looks at the start anyway.
@@ -254,19 +254,12 @@ impl Tailer {
     /// length. Later files of the session (rotation) keep the format: their lines that do not fit
     /// fall back to a single message.
     fn start_file(&mut self, n: usize) -> usize {
-        let sample = &self.buf[..n];
-        let (encoding, bom) = Encoding::detect(sample);
-        let body = &sample[bom..];
-        let mut splitter = LineSplitter::new(encoding, 0);
-        let mut plain: Vec<Vec<u8>> = Vec::new();
-        let mut texts: Vec<String> = Vec::new();
-        splitter.feed(body, |_, raw| {
-            if plain.len() < SAMPLE_LINES {
-                plain.push(detection_bytes(raw, encoding).into_owned());
-                let raw = &raw[..raw.len().min(SAMPLE_LINE_BYTES)];
-                texts.push(display_text(raw, encoding).into_owned());
-            }
-        });
+        let Sample {
+            encoding,
+            bom,
+            plain,
+            texts,
+        } = Sample::of(&self.buf[..n]);
         self.current.started = true;
         self.splitter = LineSplitter::new(encoding, self.current.base + bom as u64);
         let mut data = self.shared.data.write();
@@ -283,14 +276,7 @@ impl Tailer {
             let texts = Arc::new(texts);
             let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
             let registry = ProfileRegistry::default();
-            let guess = fields::detect_format(&refs, &registry.list());
-            // A layout that fits is the stronger evidence; otherwise the level keywords decide.
-            let suggestion =
-                if guess.confidence >= MIN_CONFIDENCE && guess.inferred_layout.is_none() {
-                    guess.profile_id.clone()
-                } else {
-                    suggest_profile(plain.iter().map(Vec::as_slice))
-                };
+            let (suggestion, guess) = suggest(&plain, &refs, &registry);
             let profile = registry.find(&suggestion).ok();
             let view = self.shared.next_view_generation();
             let mut data = self.shared.data.write();
@@ -532,7 +518,55 @@ impl Tailer {
     }
 }
 
-fn text_matches(matcher: &TextMatcher, raw: &[u8], encoding: Encoding) -> bool {
+/// The first lines of a file: its encoding, the BOM length, and per line (at most `SAMPLE_LINES`)
+/// the bytes for the level detection and the decoded text for the format.
+pub struct Sample {
+    pub encoding: Encoding,
+    pub bom: usize,
+    pub plain: Vec<Vec<u8>>,
+    pub texts: Vec<String>,
+}
+
+impl Sample {
+    pub fn of(block: &[u8]) -> Self {
+        let (encoding, bom) = Encoding::detect(block);
+        let body = &block[bom..];
+        let mut splitter = LineSplitter::new(encoding, 0);
+        let mut plain: Vec<Vec<u8>> = Vec::new();
+        let mut texts: Vec<String> = Vec::new();
+        splitter.feed(body, |_, raw| {
+            if plain.len() < SAMPLE_LINES {
+                plain.push(detection_bytes(raw, encoding).into_owned());
+                let raw = &raw[..raw.len().min(SAMPLE_LINE_BYTES)];
+                texts.push(display_text(raw, encoding).into_owned());
+            }
+        });
+        Self {
+            encoding,
+            bom,
+            plain,
+            texts,
+        }
+    }
+}
+
+/// The profile suggested for a sample and the format guess: a layout that fits is the stronger
+/// evidence, otherwise the level keywords decide.
+pub fn suggest(
+    plain: &[Vec<u8>],
+    texts: &[&str],
+    registry: &ProfileRegistry,
+) -> (String, fields::FormatGuess) {
+    let guess = fields::detect_format(texts, &registry.list());
+    let suggestion = if guess.confidence >= MIN_CONFIDENCE && guess.inferred_layout.is_none() {
+        guess.profile_id.clone()
+    } else {
+        suggest_profile(plain.iter().map(Vec::as_slice))
+    };
+    (suggestion, guess)
+}
+
+pub fn text_matches(matcher: &TextMatcher, raw: &[u8], encoding: Encoding) -> bool {
     let raw = &raw[..raw.len().min(MAX_SEARCH_BYTES)];
     matcher.is_match(&crate::encoding::display_text(raw, encoding))
 }

@@ -1,6 +1,15 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { LogApi } from '../../core/log/log-api';
-import { Level, Profile, SearchMode, SearchQuery, SessionUpdate } from '../../core/log/log.models';
+import {
+  Level,
+  MergeSourceSpec,
+  Profile,
+  SearchMode,
+  SearchQuery,
+  SessionInfo,
+  SessionUpdate,
+} from '../../core/log/log.models';
+import { mergeKey, maskForBackend } from '../merge/merge-logic';
 import { AppError, describeError, toAppError } from '../../core/errors/app-error';
 import { SettingsService } from '../../core/settings/settings.service';
 import { SessionState } from './session-state';
@@ -47,18 +56,10 @@ export class LogSessionService {
       this.activate(open.id);
       return null;
     }
-    // Updates can overtake the answer of open_log; they wait until the state exists.
-    let state: SessionState | null = null;
-    const early: SessionUpdate[] = [];
     try {
-      const info = await this.api.open(path, this.settings.settings().keepOnRotate, (update) => {
-        if (state) state.applyUpdate(update);
-        else early.push(update);
-      });
-      state = new SessionState(info, this.api);
-      for (const update of early) state.applyUpdate(update);
-      this.sessions.update((all) => [...all, state as SessionState]);
-      this.activate(state.id);
+      const info = await this.start((onUpdate) =>
+        this.api.open(path, this.settings.settings().keepOnRotate, onUpdate),
+      );
       this.settings.addRecentFile(info.path);
       return null;
     } catch (e) {
@@ -66,6 +67,60 @@ export class LogSessionService {
       if (err.code === 'not_found') this.settings.removeRecentFile(path);
       return err;
     }
+  }
+
+  /**
+   * Opens several files as one tab (prompt 006), or activates the merge of the same files. A merge has no
+   * path: it is recognised by its sorted paths. It does not go into the recent files.
+   */
+  async openMerged(sources: readonly MergeSourceSpec[]): Promise<AppError | null> {
+    const key = mergeKey(sources.map((s) => s.path));
+    const open = this.sessions().find((s) => s.mergeKey === key);
+    if (open) {
+      this.activate(open.id);
+      return null;
+    }
+    try {
+      await this.start((onUpdate) =>
+        this.api.openMerged(sources, this.settings.settings().keepOnRotate, onUpdate),
+      );
+      return null;
+    } catch (e) {
+      return toAppError(e);
+    }
+  }
+
+  /** Creates the tab of a session the backend opens; updates may overtake the answer, they wait. */
+  private async start(
+    open: (onUpdate: (update: SessionUpdate) => void) => Promise<SessionInfo>,
+  ): Promise<SessionInfo> {
+    let state: SessionState | null = null;
+    const early: SessionUpdate[] = [];
+    const info = await open((update) => {
+      if (state) state.applyUpdate(update);
+      else early.push(update);
+    });
+    state = new SessionState(info, this.api);
+    for (const update of early) state.applyUpdate(update);
+    this.sessions.update((all) => [...all, state as SessionState]);
+    this.activate(state.id);
+    return info;
+  }
+
+  /** Merges the files of a merge tab again, late lines in their place. */
+  async resort(session: SessionState): Promise<void> {
+    if (!session.isMerge) return;
+    try {
+      await this.api.resort(session.id);
+    } catch (e) {
+      this.showError(toAppError(e));
+    }
+  }
+
+  /** Visible sources of a merge (source chips). */
+  async setSources(session: SessionState, mask: number): Promise<void> {
+    session.sourceMask.set(mask);
+    await this.applyFilter(session);
   }
 
   async close(id: number): Promise<void> {
@@ -145,6 +200,7 @@ export class LogSessionService {
         [...session.levels()],
         session.query(),
         session.searchMode(),
+        maskForBackend(session.sourceMask(), session.sources.length),
       );
       session.searchError.set(null);
     } catch (e) {

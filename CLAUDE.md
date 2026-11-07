@@ -17,6 +17,7 @@
 | Alles außer E2E | `npm run check` |
 | E2E im echten WebView | `npm run e2e` (Debug-Build, echtes Backend, echte Datei; `-- --no-build` zum Wiederholen) |
 | Messung 500 MB | `cd src-tauri && cargo test --release --test tail_integration -- --ignored --nocapture measure_` |
+| Messung Merge 2 × 500 MB | `cd src-tauri && cargo test --release --test merge_integration -- --ignored --nocapture measure_merge` |
 | Kontrast WCAG AA | `npm run contrast` (prüft `src/styles.css`) |
 | Screenshots für die Doku | `npm run build`, dann `node scripts/screenshots.mjs` (WebKit + IPC-Mock) |
 | Log-Generator | `node scripts/gen-log.mjs /tmp/app.log --rate 5000 [--format …] [--rotate-every N] [--truncate-every N]` |
@@ -37,6 +38,7 @@ src/                         Angular 22 (zoneless, Signals, OnPush, Standalone)
   app/features/log-table/    LogTableViewComponent (GuiExpert Table), LogAreaModel, viewport-logic (reines
                              Scroll-Modell), table-logic, highlight (Inline-Tokens, cellSegments), columns-logic
                              (Spaltenansicht: Layout, Breiten, Spannen), column-menu (Spaltenmenü)
+  app/features/merge/        MergeDialog (Prompt 006), merge-logic (Quellenmaske, Namen, Farben, Dialogregeln)
   app/features/detail/       DetailPanel (Prompt 004), detail-format (JSON/XML-Tokenizer), detail-logic (Layout, Neuladen)
   app/shared/splitter.ts     wiederverwendbarer Splitter (Pointer Events, Tastatur), Rechnung in splitter-logic.ts
   app/features/sidebar/      Seitenleiste: Baum (tree-model, log-tree), Statistik (stats-panel), Layout (sidebar-logic/-state)
@@ -49,7 +51,8 @@ src-tauri/src/               Rust; alles außer commands.rs und lib.rs ist frei 
   level.rs, profile.rs       Level-Erkennung, eingebaute und eigene Profile (samt Layouts), Vorschlag
   fields.rs                  Formaterkennung, Felder je Zeile (Spannen in UTF-16), JSON/logfmt/FIX/W3C-Scanner, Inferenz
   timestamp.rs               Zeitstempel erkennen und nach µs UTC wandeln (auch für den Merge, Prompt 006)
-  filter.rs                  gefilterte Zeilenliste (inkrementell), Textsuche
+  filter.rs                  gefilterte Zeilenliste (inkrementell), Textsuche, Quellenmaske
+  merge.rs                   mehrere Dateien als eine Sitzung: Merger (rein), Worker (Folgen, Rotation, Haltepuffer)
   encoding.rs, platform.rs   Encodings, ANSI; Share-Flags und Datei-Identität je OS
   e2e.rs                     nur Debug-Build: Szenario im WebView, siehe scripts/e2e/
 scripts/e2e/                 run.mjs (Harness), scenario.js (läuft im WebView), mock-ipc.js (nur für Screenshots)
@@ -101,6 +104,15 @@ samples/                     Beispiel-Logs
   Treffer im Stacktrace ein Zwischenzähler seit `entry_start`, beides im `FilterCheckpoint`). `applyPreset` setzt
   Level, Suche und Modus und startet **einen** Filter-Job; `presetRevision` verwirft eine noch laufende Eingabe in der
   Suche. Unter 900 px blendet sich die Leiste aus, ohne die Einstellung zu ändern (`sidebar-logic.ts`).
+- **Merge (Prompt 006):** eine `LogSession` mit einem Index für alle Quellen. Adressraum je Quelle: `offset >> 56` ist die
+  Quelle (`indexer.rs`), 16 Byte je Zeile bleiben, Einzeldateien sind Quelle 0. Segmente bleiben nach `base` sortiert
+  (`insert_segment`), `LineReader` hat einen Puffer je Quelle. Sortiert werden Einträge nach (Zeit, Quelle, Position).
+  Laden streamt: gelesen wird die Quelle, die zeitlich hinten liegt, freigegeben, was keine unfertige Quelle mehr
+  unterbieten kann; eine ungeordnete Quelle löst einen Neustart aus und wird dann ganz gelesen und sortiert. Live wird
+  **nur angehängt**: Haltepuffer `HOLD_BACK = 1 s` bis zum Wasserstand der aktiven Quellen, Verspätetes ans Ende und
+  gezählt (`lateLines`), „Neu sortieren“ = neue Epoche. Keine provisorische Zeile (eine Zeile ohne `\n` wird nach 1 s
+  endgültig, ihr Rest eine eigene Zeile). Profil je Datei im Dialog, `set_profile` auf einem Merge ist `invalid_merge`.
+  Spalten kommen aus dem Format der ersten Datei. Der Tailer für Einzeldateien ist unverändert.
 - **Fortsetzungszeilen:** Einrücken, `at `, `Caused by:`, `Traceback`, `... ` wird vor der Regex geprüft
   (`at com.acme.error.Handler` ist keine ERROR-Zeile). Zeilen mit Zeitstempel ohne Level beginnen einen neuen Eintrag.
 - **Felder beim Ausliefern, nicht beim Indexieren (Prompt 008):** `get_lines` zerlegt jede Zeile mit dem `FieldParser`
@@ -115,6 +127,9 @@ samples/                     Beispiel-Logs
 - **CSP:** `dangerousDisableAssetCspModification: ["style-src"]` ist nötig. Sonst ergänzt Tauri Nonces, `'unsafe-inline'`
   gilt nicht mehr und Angulars Komponenten-Styles fehlen.
 - **`backgroundThrottling: disabled`:** Ein Live-Viewer muss auch hinter anderen Fenstern aktuell bleiben.
+- **Grenzen Merge:** höchstens 16 Quellen, verspätete Zeilen stehen am Ende, bis „Neu sortieren“; keine Zeilennummer der
+  Quelldatei (nur Byte-Offset); ohne Zeitzone gilt die lokale Zone; ohne Zeitstempel in den ersten 200 Zeilen
+  `no_timestamps`. Truncation einer Quelle, Rotation ohne Behalten oder mehr als 32 Segmente einer Quelle mischen alles neu.
 - **Grenzen:** höchstens 2³² Zeilen je Sitzung (Index dann 64 GB), Anzeige 128 KB je Zeile, Suche 1 MB je Zeile, Zeile ohne
   Ende wird bei 16 MB geteilt, Detail-Panel 1 MiB je Eintrag (Formatieren bis 256 KB). Felder: höchstens 12 Spalten aus JSON-/logfmt-Schlüsseln bzw. FIX-Tags, zerlegt werden 16 KB. Truncation wird über die kleinere Größe erkannt; wird eine Datei geleert und zwischen zwei
   Prüfungen über die alte Größe hinaus neu beschrieben, bleibt das unbemerkt.

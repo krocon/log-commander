@@ -66,6 +66,13 @@
   -webkit-user-select: none;
 }
 
+/* A merge (prompt 006): the source as a stripe and its short name, left in the gutter. */
+.lt-host .ge-table-col-div.lt-gutter.lt-src {
+  text-align: left;
+  padding-left: calc(6px + 0.5ch);
+  box-shadow: inset 4px 0 0 var(--src);
+}
+
 .lt-host .lt-cell.loading .lt-text::before,
 .lt-host .lt-cell.loading::after {
   content: '…';

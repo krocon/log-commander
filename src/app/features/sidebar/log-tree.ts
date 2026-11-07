@@ -13,6 +13,7 @@ import { SessionMarksComponent } from '../../shared/session-marks';
 import { ALL_LEVELS } from '../sessions/filter-logic';
 import { LogSessionService } from '../sessions/log-session.service';
 import { SessionState } from '../sessions/session-state';
+import { sourceColor, sourceStatusText } from '../merge/merge-logic';
 import {
   TreeNode,
   buildTree,
@@ -71,6 +72,16 @@ import {
           }
           @if (node.kind === 'file' && sessionOf(node); as session) {
             <app-session-marks [session]="session" [status]="true" />
+          }
+          @if (node.kind === 'source' && sessionOf(node); as session) {
+            <span
+              class="src-mark"
+              [class]="'src-mark src-' + sourceColorOf(node.sourceIndex ?? 0)"
+              aria-hidden="true"
+            ></span>
+            @if (sourceState(session, node.sourceIndex ?? 0); as state) {
+              <span class="src-state">{{ state }}</span>
+            }
           }
           @if (node.kind === 'active-filter' && editing() !== node.id) {
             <button
@@ -150,6 +161,22 @@ import {
       overflow: hidden;
       text-overflow: ellipsis;
     }
+    .kind-source .label {
+      order: 1;
+    }
+    .src-mark {
+      flex: none;
+      width: 4px;
+      height: 12px;
+      margin-right: 4px;
+      border-radius: 1px;
+      background: var(--src);
+    }
+    .src-state {
+      order: 2;
+      color: var(--lv-warn-fg);
+      font-size: 11px;
+    }
     .name {
       flex: 1;
       min-width: 0;
@@ -191,6 +218,7 @@ export class LogTreeComponent {
         levels: s.levels(),
         query: s.query(),
         mode: s.searchMode(),
+        sources: s.sources,
       })),
       this.sessions.activeId(),
       this.settingsService.settings().savedFilters,
@@ -205,6 +233,16 @@ export class LogTreeComponent {
     if (id && nodes.some((n) => n.id === id)) return id;
     return (nodes.find((n) => n.kind === 'file' && n.current) ?? nodes[0])?.id ?? null;
   });
+
+  protected sourceColorOf(index: number): number {
+    return sourceColor(index);
+  }
+
+  /** The state of a source in a word (only when it is not simply live). */
+  protected sourceState(session: SessionState, index: number): string | null {
+    const status = session.update().sources?.[index]?.status;
+    return status ? sourceStatusText(status) : null;
+  }
 
   protected sessionOf(node: TreeNode): SessionState | null {
     return this.sessions.sessions().find((s) => s.id === node.sessionId) ?? null;
