@@ -80,6 +80,10 @@ pub struct SessionData {
     pub status: Status,
     pub file_size: u64,
     pub keep_on_rotate: bool,
+    /// The worker reads nothing new, so everything derived from the index stays as it is.
+    pub frozen: bool,
+    pub pending_bytes: u64,
+    pub frozen_stale: bool,
     /// Something changed that the frontend has not heard of.
     pub dirty: bool,
 }
@@ -117,6 +121,9 @@ impl SessionData {
             filter_progress: self.filter_progress,
             profile_id: self.profile_id.clone(),
             encoding: self.encoding,
+            frozen: self.frozen,
+            pending_bytes: self.pending_bytes,
+            frozen_stale: self.frozen_stale,
         }
     }
 }
@@ -187,6 +194,9 @@ impl LogSession {
             status: Status::Loading { progress: 0.0 },
             file_size: meta.len(),
             keep_on_rotate: options.keep_on_rotate,
+            frozen: false,
+            pending_bytes: 0,
+            frozen_stale: false,
             dirty: true,
         };
         let (wake, wake_rx): (Sender<()>, Receiver<()>) = channel();
@@ -240,6 +250,21 @@ impl LogSession {
 
     pub fn set_keep_on_rotate(&self, keep: bool) {
         self.shared.data.write().keep_on_rotate = keep;
+    }
+
+    /// Stops or resumes reading the file. Resuming picks up everything written in between.
+    pub fn set_frozen(&self, frozen: bool) {
+        {
+            let mut data = self.shared.data.write();
+            if data.frozen == frozen {
+                return;
+            }
+            data.frozen = frozen;
+            data.pending_bytes = 0;
+            data.frozen_stale = false;
+            data.dirty = true;
+        }
+        self.shared.wake();
     }
 
     /// Lines of a view. `filtered = false` addresses all lines of the file.

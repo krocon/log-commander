@@ -140,6 +140,16 @@ export class LogSessionService {
     }
   }
 
+  /** Holds or resumes reading the file of this tab; the next update tells the new state. */
+  async toggleFreeze(session: SessionState): Promise<void> {
+    if (!session.canFreeze()) return;
+    try {
+      await this.api.setFrozen(session.id, !session.frozen());
+    } catch (e) {
+      this.showError(toAppError(e));
+    }
+  }
+
   /** Jumps to the next match; the view scrolls because `scroll` and follow change. */
   async find(session: SessionState, forward: boolean): Promise<void> {
     const query = session.query();

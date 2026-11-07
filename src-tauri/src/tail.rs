@@ -53,6 +53,9 @@ pub struct Tailer {
     missing: bool,
     last_emit: Option<Instant>,
     last_data: Instant,
+    /// The file got smaller during a freeze. It may have grown past the old size again by the time
+    /// the freeze ends, so this has to be remembered.
+    shrunk_while_frozen: bool,
 }
 
 impl Tailer {
@@ -83,6 +86,7 @@ impl Tailer {
             missing: false,
             last_emit: None,
             last_data: Instant::now(),
+            shrunk_while_frozen: false,
         })
     }
 
@@ -123,6 +127,36 @@ impl Tailer {
     }
 
     fn tick(&mut self) {
+        if self.shared.data.read().frozen {
+            self.watch_while_frozen();
+        } else {
+            self.follow_file();
+        }
+        // Also while frozen: filter and level jobs report through this.
+        self.emit_if_due();
+    }
+
+    /// A freeze reads nothing and reacts to nothing; it only tells what is waiting.
+    fn watch_while_frozen(&mut self) {
+        let read_pos = self.current.read_pos;
+        let size = self.current.file.metadata().map_or(read_pos, |m| m.len());
+        if size < read_pos {
+            self.shrunk_while_frozen = true;
+        }
+        let rotated_in = match file_id(&self.path) {
+            Ok(id) if id != self.current.id => std::fs::metadata(&self.path).map_or(0, |m| m.len()),
+            _ => 0,
+        };
+        let pending = size.saturating_sub(read_pos) + rotated_in;
+        let mut data = self.shared.data.write();
+        if data.pending_bytes != pending || data.frozen_stale != self.shrunk_while_frozen {
+            data.pending_bytes = pending;
+            data.frozen_stale = self.shrunk_while_frozen;
+            data.dirty = true;
+        }
+    }
+
+    fn follow_file(&mut self) {
         match file_id(&self.path) {
             Ok(id) if id != self.current.id => self.switch_file(),
             Ok(_) => {
@@ -135,7 +169,7 @@ impl Tailer {
                 self.check_truncation();
             }
             Err(err) if err.kind() == io::ErrorKind::NotFound => {
-                self.drain();
+                self.drain(false);
                 if !self.missing {
                     self.missing = true;
                     self.commit_partial_final();
@@ -149,15 +183,20 @@ impl Tailer {
                 });
             }
         }
-        self.drain();
-        self.maybe_commit_partial();
-        self.emit_if_due();
+        self.drain(true);
+        if !self.shared.data.read().frozen {
+            self.maybe_commit_partial();
+        }
     }
 
-    /// Reads until the end of the file.
-    fn drain(&mut self) {
+    /// Reads until the end of the file, or until a freeze when `stop_when_frozen` says so. Leaving a
+    /// file for good has to read all of it.
+    fn drain(&mut self, stop_when_frozen: bool) {
         loop {
             if self.shared.shutdown.load(Ordering::SeqCst) {
+                return;
+            }
+            if stop_when_frozen && self.shared.data.read().frozen {
                 return;
             }
             match self.read_block() {
@@ -294,8 +333,9 @@ impl Tailer {
 
     /// The path names another file: finish the old one, then follow the new one.
     fn switch_file(&mut self) {
-        self.drain();
+        self.drain(false);
         self.commit_partial_final();
+        self.shrunk_while_frozen = false;
         let (file, id) =
             match open_shared(&self.path).and_then(|f| open_file_id(&f).map(|id| (f, id))) {
                 Ok(opened) => opened,
@@ -344,7 +384,8 @@ impl Tailer {
             return;
         };
         let size = meta.len();
-        if size >= self.current.read_pos {
+        let shrunk = std::mem::take(&mut self.shrunk_while_frozen);
+        if size >= self.current.read_pos && !shrunk {
             return;
         }
         let mut data = self.shared.data.write();

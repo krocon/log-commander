@@ -80,6 +80,10 @@ export class LogApi {
     return call('set_keep_on_rotate', { sessionId, keep });
   }
 
+  setFrozen(sessionId: number, frozen: boolean): Promise<void> {
+    return call('set_frozen', { sessionId, frozen });
+  }
+
   listProfiles(): Promise<Profile[]> {
     return call('list_profiles');
   }

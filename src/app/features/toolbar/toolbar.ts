@@ -30,6 +30,22 @@ const SEARCH_DEBOUNCE_MS = 200;
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @let s = session();
+    <div class="group" [hidden]="!s">
+      <button
+        type="button"
+        class="freeze"
+        [disabled]="!s?.canFreeze()"
+        [attr.aria-pressed]="s?.frozen() ?? false"
+        [title]="
+          s?.frozen()
+            ? 'Fortsetzen und Verpasstes nachlesen (P)'
+            : 'Aufnahme neuer Zeilen anhalten, zum Lesen in Ruhe (P)'
+        "
+        (click)="toggleFreeze()"
+      >
+        {{ s?.frozen() ? '▶ Fortsetzen' : '⏸ Freeze' }}
+      </button>
+    </div>
     <div class="group chips" role="group" [hidden]="!s" aria-label="Log-Level">
       @for (level of visibleLevels(); track level) {
         <button
@@ -228,6 +244,9 @@ const SEARCH_DEBOUNCE_MS = 200;
     .chip-FATAL {
       --chip: var(--lv-error-edge);
     }
+    .freeze {
+      white-space: nowrap;
+    }
     .find-message {
       color: var(--text-dim);
       white-space: nowrap;
@@ -313,6 +332,11 @@ export class ToolbarComponent implements OnInit, OnDestroy {
     if (session) {
       void this.sessions.setLevels(session, level ? levelAndSevere(level) : ALL_LEVELS);
     }
+  }
+
+  protected toggleFreeze(): void {
+    const session = this.session();
+    if (session) void this.sessions.toggleFreeze(session);
   }
 
   protected onSearchInput(text: string): void {

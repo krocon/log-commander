@@ -328,6 +328,49 @@
     await waitFor('filtered follow kept up', () => rowTexts().some((t) => t.includes('ERROR rate line 4000')), 20000);
     await tail.check('ERROR+');
     click(button('Alle'));
+    await waitFor('all lines again', () => !status().includes(' von '));
+
+    // Freeze: nothing moves while the file grows, a filter still works, resuming catches up.
+    const pill = () => $('app-status-bar .pill').textContent.trim();
+    click(button('⏸'));
+    await waitFor('frozen', () => pill() === 'Eingefroren' && button('▶') && $('.tab .frozen'));
+    await sleep(300);
+    const heldLines = lineCount();
+    const heldRows = rowTexts().join();
+    await act('rate 2000 2');
+    await waitFor('waiting bytes are shown', () => status().includes('warten'));
+    await sleep(600);
+    await waitFor('line count holds', () => lineCount() === heldLines);
+    await waitFor('rows hold', () => rowTexts().join() === heldRows);
+    click(button('ERROR+'));
+    await waitFor('a filter finishes during the freeze', () => status().includes(' von ') && $('.row.lv-ERROR') && !$('.row.lv-INFO'));
+    click(button('Alle'));
+    await waitFor('the filter lifts during the freeze', () => !status().includes(' von ') && lineCount() === heldLines);
+    await sleep(2200); // all of the burst is in the file
+    press('p');
+    await waitFor('P resumes', () => pill() !== 'Eingefroren' && button('⏸') && !$('.tab .frozen'));
+    await waitFor('resuming catches up', () => lineCount() === heldLines + 4000);
+    await waitFor('and shows the end', () => rowTexts().some((t) => t.includes('rate line 4000')));
+    await waitFor('nothing waits any more', () => !status().includes('warten'));
+
+    // End stays within the freeze; a reader keeps the position on resuming and sees the count.
+    press('p');
+    await waitFor('frozen again', () => pill() === 'Eingefroren');
+    press('End');
+    await sleep(200);
+    await waitFor('End does not lift the freeze', () => pill() === 'Eingefroren');
+    wheel(-400);
+    await waitFor('scrolled up within the freeze', () => !rowTexts().some((t) => t.includes('rate line 4000')));
+    await sleep(100);
+    const readingAt = $('.row').dataset.line;
+    await act('append 2026-01-15T10:08:00.000+01:00  INFO 4711 --- [t] a.B : after the freeze');
+    await sleep(400);
+    press('p');
+    await waitFor('resumed for the reader', () => pill() === 'Pausiert');
+    await waitFor('the badge counts what came', () => $('.new-lines')?.textContent.includes('1 neue Zeile'));
+    await waitFor('the reader stays in place', () => $('.row').dataset.line === readingAt);
+    press('End');
+    await waitFor('following again', () => pill() === 'Live');
 
     // Closing the tabs leads back to the start screen.
     click(tabOf('big.log').parentElement.querySelector('.close'));

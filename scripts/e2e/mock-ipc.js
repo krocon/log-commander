@@ -48,6 +48,9 @@
       filterProgress: 1,
       profileId: 'log4j',
       encoding: 'utf8',
+      frozen: session.frozen ?? false,
+      pendingBytes: 0,
+      frozenStale: false,
     };
   }
 
@@ -104,6 +107,12 @@
       session.generation++;
       callbacks.get(session.channel)?.({ message: update(session), index: session.sent++ });
       return { viewGeneration: session.generation, pending: false, filteredLines: 0 };
+    },
+    set_frozen({ sessionId, frozen }) {
+      const session = sessions.get(sessionId);
+      session.frozen = frozen;
+      callbacks.get(session.channel)?.({ message: update(session), index: session.sent++ });
+      return null;
     },
     find_next({ sessionId, fromLine, query }) {
       const session = sessions.get(sessionId);

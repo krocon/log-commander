@@ -63,6 +63,12 @@ samples/                     Beispiel-Logs
   (`filteredLines`). Der Live-Tail rückt erst vor, wenn das neue Ende im `PageCache` liegt (`displayed-lines.ts`), sonst blitzt
   je Update die Fläche ohne Level-Farbe auf. Maßgeblich ist, was angekommen ist, damit überholte Ladevorgänge nicht aushungern.
   Filterwechsel und Sprünge an ungeladene Stellen zeigen weiter kurz Platzhalter.
+- **Freeze im Backend:** Der Worker liest im Freeze nicht weiter (`SessionData.frozen`), sendet aber weiter Updates, denn
+  Filter-Jobs melden sich über `tick()`. Der Index bleibt stehen, daher sind Filter, Suche und Kopieren ohne Zusatzcode
+  konsistent. Anzeigen allein anzuhalten hieße, jede Abfrage auf einen Zeilenstand zu begrenzen. Eine Rotation im Freeze
+  verliert nichts (Handle bleibt offen), bei mehreren fehlen die Zwischenstände. Der Text liegt nicht im Speicher: Wird die
+  Datei geleert, kann die eingefrorene Anzeige lückenhaft oder falsch sein. Das meldet die Statusleiste, zurückgesetzt
+  wird erst beim Fortsetzen.
 - **Fortsetzungszeilen:** Einrücken, `at `, `Caused by:`, `Traceback`, `... ` wird vor der Regex geprüft
   (`at com.acme.error.Handler` ist keine ERROR-Zeile). Zeilen mit Zeitstempel ohne Level beginnen einen neuen Eintrag.
 - **Datei-Identität unter Windows** über `GetFileInformationByHandle`, nicht Erstellzeit (File Tunneling).

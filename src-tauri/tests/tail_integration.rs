@@ -499,3 +499,211 @@ fn measure_500mb() {
         fx.updates.lock().len()
     );
 }
+
+/// Long enough for the worker to have read a file if it were reading.
+const SETTLE: Duration = Duration::from_millis(400);
+
+#[test]
+fn freeze_holds_the_lines_and_resuming_catches_up() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("app.log");
+    fs::write(&path, "2024-01-01 INFO one\n").unwrap();
+    let fx = open(&path, true);
+    fx.wait("loaded", |s| s.status == Status::Live);
+
+    fx.session.set_frozen(true);
+    assert!(fx.session.stats().frozen);
+    std::thread::sleep(SETTLE);
+    let written = "2024-01-01 ERROR two\n";
+    append(&path, written);
+    fx.wait("waiting bytes are reported", |s| {
+        s.pending_bytes == written.len() as u64
+    });
+    std::thread::sleep(SETTLE);
+    let held = fx.session.stats();
+    assert_eq!(held.total_lines, 1);
+    assert_eq!(held.counts.error, 0);
+    assert!(held.frozen);
+    assert!(
+        fx.updates.lock().iter().any(|u| u.frozen),
+        "the frontend hears of it"
+    );
+
+    fx.session.set_frozen(false);
+    fx.wait("caught up", |s| s.total_lines == 2);
+    let resumed = fx.session.stats();
+    assert!(!resumed.frozen);
+    assert_eq!(resumed.pending_bytes, 0);
+    assert_eq!(
+        fx.texts(false),
+        vec!["2024-01-01 INFO one", "2024-01-01 ERROR two"]
+    );
+}
+
+#[test]
+fn a_line_without_end_is_not_shown_during_a_freeze() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("app.log");
+    fs::write(&path, "2024-01-01 INFO one\n").unwrap();
+    let fx = open(&path, true);
+    fx.wait("loaded", |s| s.status == Status::Live);
+
+    fx.session.set_frozen(true);
+    std::thread::sleep(SETTLE);
+    append(&path, "2024-01-01 INFO par");
+    std::thread::sleep(Duration::from_millis(1300));
+    assert_eq!(fx.session.stats().total_lines, 1);
+
+    append(&path, "tial\n");
+    fx.session.set_frozen(false);
+    fx.wait("whole line", |s| s.total_lines == 2);
+    assert_eq!(fx.texts(false)[1], "2024-01-01 INFO partial");
+}
+
+#[test]
+fn a_filter_set_during_a_freeze_finishes_without_new_lines() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("app.log");
+    fs::write(&path, "2024-01-01 INFO one\n2024-01-01 ERROR two\n").unwrap();
+    let fx = open(&path, true);
+    fx.wait("loaded", |s| s.status == Status::Live);
+
+    fx.session.set_frozen(true);
+    std::thread::sleep(SETTLE);
+    append(&path, "2024-01-01 ERROR three\n");
+    let query = SearchQuery {
+        text: String::new(),
+        is_regex: false,
+        case_sensitive: false,
+    };
+    fx.session
+        .set_filter(&[Level::Error], &query, SearchMode::Filter)
+        .unwrap();
+    fx.wait("filter done", |s| {
+        !s.filter_pending && s.filtered_lines == 1
+    });
+    let start = Instant::now();
+    while !fx
+        .updates
+        .lock()
+        .iter()
+        .any(|u| u.frozen && !u.filter_pending && u.filtered_lines == 1)
+    {
+        assert!(
+            start.elapsed() < TIMEOUT,
+            "the result must reach the frontend during the freeze"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(fx.texts(true), vec!["2024-01-01 ERROR two"]);
+    assert_eq!(fx.session.stats().total_lines, 2);
+
+    fx.session.set_frozen(false);
+    fx.wait("the new line joins the view", |s| s.filtered_lines == 2);
+}
+
+#[test]
+fn rotation_during_a_freeze_loses_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("app.log");
+    fs::write(&path, "2024-01-01 INFO one\n").unwrap();
+    let fx = open(&path, true);
+    fx.wait("loaded", |s| s.status == Status::Live);
+    let epoch = fx.session.stats().epoch;
+
+    fx.session.set_frozen(true);
+    std::thread::sleep(SETTLE);
+    append(&path, "2024-01-01 INFO two, late in the old file\n");
+    fs::rename(&path, dir.path().join("app.log.1")).unwrap();
+    fs::write(&path, "2024-01-01 ERROR three\n").unwrap();
+    fx.wait("the new file counts as waiting", |s| {
+        s.pending_bytes
+            == ("2024-01-01 INFO two, late in the old file\n".len()
+                + "2024-01-01 ERROR three\n".len()) as u64
+    });
+    assert_eq!(fx.session.stats().total_lines, 1);
+
+    fx.session.set_frozen(false);
+    fx.wait("both files read", |s| s.total_lines == 3);
+    assert_eq!(fx.session.stats().epoch, epoch);
+    assert_eq!(
+        fx.texts(false),
+        vec![
+            "2024-01-01 INFO one",
+            "2024-01-01 INFO two, late in the old file",
+            "2024-01-01 ERROR three"
+        ]
+    );
+}
+
+#[test]
+fn rotation_without_keeping_starts_over_when_resuming() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("app.log");
+    fs::write(&path, "2024-01-01 INFO one\n").unwrap();
+    let fx = open(&path, false);
+    fx.wait("loaded", |s| s.status == Status::Live);
+    let epoch = fx.session.stats().epoch;
+
+    fx.session.set_frozen(true);
+    std::thread::sleep(SETTLE);
+    fs::rename(&path, dir.path().join("app.log.1")).unwrap();
+    fs::write(&path, "2024-01-01 ERROR new\n").unwrap();
+    std::thread::sleep(SETTLE);
+    assert_eq!(
+        fx.texts(false),
+        vec!["2024-01-01 INFO one"],
+        "held by the open handle"
+    );
+
+    fx.session.set_frozen(false);
+    fx.wait("started over", |s| s.epoch > epoch && s.total_lines == 1);
+    assert_eq!(fx.texts(false), vec!["2024-01-01 ERROR new"]);
+}
+
+#[test]
+fn truncation_during_a_freeze_is_flagged_and_handled_when_resuming() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("app.log");
+    fs::write(&path, "2024-01-01 INFO one\n2024-01-01 INFO two\n").unwrap();
+    let fx = open(&path, true);
+    fx.wait("loaded", |s| s.status == Status::Live);
+    let epoch = fx.session.stats().epoch;
+
+    fx.session.set_frozen(true);
+    std::thread::sleep(SETTLE);
+    File::create(&path).unwrap();
+    fx.wait("flagged", |s| s.frozen_stale);
+    assert_eq!(fx.session.stats().total_lines, 2);
+    assert_eq!(fx.session.stats().epoch, epoch);
+    // No crash and no error for lines whose text is gone.
+    assert_eq!(fx.session.get_lines(false, 0, 10).unwrap().len(), 2);
+
+    // Written past the old size again: the size alone would not show it any more.
+    let rewritten = "2024-01-01 ERROR rewritten after the truncation, long enough\n";
+    append(&path, rewritten);
+    std::thread::sleep(SETTLE);
+    fx.session.set_frozen(false);
+    fx.wait("started over", |s| s.epoch > epoch && s.total_lines == 1);
+    assert_eq!(fx.texts(false), vec![rewritten.trim_end()]);
+    assert!(!fx.session.stats().frozen_stale);
+}
+
+#[test]
+fn a_file_deleted_during_a_freeze_stays_visible_until_resuming() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("app.log");
+    fs::write(&path, "2024-01-01 INFO one\n").unwrap();
+    let fx = open(&path, true);
+    fx.wait("loaded", |s| s.status == Status::Live);
+
+    fx.session.set_frozen(true);
+    std::thread::sleep(SETTLE);
+    fs::remove_file(&path).unwrap();
+    std::thread::sleep(SETTLE);
+    assert_eq!(fx.session.stats().status, Status::Live);
+    assert_eq!(fx.texts(false), vec!["2024-01-01 INFO one"]);
+
+    fx.session.set_frozen(false);
+    fx.wait("reported", |s| s.status == Status::FileMissing);
+}

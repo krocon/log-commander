@@ -67,6 +67,7 @@ pub fn run() {
             commands::get_entry_range,
             commands::copy_lines,
             commands::set_keep_on_rotate,
+            commands::set_frozen,
             commands::list_profiles,
             commands::set_custom_profiles,
             #[cfg(debug_assertions)]

@@ -5,7 +5,7 @@ Architektur verbaut nichts davon.
 
 ## Umgesetzt
 
-- Live Tail, Autoscroll-Steuerung, Rotation und Truncation, Chunk-basiertes Nachladen
+- Live Tail, Autoscroll-Steuerung, Freeze je Tab, Rotation und Truncation, Chunk-basiertes Nachladen
 - Format-Erkennung (JSON, Log4j/Logback, nginx/Apache, Syslog), Multi-Line-Blöcke beim Filtern
 - Level-Chips, Volltextsuche mit Regex, Groß-/Kleinschreibung, Match-Highlighting, Farbcodierung nach Level
 

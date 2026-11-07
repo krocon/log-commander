@@ -19,6 +19,9 @@ import { LogSessionService } from '../sessions/log-session.service';
             @if (session.hasNewErrors()) {
               <span class="alert" title="Neue ERROR-/FATAL-Zeilen" aria-label="Neue Fehler"></span>
             }
+            @if (session.frozen()) {
+              <span class="frozen" title="Eingefroren" aria-label="Eingefroren">⏸</span>
+            }
             {{ session.fileName }}
           </button>
           <button
@@ -94,6 +97,10 @@ import { LogSessionService } from '../sessions/log-session.service';
       height: 8px;
       border-radius: 50%;
       background: var(--danger);
+    }
+    .frozen {
+      flex: none;
+      color: var(--accent);
     }
     .open {
       flex: none;

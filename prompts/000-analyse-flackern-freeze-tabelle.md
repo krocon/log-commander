@@ -9,7 +9,7 @@ Grundlage der Prompts 001 bis 003. Untersucht auf `main` (`cd3e188`) und GuiExpe
 | Woher kommt das Flackern? | Aus dem Datenweg, nicht aus dem Rendering: Neue Zeilen werden gezeichnet, bevor ihr Text da ist. |
 | Behebt die GuiExpert Table das? | Nein. Sie fragt `getValueAt()` synchron ab und stünde vor derselben Lücke. |
 | Wie groß ist der Fix? | Klein und nur im Frontend, siehe [001](done/001-flackern-beheben.md) (umgesetzt). |
-| Freeze | Ist etwas anderes als das vorhandene „Pausiert“. Am einfachsten pausiert der Tail-Worker im Backend, siehe [002](002-freeze-button.md). |
+| Freeze | Ist etwas anderes als das vorhandene „Pausiert“. Am einfachsten pausiert der Tail-Worker im Backend, siehe [002](done/002-freeze-button.md) (umgesetzt). |
 | Lohnt die Tabelle trotzdem? | Für eine spätere Spaltenansicht ja, nicht gegen das Flackern. Es gibt offene Blocker, siehe [003](003-gui-expert-table.md). |
 
 **Reihenfolge:** 001, dann 002, danach Entscheidung über 003. 001 und 002 hängen technisch nicht voneinander ab, aber

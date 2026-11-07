@@ -372,6 +372,10 @@ export class LogViewComponent implements OnInit, OnDestroy {
         if (session.follow()) session.setFollow(false);
         else this.jumpToEnd();
         break;
+      case 'p':
+      case 'P':
+        void this.sessions.toggleFreeze(session);
+        break;
       case 'Home':
         session.setFollow(false);
         session.scroll.set({ top: 0, subPx: 0 });

@@ -167,6 +167,16 @@ pub async fn set_keep_on_rotate(
 }
 
 #[tauri::command]
+pub async fn set_frozen(
+    state: State<'_, SessionManager>,
+    session_id: u64,
+    frozen: bool,
+) -> AppResult<()> {
+    session(&state, session_id)?.set_frozen(frozen);
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn list_profiles(state: State<'_, SessionManager>) -> AppResult<Vec<Profile>> {
     Ok(state.profiles())
 }

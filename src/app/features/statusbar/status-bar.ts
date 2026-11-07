@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 import { formatBytes, formatCount } from '../../shared/format';
 import { LogSessionService } from '../sessions/log-session.service';
+import { statusPill } from './status-pill';
 
 @Component({
   selector: 'app-status-bar',
@@ -13,7 +14,15 @@ import { LogSessionService } from '../sessions/log-session.service';
       <span class="path" [title]="s.path"
         ><bdi>{{ s.path }}</bdi></span
       >
+      @if (s.update().frozenStale) {
+        <span class="stale">Datei wurde geleert, Anzeige ist evtl. unvollständig</span>
+      }
       <span class="spring"></span>
+      @if (pending(); as bytes) {
+        <span title="Seit dem Einfrieren geschrieben, wird beim Fortsetzen nachgelesen"
+          >+{{ bytes }} warten</span
+        >
+      }
       @if (s.update().filterPending) {
         <span>Filter {{ percent(s.update().filterProgress) }}</span>
       }
@@ -70,8 +79,12 @@ import { LogSessionService } from '../sessions/log-session.service';
     .bad .dot {
       background: var(--danger);
     }
-    .loading .dot {
+    .loading .dot,
+    .frozen .dot {
       background: var(--accent);
+    }
+    .stale {
+      color: var(--lv-warn-fg);
     }
     @keyframes pulse {
       50% {
@@ -87,23 +100,12 @@ export class StatusBarComponent {
   protected readonly pill = computed(() => {
     const session = this.session();
     if (!session) return { label: '', cls: '' };
-    const status = session.status();
-    switch (status.kind) {
-      case 'loading':
-        return { label: `Lade … ${this.percent(status.progress)}`, cls: 'loading' };
-      case 'truncated':
-        return { label: 'Datei geleert', cls: 'warn' };
-      case 'rotated':
-        return { label: 'Datei rotiert', cls: 'warn' };
-      case 'file_missing':
-        return { label: 'Datei fehlt', cls: 'bad' };
-      case 'error':
-        return { label: `Fehler: ${status.message}`, cls: 'bad' };
-      case 'live':
-        return session.follow()
-          ? { label: 'Live', cls: 'live' }
-          : { label: 'Pausiert', cls: 'paused' };
-    }
+    return statusPill(session.status(), session.frozen(), session.follow());
+  });
+
+  protected readonly pending = computed(() => {
+    const bytes = this.session()?.update().pendingBytes ?? 0;
+    return bytes > 0 ? formatBytes(bytes) : '';
   });
 
   protected readonly size = computed(() => formatBytes(this.session()?.update().fileSize ?? 0));

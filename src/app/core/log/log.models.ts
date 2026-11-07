@@ -27,6 +27,12 @@ export interface SessionUpdate {
   filterProgress: number;
   profileId: string;
   encoding: string;
+  /** Reading is on hold: lines, counts and sizes stay as they are until it resumes. */
+  frozen: boolean;
+  /** Bytes written since the last read, while frozen. */
+  pendingBytes: number;
+  /** The file shrank while frozen: the text of the frozen lines may be gone or different. */
+  frozenStale: boolean;
 }
 
 export interface SessionInfo {

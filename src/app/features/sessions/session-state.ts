@@ -61,6 +61,9 @@ export class SessionState {
   readonly status = computed<Status>(() => this.transient() ?? this.update().status);
   /** The line count of the backend; what the view draws is `displayedLines`. */
   readonly filteredLines = computed(() => this.update().filteredLines);
+  readonly frozen = computed(() => this.update().frozen);
+  /** A file still loading has no state worth holding on to yet. */
+  readonly canFreeze = computed(() => this.update().status.kind !== 'loading');
   readonly newLines = computed(() =>
     this.follow() ? 0 : Math.max(0, this.filteredLines() - this.pausedAtCount()),
   );

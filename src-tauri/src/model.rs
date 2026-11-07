@@ -66,6 +66,12 @@ pub struct SessionUpdate {
     pub filter_progress: f32,
     pub profile_id: String,
     pub encoding: Encoding,
+    /// Reading is on hold: lines, counts and sizes stay as they are until it resumes.
+    pub frozen: bool,
+    /// Bytes written since the last read, while frozen.
+    pub pending_bytes: u64,
+    /// The file shrank while frozen: the text of the frozen lines may be gone or different.
+    pub frozen_stale: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
