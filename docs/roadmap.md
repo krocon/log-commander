@@ -22,6 +22,9 @@ Architektur verbaut nichts davon.
   Farbe), Quellenfilter als Chips, Quelldateien im Baum und in der Statistik, live mit 1 s Haltepuffer, verspätete
   Zeilen gezählt, „Neu sortieren“
 
+- Verkettete Filter (Prompt 010): Filterbaum in der Seitenleiste mit Gruppen UND/ODER, NICHT, an/aus, Verschieben
+  (`Alt+↑/↓`, Ziehen); Bedingungen Text/Regex, Level, Feld, Zeit, Abschnitt zwischen Marken, Zeilen; je Eintrag
+  ausgewertet; Schnellwege `I`/Rechtsklick „Filtern auf …“, Zellwert, „Abschnitt ab/bis hier“; gespeicherte Filter mit Baum
 - Overview Ruler und Navigation (Prompt 007): Leiste rechts mit Fehlern, Warnungen, Lesezeichen, Auswahl und
   sichtbarem Bereich, Klick springt; `E`/`W` nächster Fehler bzw. Warnung, `M`/`N` Lesezeichen (nur im Speicher), `G`
   aus dem Filter ins Gesamtlog und zurück
@@ -36,19 +39,20 @@ Angabe die lokale Zone), Zeilennummer in der Quelldatei (bräuchte eine Spalte i
 in „Zuletzt geöffnet“, Archive und Ordner im Merge, Spalten je Quelle bei verschiedenen Formaten.
 
 **Struktur:** Im Detail-Panel vorheriger/nächster Eintrag, Felder eines Eintrags als Tabelle, YAML/SQL formatieren;
-Filtern aus der Kopfzeile (010), fixierte Spalten, eigene Felder aus der Nachricht (011),
+Filtern aus dem Spaltenkopf (Wert der gewählten Zeile; die Zelle kann es schon), fixierte Spalten, eigene Felder aus der Nachricht (011),
 Layout je Quelle beim Merge (006), einklappbare Stacktraces, Zeilenumbruch als Folgezeilen fester Höhe (eine Logzeile belegt
 mehrere Tabellenzeilen; braucht eine Zeilen-zu-Bildschirmzeilen-Liste im Backend, neu je Breite und Schrift).
 
-**Seitenleiste:** verschachtelte Filter als Baum (010), Thread/Logger als Knoten und Statistik-Zeilen (011),
+**Seitenleiste:** Thread/Logger als Knoten und Statistik-Zeilen (011),
 Zeitfilter (006/014), Tortendiagramme, Lesezeichen und Notizen.
 
 **Overview Ruler (Nachfragen zu 007):** Treffer der Suche im Ruler (im Highlight-Modus nur mit Textscan, eigener
 Hintergrund-Job), Anzahlen je Marke im Tooltip (heute Level und Zeilenbereich, die Zusammenfassung kennt nur Bits),
 Ziehen im Ruler, Mini-Vorschau beim Hover, eigene Regex-Marker.
 
-**Filter:** Feld-Filter (Klasse, Thread, Mandant), Query-DSL (`level:ERROR AND NOT "x"`), Zeitfenster, eigene Regex-Marker,
-persistente Lesezeichen und Notizen.
+**Filter:** Query-DSL (`level:ERROR AND NOT "x"`) auf dem Ausdruck aus 010, Bedingungen des Baums als Highlight-Farben,
+Zeitfenster per Ziehen im Zeitstrahl (014), Filter-Vorlagen teilen, eigene Regex-Marker, persistente Lesezeichen und
+Notizen. Nachfragen zu 010: Zeit-Bedingung je Quelle beim Merge, Zeilenbedingungen über eine Truncation hinweg.
 
 **Alarme:** Schwellenwert-, Muster- und Heartbeat-Trigger; Desktop-Benachrichtigung, E-Mail, Webhooks, Incident-Tools.
 

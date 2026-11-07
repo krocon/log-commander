@@ -447,6 +447,22 @@ impl FieldParser {
         spans
     }
 
+    /// The text of one field of a line (bytes, not UTF-16), for filter conditions (prompt 010). A line
+    /// that does not fit has only its fallback column (`message`), which is all of it.
+    pub fn field<'a>(&self, text: &'a str, column: usize) -> Option<&'a str> {
+        if column >= self.columns.len() {
+            return None;
+        }
+        let part = &text[..floor_char_boundary(text, MAX_PARSE_BYTES)];
+        let mut spans = vec![[0usize; 2]; self.columns.len()];
+        if self.fill(part, part.len() < text.len(), &mut spans) {
+            let [start, end] = spans[column];
+            part.get(start..end)
+        } else {
+            (column == self.fallback).then_some(text)
+        }
+    }
+
     /// Whether a line fits the format completely.
     pub fn matches(&self, text: &str) -> bool {
         let mut spans = vec![[0usize; 2]; self.columns.len()];

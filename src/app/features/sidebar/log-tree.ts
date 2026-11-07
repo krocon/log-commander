@@ -15,6 +15,22 @@ import { LogSessionService } from '../sessions/log-session.service';
 import { SessionState } from '../sessions/session-state';
 import { sourceColor, sourceStatusText } from '../merge/merge-logic';
 import {
+  FilterCondNode,
+  ROOT_ID,
+  addNode,
+  findNode,
+  groupNode,
+  moveNode,
+  moveNodeTo,
+  newNodeId,
+  parentOf,
+  removeNode,
+  toggleEnabled,
+  toggleNegate,
+  toggleOp,
+} from '../sessions/filter-tree';
+import { ConditionDialogComponent, ConditionEdit } from './condition-dialog';
+import {
   TreeNode,
   buildTree,
   savedFilterOf,
@@ -31,7 +47,7 @@ import {
 @Component({
   selector: 'app-log-tree',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [SessionMarksComponent],
+  imports: [SessionMarksComponent, ConditionDialogComponent],
   template: `
     <div class="tree" role="tree" aria-label="Dateien und Filter">
       @for (node of nodes(); track node.id) {
@@ -46,16 +62,46 @@ import {
           [attr.aria-posinset]="node.posInSet"
           [attr.aria-expanded]="node.expandable ? node.expanded : null"
           [attr.aria-selected]="node.current"
+          [attr.aria-checked]="node.exprId && node.level > 3 ? node.enabled : null"
+          [attr.aria-invalid]="node.error ? true : null"
           [attr.tabindex]="node.id === roving() ? 0 : -1"
-          [title]="node.title"
+          [class.off]="node.enabled === false"
+          [class.invalid]="!!node.error"
+          [class.drop]="dropTarget() === node.id"
+          [title]="node.error ? node.title + ' – Fehler: ' + node.error : node.title"
           [style.padding-left.px]="4 + (node.level - 1) * 14"
+          [attr.draggable]="isDraggable(node)"
           (click)="onClick(node, $event)"
+          (dblclick)="onDblClick(node)"
           (keydown)="onKey($event)"
           (focus)="focusId.set(node.id)"
+          (dragstart)="onDragStart(node, $event)"
+          (dragover)="onDragOver(node, $event)"
+          (dragleave)="dropTarget.set(null)"
+          (drop)="onDrop(node, $event)"
+          (dragend)="dropTarget.set(null)"
         >
           <span class="twisty" aria-hidden="true">{{
             node.expandable ? (node.expanded ? '▾' : '▸') : ''
           }}</span>
+          @if (node.exprId && node.level > 3) {
+            <input
+              type="checkbox"
+              class="onoff"
+              tabindex="-1"
+              [checked]="node.enabled"
+              [attr.aria-label]="node.label + (node.enabled ? ' ausschalten' : ' einschalten')"
+              title="An/aus (Leertaste)"
+              (click)="$event.stopPropagation()"
+              (change)="toggle(node)"
+            />
+          }
+          @if (node.joiner) {
+            <span class="joiner">{{ node.joiner }}</span>
+          }
+          @if (node.negate) {
+            <span class="joiner not">NICHT</span>
+          }
           @if (editing() === node.id) {
             <input
               #nameInput
@@ -83,6 +129,55 @@ import {
               <span class="src-state">{{ state }}</span>
             }
           }
+          @if (node.error) {
+            <span class="err-mark" aria-hidden="true">Fehler</span>
+          }
+          @if (node.kind === 'expr-group') {
+            <button
+              type="button"
+              class="op"
+              tabindex="-1"
+              [attr.aria-label]="
+                'Verknüpfung ' + (node.op === 'and' ? 'UND' : 'ODER') + ', umschalten'
+              "
+              title="UND/ODER umschalten (Enter)"
+              (click)="toggleGroupOp(node, $event)"
+            >
+              {{ node.op === 'and' ? 'UND' : 'ODER' }}
+            </button>
+            <button
+              type="button"
+              class="add"
+              tabindex="-1"
+              title="Bedingung hinzufügen (A)"
+              aria-label="Bedingung hinzufügen"
+              (click)="startAdd(node, $event)"
+            >
+              +
+            </button>
+            <button
+              type="button"
+              class="add"
+              tabindex="-1"
+              title="Gruppe hinzufügen (Shift+A)"
+              aria-label="Gruppe hinzufügen"
+              (click)="addGroup(node, $event)"
+            >
+              +( )
+            </button>
+          }
+          @if (node.kind === 'file' && node.current) {
+            <button
+              type="button"
+              class="add"
+              tabindex="-1"
+              title="Bedingung hinzufügen (A)"
+              aria-label="Bedingung hinzufügen"
+              (click)="startAdd(node, $event)"
+            >
+              +
+            </button>
+          }
           @if (node.kind === 'active-filter' && editing() !== node.id) {
             <button
               type="button"
@@ -109,6 +204,15 @@ import {
         </div>
       }
     </div>
+    @if (condEdit(); as edit) {
+      @if (sessionById(edit.sessionId); as session) {
+        <app-condition-dialog
+          [session]="session"
+          [edit]="edit.edit"
+          (closed)="onDialogClosed(edit.returnTo)"
+        />
+      }
+    }
   `,
   styles: `
     :host {
@@ -145,9 +249,39 @@ import {
       content: ' ✓';
     }
     .kind-filter-levels .label,
-    .kind-filter-query .label {
+    .kind-filter-query .label,
+    .kind-expr-cond .label {
       font-family: var(--font-mono);
       font-size: 11px;
+    }
+    .node.off .label {
+      color: var(--text-dim);
+      text-decoration: line-through;
+    }
+    .node.invalid .label {
+      color: var(--danger);
+    }
+    .node.drop {
+      box-shadow: inset 0 -2px 0 var(--accent);
+    }
+    .onoff {
+      flex: none;
+      margin: 0 2px 0 0;
+    }
+    .joiner {
+      flex: none;
+      color: var(--accent);
+      font-size: 10px;
+      font-weight: 600;
+    }
+    .joiner.not {
+      color: var(--danger);
+    }
+    .err-mark {
+      flex: none;
+      color: var(--danger);
+      font-size: 10px;
+      font-weight: 600;
     }
     .twisty {
       flex: none;
@@ -183,11 +317,18 @@ import {
       padding: 1px 5px;
     }
     .save,
-    .remove {
+    .remove,
+    .op,
+    .add {
       flex: none;
       padding: 0 5px;
       color: var(--text-dim);
       font-size: 11px;
+    }
+    .op {
+      min-width: 38px;
+      color: var(--accent);
+      font-weight: 600;
     }
     .save {
       border-color: var(--border);
@@ -219,6 +360,9 @@ export class LogTreeComponent {
         query: s.query(),
         mode: s.searchMode(),
         sources: s.sources,
+        tree: s.filterTree(),
+        treeError: s.treeError(),
+        columnLabel: (id: string) => s.columns()?.columns.find((c) => c.id === id)?.label ?? id,
       })),
       this.sessions.activeId(),
       this.settingsService.settings().savedFilters,
@@ -249,12 +393,161 @@ export class LogTreeComponent {
   }
 
   protected removable(node: TreeNode): boolean {
-    return node.kind === 'filter-levels' || node.kind === 'filter-query' || node.kind === 'saved';
+    return (
+      node.kind === 'filter-levels' ||
+      node.kind === 'filter-query' ||
+      node.kind === 'saved' ||
+      !!node.exprId
+    );
   }
 
   protected removeTitle(node: TreeNode): string {
     if (node.kind === 'saved') return 'Gespeicherten Filter löschen (Entf)';
+    if (node.exprId) {
+      return node.level === 3 ? 'Alle Bedingungen entfernen (Entf)' : 'Entfernen (Entf)';
+    }
     return node.kind === 'filter-levels' ? 'Alle Level zeigen (Entf)' : 'Suche entfernen (Entf)';
+  }
+
+  // ---------------------------------------------------------------- filter tree (prompt 010)
+
+  /** The dialog for a condition, and where the focus goes back to. */
+  protected readonly condEdit = signal<{
+    sessionId: number;
+    edit: ConditionEdit;
+    returnTo: string | null;
+  } | null>(null);
+  protected readonly dropTarget = signal<string | null>(null);
+  private dragged: { sessionId: number; exprId: string } | null = null;
+
+  protected sessionById(id: number): SessionState | null {
+    return this.sessions.sessions().find((s) => s.id === id) ?? null;
+  }
+
+  private changeTree(
+    node: TreeNode,
+    change: (
+      tree: ReturnType<SessionState['filterTree']>,
+    ) => ReturnType<SessionState['filterTree']>,
+  ): void {
+    const session = this.sessionOf(node);
+    if (session) this.sessions.setTree(session, change(session.filterTree()));
+  }
+
+  protected toggle(node: TreeNode): void {
+    if (node.exprId) this.changeTree(node, (t) => toggleEnabled(t, node.exprId as string));
+  }
+
+  protected toggleGroupOp(node: TreeNode, event?: Event): void {
+    event?.stopPropagation();
+    if (node.exprId) this.changeTree(node, (t) => toggleOp(t, node.exprId as string));
+  }
+
+  /** The group a new node goes into: the group itself, the parent of a condition, else the top. */
+  private targetGroup(node: TreeNode, session: SessionState): string {
+    if (!node.exprId) return ROOT_ID;
+    const tree = session.filterTree();
+    const own = findNode(tree, node.exprId);
+    if (own?.kind === 'group') return own.id;
+    return parentOf(tree, node.exprId)?.id ?? ROOT_ID;
+  }
+
+  protected startAdd(node: TreeNode, event?: Event): void {
+    event?.stopPropagation();
+    const session = this.sessionOf(node);
+    if (!session) return;
+    this.condEdit.set({
+      sessionId: session.id,
+      edit: { nodeId: newNodeId(), parentId: this.targetGroup(node, session), original: null },
+      returnTo: node.id,
+    });
+  }
+
+  protected addGroup(node: TreeNode, event?: Event): void {
+    event?.stopPropagation();
+    const session = this.sessionOf(node);
+    if (!session) return;
+    const group = groupNode('or');
+    // An empty group does nothing yet; the dialog for its first condition opens right away.
+    this.sessions.setTree(
+      session,
+      addNode(session.filterTree(), this.targetGroup(node, session), group),
+    );
+    this.condEdit.set({
+      sessionId: session.id,
+      edit: { nodeId: newNodeId(), parentId: group.id, original: null },
+      returnTo: `expr:${session.id}:${group.id}`,
+    });
+  }
+
+  private startEdit(node: TreeNode): void {
+    const session = this.sessionOf(node);
+    if (!session || !node.exprId) return;
+    const found = findNode(session.filterTree(), node.exprId);
+    if (found?.kind !== 'cond') return;
+    const parent = parentOf(session.filterTree(), found.id);
+    this.condEdit.set({
+      sessionId: session.id,
+      edit: {
+        nodeId: found.id,
+        parentId: parent?.id ?? ROOT_ID,
+        original: found as FilterCondNode,
+      },
+      returnTo: node.id,
+    });
+  }
+
+  protected onDialogClosed(returnTo: string | null): void {
+    this.condEdit.set(null);
+    const nodes = this.nodes();
+    const target = nodes.some((n) => n.id === returnTo) ? returnTo : nodes[0]?.id;
+    if (target) this.moveFocus(target);
+  }
+
+  protected onDblClick(node: TreeNode): void {
+    if (node.kind === 'expr-cond') this.startEdit(node);
+  }
+
+  protected isDraggable(node: TreeNode): boolean | null {
+    return node.exprId && node.level > 3 ? true : null;
+  }
+
+  protected onDragStart(node: TreeNode, event: DragEvent): void {
+    if (!node.exprId || node.sessionId === null) return;
+    this.dragged = { sessionId: node.sessionId, exprId: node.exprId };
+    event.dataTransfer?.setData('text/plain', node.label);
+    if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+  }
+
+  protected onDragOver(node: TreeNode, event: DragEvent): void {
+    if (!this.dragged || !node.exprId || node.sessionId !== this.dragged.sessionId) return;
+    event.preventDefault();
+    this.dropTarget.set(node.id);
+  }
+
+  /** On a group: into it, at the end. On a condition: before it. */
+  protected onDrop(node: TreeNode, event: DragEvent): void {
+    const dragged = this.dragged;
+    this.dragged = null;
+    this.dropTarget.set(null);
+    if (!dragged || !node.exprId || dragged.exprId === node.exprId) return;
+    event.preventDefault();
+    const session = this.sessionOf(node);
+    if (!session) return;
+    const tree = session.filterTree();
+    const target = findNode(tree, node.exprId);
+    if (!target) return;
+    let next: typeof tree;
+    if (target.kind === 'group') {
+      next = moveNodeTo(tree, dragged.exprId, target.id, target.children.length);
+    } else {
+      const parent = parentOf(tree, target.id);
+      if (!parent) return;
+      const index = parent.children.findIndex((c) => c.id === target.id);
+      next = moveNodeTo(tree, dragged.exprId, parent.id, index);
+    }
+    this.sessions.setTree(session, next);
+    this.moveFocus(`expr:${session.id}:${dragged.exprId}`);
   }
 
   protected onClick(node: TreeNode, event: MouseEvent): void {
@@ -284,6 +577,13 @@ export class LogTreeComponent {
       case 'saved-group':
         this.setExpanded(node.id, !node.expanded);
         break;
+      case 'expr-group':
+        // Enter on a group switches AND/OR; the twisty opens and closes it.
+        this.toggleGroupOp(node);
+        break;
+      case 'expr-cond':
+        this.startEdit(node);
+        break;
       default:
         if (node.sessionId !== null) this.sessions.activate(node.sessionId);
     }
@@ -296,6 +596,9 @@ export class LogTreeComponent {
       void this.sessions.setLevels(session, ALL_LEVELS);
     } else if (node.kind === 'filter-query' && session) {
       void this.sessions.clearSearch(session);
+    } else if (node.exprId && session) {
+      const exprId = node.exprId;
+      this.sessions.setTree(session, removeNode(session.filterTree(), exprId));
     } else if (node.kind === 'saved') {
       const rest = this.settingsService
         .settings()
@@ -317,7 +620,7 @@ export class LogTreeComponent {
     event?.stopPropagation();
     const session = this.sessionOf(node);
     if (!session) return;
-    this.draftName.set(suggestName(session.levels(), session.query()));
+    this.draftName.set(suggestName(session.levels(), session.query(), session.filterTree()));
     this.editing.set(node.id);
     afterNextRender(
       () => {
@@ -357,6 +660,7 @@ export class LogTreeComponent {
       session.levels(),
       session.query(),
       session.searchMode(),
+      session.filterTree(),
     );
     this.settingsService.update({
       savedFilters: upsertSavedFilter(this.settingsService.settings().savedFilters, entry),
@@ -367,11 +671,16 @@ export class LogTreeComponent {
   }
 
   protected onKey(event: KeyboardEvent): void {
-    if (event.metaKey || event.ctrlKey || event.altKey) return;
-    if ((event.target as HTMLElement).closest('input')) return;
+    if (event.metaKey || event.ctrlKey) return;
+    if ((event.target as HTMLElement).closest('input.name')) return;
     const nodes = this.nodes();
     const current = nodes.find((n) => n.id === this.roving());
     if (!current) return;
+    if (this.onTreeKey(event, current)) {
+      event.preventDefault();
+      return;
+    }
+    if (event.altKey) return;
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
       if (event.key === 'Enter' && current.kind === 'active-filter') this.startSave(current);
@@ -390,6 +699,42 @@ export class LogTreeComponent {
     if (move.expand) this.setExpanded(move.expand, true);
     if (move.collapse) this.setExpanded(move.collapse, false);
     if (move.focus) this.moveFocus(move.focus);
+  }
+
+  /** Keys of the filter tree: on/off, NOT, add, move. True when the key was used. */
+  private onTreeKey(event: KeyboardEvent, node: TreeNode): boolean {
+    const session = this.sessionOf(node);
+    if (!session) return false;
+    const inTree = !!node.exprId && node.level > 3;
+    if (event.altKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+      if (!inTree) return false;
+      const exprId = node.exprId as string;
+      this.sessions.setTree(
+        session,
+        moveNode(session.filterTree(), exprId, event.key === 'ArrowUp' ? -1 : 1),
+      );
+      this.moveFocus(node.id);
+      return true;
+    }
+    if (event.altKey) return false;
+    const canAdd =
+      !!node.exprId || node.kind === 'active-filter' || (node.kind === 'file' && node.current);
+    if ((event.key === 'a' || event.key === 'A') && canAdd) {
+      if (event.shiftKey) this.addGroup(node);
+      else this.startAdd(node);
+      return true;
+    }
+    if (!inTree) return false;
+    if (event.key === ' ') {
+      this.toggle(node);
+      return true;
+    }
+    if (event.key === 'n' || event.key === 'N') {
+      const exprId = node.exprId as string;
+      this.sessions.setTree(session, toggleNegate(session.filterTree(), exprId));
+      return true;
+    }
+    return false;
   }
 
   private setExpanded(id: string, expanded: boolean): void {

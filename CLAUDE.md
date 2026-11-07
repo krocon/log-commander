@@ -34,6 +34,7 @@ src/                         Angular 22 (zoneless, Signals, OnPush, Standalone)
   app/core/log/              LogApi, DTOs (= Rust model.rs)
   app/core/settings/         SettingsService (tauri-plugin-store, wendet Theme/Farben an), reine Merge-Logik
   app/features/sessions/     LogSessionService (Tabs, alle Aktionen), SessionState (je Tab), PageCache, filter-logic,
+                             filter-tree (Filterbaum: Knoten, Verschieben, zu FilterExpr kompilieren),
                              format-logic (Spalten, Formattext), navigation-logic (Lesezeichen, Sprung, Gesamtlog)
   app/features/log-table/    LogTableViewComponent (GuiExpert Table), LogAreaModel, viewport-logic (reines
                              Scroll-Modell), table-logic, highlight (Inline-Tokens, cellSegments), columns-logic
@@ -52,7 +53,8 @@ src-tauri/src/               Rust; alles außer commands.rs und lib.rs ist frei 
   level.rs, profile.rs       Level-Erkennung, eingebaute und eigene Profile (samt Layouts), Vorschlag
   fields.rs                  Formaterkennung, Felder je Zeile (Spannen in UTF-16), JSON/logfmt/FIX/W3C-Scanner, Inferenz
   timestamp.rs               Zeitstempel erkennen und nach µs UTC wandeln (auch für den Merge, Prompt 006)
-  filter.rs                  gefilterte Zeilenliste (inkrementell), Textsuche, Quellenmaske
+  filter.rs                  gefilterte Zeilenliste (inkrementell), Textsuche, Ausdruck je Eintrag
+  filter_expr.rs             Filterbaum: FilterExpr (UND/ODER/NICHT, Text, Level, Feld, Zeit, Abschnitt, Zeilen) kompiliert, Quellenmaske
   overview.rs                LevelSummary: Level-Bits je Abschnitt für Overview Ruler und find_level (max. 64 KB)
   merge.rs                   mehrere Dateien als eine Sitzung: Merger (rein), Worker (Folgen, Rotation, Haltepuffer)
   encoding.rs, platform.rs   Encodings, ANSI; Share-Flags und Datei-Identität je OS
@@ -123,6 +125,15 @@ samples/                     Beispiel-Logs
   (`E`/`W`), Lesezeichen (`M`/`N`) nur im Speicher des Frontends, neue `epoch` leert sie. Navigation ändert nie die Auswahl.
   `G` hebt den Filter auf (Filtersuche wird Hervorhebung), merkt ihn und scrollt erst mit der neuen `viewGeneration`
   (`pendingReveal`).
+- **Verkettete Filter (Prompt 010):** Der Baum der Seitenleiste wird zu **einem** Ausdruck kompiliert
+  (`filter_expr.rs`), der eine gefilterte Liste ergibt, kein Listen-Stapel je Knoten. Bedingungen gelten für den Eintrag:
+  ein Blatt ist gesetzt, sobald eine Zeile des Eintrags es erfüllt (Bitmaske, höchstens 64 Blätter), der Baum wird auf der
+  Maske ausgewertet. Level-Chips und Suche bleiben ein UND darüber. Mit NICHT kann ein schon gezeigter Eintrag durch eine
+  späte Fortsetzungszeile wieder herausfallen: Er liegt am Ende der Liste und wird abgeschnitten, `filteredLines` sinkt,
+  `retractedFrom` im Update lässt das Frontend ab dort neu laden. Abschnitte (Start-/Endmuster) sind Zustand über die
+  Zeilenfolge und werden immer fortgeschrieben, auch wo ein ODER schon entschieden ist. Text-Blätter laufen gemeinsam
+  (eine Alternation als Vorfilter, `RegexSet` nur bei einem Treffer). Feld- und Zeit-Blätter lesen nur den Kopf. Ohne
+  Baum bleibt der alte Weg unverändert (`append` verzweigt nur bei `spec.expr`).
 - **Fortsetzungszeilen:** Einrücken, `at `, `Caused by:`, `Traceback`, `... ` wird vor der Regex geprüft
   (`at com.acme.error.Handler` ist keine ERROR-Zeile). Zeilen mit Zeitstempel ohne Level beginnen einen neuen Eintrag.
 - **Felder beim Ausliefern, nicht beim Indexieren (Prompt 008):** `get_lines` zerlegt jede Zeile mit dem `FieldParser`
@@ -140,6 +151,9 @@ samples/                     Beispiel-Logs
 - **Grenzen Merge:** höchstens 16 Quellen, verspätete Zeilen stehen am Ende, bis „Neu sortieren“; keine Zeilennummer der
   Quelldatei (nur Byte-Offset); ohne Zeitzone gilt die lokale Zone; ohne Zeitstempel in den ersten 200 Zeilen
   `no_timestamps`. Truncation einer Quelle, Rotation ohne Behalten oder mehr als 32 Segmente einer Quelle mischen alles neu.
+- **Grenzen Filterbaum:** höchstens 64 Bedingungen (Blätter), 16 Ebenen, 4096 Zeichen je Text/Muster/Wert, Regex-
+  Größenlimit 32 MB; Fehler kommen als `invalid_search` mit `nodeId`. Feldbedingungen gelten mit dem Format beim Setzen
+  (bei neuen Spalten setzt das Frontend den Filter neu), Zeilen-Bedingungen meinen Zeilennummern der aktuellen `epoch`.
 - **Grenzen:** höchstens 2³² Zeilen je Sitzung (Index dann 64 GB), Anzeige 128 KB je Zeile, Suche 1 MB je Zeile, Zeile ohne
   Ende wird bei 16 MB geteilt, Detail-Panel 1 MiB je Eintrag (Formatieren bis 256 KB). Felder: höchstens 12 Spalten aus JSON-/logfmt-Schlüsseln bzw. FIX-Tags, zerlegt werden 16 KB. Truncation wird über die kleinere Größe erkannt; wird eine Datei geleert und zwischen zwei
   Prüfungen über die alte Größe hinaus neu beschrieben, bleibt das unbemerkt.

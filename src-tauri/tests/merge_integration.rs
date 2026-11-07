@@ -793,3 +793,79 @@ fn measure_merge() {
         assert_eq!(merged, plain);
     }
 }
+
+/// Prompt 010: a filter tree on a merge, live, gives what the job gives, and a section between
+/// markers runs in the merged order.
+#[test]
+fn an_expression_on_a_live_merge_equals_the_job() {
+    use log_commander_lib::filter_expr::{Cond, FilterExpr, GroupOp};
+    let dir = tempfile::tempdir().unwrap();
+    let a = write(
+        dir.path(),
+        "a.log",
+        "2024-01-15 10:00:00,000 INFO a BEGIN\n2024-01-15 10:00:02,000 INFO a two\n",
+    );
+    let b = write(
+        dir.path(),
+        "b.log",
+        "2024-01-15 10:00:01,000 ERROR b timeout\n\tat retry.X\n2024-01-15 10:00:03,000 INFO b END\n",
+    );
+    let fx = merge(&[&a, &b]);
+    let expr = FilterExpr::Group {
+        id: "g".into(),
+        op: GroupOp::Or,
+        negate: false,
+        children: vec![
+            FilterExpr::Cond {
+                id: "r".into(),
+                negate: false,
+                cond: Cond::Range {
+                    start: query("BEGIN"),
+                    end: Some(query("END")),
+                    inclusive: false,
+                },
+            },
+            FilterExpr::Cond {
+                id: "t".into(),
+                negate: false,
+                cond: Cond::Text(query("late")),
+            },
+        ],
+    };
+    let set = |fx: &Fixture| {
+        let info = fx
+            .session
+            .set_filter_expr(
+                &Level::ALL,
+                &query(""),
+                SearchMode::Filter,
+                None,
+                Some(&expr),
+            )
+            .unwrap();
+        fx.wait("filter", |s| {
+            !s.filter_pending && s.view_generation == info.view_generation
+        });
+    };
+    set(&fx);
+    // Inside the section: b's entry (both lines) and a's second line; not the markers.
+    let shown = |fx: &Fixture| -> Vec<u32> {
+        fx.session
+            .get_lines(true, 0, 5000)
+            .unwrap()
+            .iter()
+            .map(|l| l.line)
+            .collect()
+    };
+    assert_eq!(shown(&fx), vec![1, 2, 3]);
+    append(&a, "2024-01-15 10:00:04,000 INFO a late\n");
+    append(
+        &b,
+        "2024-01-15 10:00:05,000 INFO b BEGIN\n2024-01-15 10:00:06,000 INFO b in\n",
+    );
+    fx.wait("live lines", |s| s.total_lines == 8);
+    let incremental = shown(&fx);
+    set(&fx);
+    assert_eq!(incremental, shown(&fx));
+    assert_eq!(incremental, vec![1, 2, 3, 5, 7]);
+}

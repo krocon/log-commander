@@ -56,6 +56,9 @@ pub enum Status {
 pub struct SessionUpdate {
     pub total_lines: u64,
     pub filtered_lines: u64,
+    /// A filter expression took lines out of the end of the view since the last update (prompt 010):
+    /// positions from here on may hold other lines, even if the count did not change.
+    pub retracted_from: Option<u64>,
     pub counts: LevelCounts,
     /// Lines per level in the view (after the filter); while `filter_pending` still the old filter's.
     pub view_counts: LevelCounts,

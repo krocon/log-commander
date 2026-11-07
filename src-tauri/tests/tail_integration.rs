@@ -472,6 +472,55 @@ fn measure_500mb() {
         fx.session.stats().filtered_lines
     );
 
+    // Prompt 010: a filter tree with 1, 5 and 20 text conditions (OR), against the search above.
+    for leaves in [1usize, 5, 20] {
+        use log_commander_lib::filter_expr::{Cond, FilterExpr, GroupOp};
+        let children = (0..leaves)
+            .map(|i| FilterExpr::Cond {
+                id: format!("n{i}"),
+                negate: false,
+                cond: Cond::Text(SearchQuery {
+                    text: format!("request {} ", 12345 + i * 7),
+                    is_regex: false,
+                    case_sensitive: false,
+                }),
+            })
+            .collect();
+        let expr = FilterExpr::Group {
+            id: "root".into(),
+            op: GroupOp::Or,
+            negate: false,
+            children,
+        };
+        let start = Instant::now();
+        let info = fx
+            .session
+            .set_filter_expr(
+                &Level::ALL,
+                &SearchQuery::default(),
+                SearchMode::Filter,
+                None,
+                Some(&expr),
+            )
+            .unwrap();
+        fx.wait("expression filter", |s| {
+            s.view_generation == info.view_generation
+        });
+        println!(
+            "expression filter, {leaves} text leaves: {:?}, {} hits",
+            start.elapsed(),
+            fx.session.stats().filtered_lines
+        );
+    }
+    // The numbers below with the search filter, as before prompt 010.
+    let info = fx
+        .session
+        .set_filter(&Level::ALL, &query, SearchMode::Filter)
+        .unwrap();
+    fx.wait("search filter again", |s| {
+        s.view_generation == info.view_generation
+    });
+
     let start = Instant::now();
     let pages = 200;
     for page in 0..pages {

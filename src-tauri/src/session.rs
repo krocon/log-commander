@@ -5,9 +5,10 @@ use crate::encoding::{display_text, strip_ansi, Encoding};
 use crate::error::{AppError, AppResult, ErrorCode};
 use crate::fields::{self, FormatGuess};
 use crate::filter::{
-    FilterCheckpoint, FilterSpec, FilteredLines, LevelMask, SearchMode, SearchQuery, SourceMask,
-    TextMatcher,
+    FilterCheckpoint, FilterSpec, FilteredLines, LevelMask, Probe, SearchMode, SearchQuery,
+    SourceMask, TextMatcher, TextTest,
 };
+use crate::filter_expr::{CompiledExpr, ExprContext, FilterExpr};
 use crate::indexer::{
     segment_of, LineEntry, LineIndex, LineReader, Segment, MAX_DISPLAY_BYTES, MAX_SEARCH_BYTES,
 };
@@ -194,6 +195,7 @@ impl SessionData {
         SessionUpdate {
             total_lines: self.index.len() as u64,
             filtered_lines: self.filter.len(self.index.len()) as u64,
+            retracted_from: self.filter.retracted(),
             counts: self.index.counts.into(),
             view_counts: self.filter.counts(&self.index.counts).into(),
             status: self.status.clone(),
@@ -412,7 +414,7 @@ impl LogSession {
     /// Lines of a view. `filtered = false` addresses all lines of the file.
     pub fn get_lines(&self, filtered: bool, start: usize, count: usize) -> AppResult<Vec<LogLine>> {
         let count = count.min(MAX_GET_LINES);
-        let (lines, segments, matcher, format) = {
+        let (lines, segments, matcher, expr, format) = {
             let data = self.shared.data.read();
             let total = data.index.len();
             let mut lines = Vec::with_capacity(count);
@@ -429,6 +431,7 @@ impl LogSession {
                 lines,
                 data.segments.clone(),
                 data.filter.spec.matcher.clone(),
+                data.filter.spec.expr.clone().filter(|e| e.highlights()),
                 Arc::clone(&data.format),
             )
         };
@@ -440,9 +443,15 @@ impl LogSession {
                 .raw(&entry, MAX_DISPLAY_BYTES)
                 .map_err(|e| AppError::from_io(&e, &self.path))?;
             let text = display_text(raw, encoding).into_owned();
-            let matches = matcher
+            let mut matches = matcher
                 .as_ref()
                 .map_or_else(Vec::new, |m| m.match_ranges(&text));
+            if let Some(expr) = &expr {
+                // Text conditions of the tree are marked like the search.
+                expr.match_ranges(&text, &mut matches);
+                matches.sort_unstable();
+                matches.truncate(crate::filter::MAX_MATCHES_PER_LINE);
+            }
             let truncated = entry.len as usize > MAX_DISPLAY_BYTES;
             // A continuation (stack trace) is no entry of its own: all of it is the message.
             let fields = if entry.is_continuation() {
@@ -483,6 +492,43 @@ impl LogSession {
         mode: SearchMode,
         sources: Option<u16>,
     ) -> AppResult<FilterInfo> {
+        self.set_filter_expr(levels, query, mode, sources, None)
+    }
+
+    /// The whole filter in one call: levels, search, sources and the tree of the sidebar (prompt 010).
+    /// An invalid expression changes nothing and names its node in the error.
+    pub fn set_filter_expr(
+        &self,
+        levels: &[Level],
+        query: &SearchQuery,
+        mode: SearchMode,
+        sources: Option<u16>,
+        expr: Option<&FilterExpr>,
+    ) -> AppResult<FilterInfo> {
+        let expr = match expr {
+            None => None,
+            Some(expr) => {
+                let (format, sample, reference) = {
+                    let data = self.shared.data.read();
+                    let reference = data
+                        .segments
+                        .first()
+                        .and_then(|s| s.file.metadata().ok()?.modified().ok())
+                        .unwrap_or_else(std::time::SystemTime::now);
+                    (
+                        Arc::clone(&data.format),
+                        Arc::clone(&data.sample),
+                        reference,
+                    )
+                };
+                let ctx = ExprContext {
+                    format,
+                    sample: &sample,
+                    reference,
+                };
+                Some(Arc::new(CompiledExpr::compile(expr, &ctx)?))
+            }
+        };
         let matcher = if query.text.is_empty() {
             None
         } else {
@@ -504,6 +550,7 @@ impl LogSession {
                 }
                 _ => SourceMask::ALL,
             },
+            expr,
         };
         self.shared.data.write().requested_spec = spec;
         Ok(self.start_job())
@@ -1064,8 +1111,7 @@ fn run_filter(shared: &Shared, generation: u64, view: u64) {
                 data.segments.clone(),
             )
         };
-        let needs_text = spec.needs_text();
-        let matcher = spec.filtering_matcher().cloned();
+        let test = spec.text_test();
         let mut builder = FilteredLines::new(spec);
         let mut reader = LineReader::new(segments, SCAN_BLOCK);
         let mut position = 0usize;
@@ -1086,13 +1132,7 @@ fn run_filter(shared: &Shared, generation: u64, view: u64) {
                 (data.index.entries[position..end].to_vec(), total)
             };
             for entry in &batch {
-                feed(
-                    &mut builder,
-                    entry,
-                    &mut reader,
-                    matcher.as_deref(),
-                    needs_text,
-                );
+                feed(&mut builder, entry, &mut reader, &test);
             }
             position += batch.len();
             {
@@ -1117,26 +1157,14 @@ fn run_filter(shared: &Shared, generation: u64, view: u64) {
         let before_provisional = total - usize::from(data.provisional.is_some());
         for line in position..before_provisional {
             let entry = data.index.entries[line];
-            feed(
-                &mut builder,
-                &entry,
-                &mut reader,
-                matcher.as_deref(),
-                needs_text,
-            );
+            feed(&mut builder, &entry, &mut reader, &test);
         }
         if let Some(provisional) = &mut data.provisional {
             provisional.checkpoint = builder.checkpoint();
         }
         for line in before_provisional..total {
             let entry = data.index.entries[line];
-            feed(
-                &mut builder,
-                &entry,
-                &mut reader,
-                matcher.as_deref(),
-                needs_text,
-            );
+            feed(&mut builder, &entry, &mut reader, &test);
         }
         data.filter = builder;
         data.finish_view(view);
@@ -1149,25 +1177,16 @@ fn run_filter(shared: &Shared, generation: u64, view: u64) {
     }
 }
 
-fn feed(
-    builder: &mut FilteredLines,
-    entry: &LineEntry,
-    reader: &mut LineReader,
-    matcher: Option<&TextMatcher>,
-    needs_text: bool,
-) {
+fn feed(builder: &mut FilteredLines, entry: &LineEntry, reader: &mut LineReader, test: &TextTest) {
     builder.append_from(
         entry.source(),
         entry.level(),
         entry.is_continuation(),
         || {
-            if !needs_text {
-                return true;
-            }
-            let Some(matcher) = matcher else { return true };
-            reader
-                .raw(entry, MAX_SEARCH_BYTES)
-                .is_ok_and(|(raw, encoding)| matcher.is_match(&display_text(raw, encoding)))
+            reader.raw(entry, MAX_SEARCH_BYTES).map_or_else(
+                |_| Probe::default(),
+                |(raw, encoding)| test.probe_raw(raw, encoding, !entry.is_continuation()),
+            )
         },
     );
 }

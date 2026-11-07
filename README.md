@@ -53,6 +53,15 @@ Like <code>tail -f</code> with a GUI: millions of lines, instant filters, no wai
 - **From the filter to the whole log** – `G` (or „Im Gesamtlog“ in the toolbar and the detail panel) shows the
   selected line of a filtered view in the whole log, with the search kept as highlighting; `G` again (or „Zurück zum
   Filter“) brings the filter back at the same line. Changing the filter by hand forgets the way back.
+- **Filter tree** – conditions in the sidebar, nested in groups joined with AND or OR (the joining word stands
+  between the rows): text or regex, levels, a field of the head (`=`, contains, regex, `>`, `<`, between; numbers
+  compare as numbers), a time span, a section between a start and an end marker, line numbers. Each can be negated,
+  switched off with its check mark, moved with `Alt+↑/↓` or by dragging. Conditions hold for the whole entry: a
+  request id in the head and „Timeout“ in its stack trace match together. The quick ways: mark text in a line and
+  press `I` (`Shift+I` excludes it) or right click „Filtern auf …“, in the column view „Filtern nach Thread = …“,
+  „Abschnitt ab hier“/„bis hier“ (`>`/`<`) for the selection. Errors (a broken regex, an unknown time) show at
+  their condition. The level chips and the search stay on top as an AND; saved filters keep the tree. At most 64
+  conditions.
 - **Search** – filter or highlight, regular expressions, case sensitivity, jump between matches.
 - **Follow** – stays at the end while you are there; scroll up and it pauses and counts the new lines.
 - **Freeze** – holds a tab to read in peace: lines, counts and the position stay put while filters and search keep
@@ -66,6 +75,7 @@ Like <code>tail -f</code> with a GUI: millions of lines, instant filters, no wai
 | ![Search](docs/screenshots/search.png) | ![Light theme](docs/screenshots/light.png) |
 | ![Detail panel](docs/screenshots/detail.png) | ![Sidebar](docs/screenshots/sidebar.png) |
 | ![Merged files](docs/screenshots/merge.png) | ![Merge dialog](docs/screenshots/merge-dialog.png) |
+| ![Filter tree](docs/screenshots/filter-tree.png) | ![Narrow window](docs/screenshots/narrow.png) |
 
 ## Install
 
@@ -98,7 +108,12 @@ log-commander /var/log/app.log /var/log/other.log
 | `W`, `Shift+W` | Next / previous warning or worse |
 | `M` | Bookmark on the selected entry, or off again |
 | `N`, `Shift+N` | Next / previous bookmark |
-| `G` | Selected line in the whole log (filter lifted and kept), again: back to the filter |
+| `G` | Selected line in the whole log (filter lifted and kept, the filter tree too), again: back to the filter |
+| `I`, `Shift+I` | Filter on the marked text, or exclude it (filter tree); also by right click on a line |
+| `>`, `<` | Section from / up to the selected entry (filter tree) |
+| `A`, `Shift+A` in the tree | Add a condition or a group (on a file, a group or next to a condition) |
+| `Space`, `N`, `Enter` on a condition | Switch on/off, negate, edit (on a group `Enter` toggles AND/OR); `Delete` removes |
+| `Alt+↑`, `Alt+↓` in the tree | Move a condition or group among its siblings |
 | Click on the overview ruler | Go to the mark's entry, a bookmark, the selection or that place |
 | `Cmd/Ctrl+F` | Search; `Enter` next match, `Shift+Enter` previous, `Esc` clear |
 | Click, `Shift`+click | Select an entry, or a range (an open detail panel follows) |
@@ -144,6 +159,7 @@ Measured on an Apple Silicon Mac, release build, with
 | Index in RAM | 78 MB |
 | Level filter over all lines | 15 ms |
 | Full text search over all lines | 0.7 s |
+| Filter tree with 1 / 5 / 20 text conditions | 0.8 / 0.8 / 1.0 s |
 | `get_lines`, 200 lines at a random position | 43 µs |
 | `get_overview` (800 px, 1000 bookmarks) | 0.3 ms |
 | `find_level`, no FATAL in 5.1 million lines | 0.13 ms |

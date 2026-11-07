@@ -77,7 +77,7 @@ function setup(initial: number) {
     // The view reads this on every render; the signal remembers the last value it was read with.
     session.displayedLines();
   };
-  return { session, respond };
+  return { session, respond, calls, ensure };
 }
 
 describe('SessionState.displayedLines', () => {
@@ -259,5 +259,47 @@ describe('SessionState navigation (prompt 007)', () => {
     answer(80);
     await tick();
     expect(session.scroll()).toEqual({ top: 3, subPx: 0 });
+  });
+});
+
+describe('SessionState with a filter expression (prompt 010)', () => {
+  it('reads the end again from where lines were taken out, although the count is the same', async () => {
+    const { session, respond, calls } = setup(250);
+    await respond(250);
+    session.cache.ensure(200, 250);
+    expect(calls.length).toBe(0);
+    // Same count and size, but from position 205 on other lines: the page 200–399 again.
+    session.applyUpdate(update(250, { retractedFrom: 205 }));
+    session.cache.ensure(200, 250);
+    expect(calls.map((c) => c.start)).toEqual([200]);
+    // Meanwhile the old text stays visible.
+    expect(session.cache.line(210)?.text).toBe('line 210');
+  });
+
+  it('re-applies the filter when the columns change and the tree has field conditions', () => {
+    const { session } = setup(10);
+    let applied = 0;
+    session.onColumnsChanged = () => applied++;
+    session.applyUpdate(update(10, { columnsRevision: 2 }));
+    expect(applied).toBe(0);
+    session.filterTree.set({
+      kind: 'group',
+      id: 'root',
+      op: 'and',
+      negate: false,
+      enabled: true,
+      children: [
+        {
+          kind: 'cond',
+          id: 'f',
+          negate: false,
+          enabled: true,
+          cond: { type: 'field', column: 'thread', op: 'eq', value: 'main' },
+        },
+      ],
+    });
+    session.applyUpdate(update(10, { columnsRevision: 3 }));
+    expect(applied).toBe(1);
+    expect(session.filterActive()).toBe(true);
   });
 });

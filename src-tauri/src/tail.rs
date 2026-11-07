@@ -4,7 +4,7 @@
 
 use crate::encoding::{display_text, Encoding};
 use crate::fields::{self, MIN_CONFIDENCE};
-use crate::filter::TextMatcher;
+use crate::filter::Probe;
 use crate::indexer::{read_at, LineEntry, LineReader, LineSplitter, Segment, MAX_SEARCH_BYTES};
 use crate::model::Status;
 use crate::platform::{file_id, open_file_id, open_shared, FileId};
@@ -303,52 +303,42 @@ impl Tailer {
     }
 
     fn ingest(&mut self, skip: usize, n: usize) {
-        let (detector, mut prev, matcher, encoding) = {
+        let (detector, mut prev, test, encoding) = {
             let data = self.shared.data.read();
             (
                 Arc::clone(&data.detector),
                 data.prev,
-                data.filter.spec.filtering_matcher().cloned(),
+                data.filter.spec.text_test(),
                 data.encoding,
             )
         };
-        let mut batch: Vec<(LineEntry, bool)> = Vec::with_capacity(n / 80);
+        let mut batch: Vec<(LineEntry, Probe)> = Vec::with_capacity(n / 80);
         let block = &self.buf[skip..n];
         self.splitter.feed(block, |offset, raw| {
             let text = detection_bytes(raw, encoding);
             let (level, continuation) = detector.classify(&text, &mut prev);
-            let matched = matcher
-                .as_ref()
-                .is_some_and(|m| text_matches(m, raw, encoding));
+            let probe = test.probe_raw(raw, encoding, !continuation);
             batch.push((
                 LineEntry::new(offset, raw.len() as u32, level, continuation),
-                matched,
+                probe,
             ));
         });
         let mut data = self.shared.data.write();
-        let mut reader = None;
-        for (entry, matched) in batch {
-            let same_matcher = match (data.filter.spec.filtering_matcher(), &matcher) {
-                (Some(now), Some(then)) => Arc::ptr_eq(now, then),
-                (None, None) => true,
-                _ => false,
-            };
-            let now_matcher = data.filter.spec.filtering_matcher().cloned();
-            let segments = &data.segments;
-            let reader =
-                reader.get_or_insert_with(|| LineReader::new(segments.clone(), BLOCK_SIZE));
+        // The write lock is held for the whole batch: the filter cannot change in between.
+        let now = data.filter.spec.text_test();
+        let same = now.same(&test);
+        let mut reader = (!same).then(|| LineReader::new(data.segments.clone(), BLOCK_SIZE));
+        for (entry, probe) in batch {
             // The filter changed since this batch was prepared: look at the text again.
-            let matches = || {
-                if same_matcher {
-                    return matched;
-                }
-                let Some(now) = now_matcher else { return true };
-                reader
-                    .raw(&entry, MAX_SEARCH_BYTES)
-                    .is_ok_and(|(raw, enc)| text_matches(&now, raw, enc))
+            let probe = || match &mut reader {
+                None => probe,
+                Some(reader) => reader.raw(&entry, MAX_SEARCH_BYTES).map_or_else(
+                    |_| Probe::default(),
+                    |(raw, enc)| now.probe_raw(raw, enc, !entry.is_continuation()),
+                ),
             };
             data.filter
-                .append(entry.level(), entry.is_continuation(), matches);
+                .append(entry.level(), entry.is_continuation(), probe);
             data.index.push(entry);
         }
         data.prev = prev;
@@ -457,11 +447,9 @@ impl Tailer {
         let mut prev = data.prev;
         let text = detection_bytes(raw, encoding);
         let (level, continuation) = detector.classify(&text, &mut prev);
-        let matcher = data.filter.spec.filtering_matcher().cloned();
+        let test = data.filter.spec.text_test();
         data.filter.append(level, continuation, || {
-            matcher
-                .as_ref()
-                .is_some_and(|m| text_matches(m, raw, encoding))
+            test.probe_raw(raw, encoding, !continuation)
         });
         data.index.push(LineEntry::new(
             offset,
@@ -502,6 +490,7 @@ impl Tailer {
             }
             data.dirty = false;
             let update = data.update();
+            data.filter.take_retracted();
             // One-shot states: the next update says Live again.
             if matches!(data.status, Status::Truncated | Status::Rotated) {
                 data.status = if self.loading {
@@ -564,11 +553,6 @@ pub fn suggest(
         suggest_profile(plain.iter().map(Vec::as_slice))
     };
     (suggestion, guess)
-}
-
-pub fn text_matches(matcher: &TextMatcher, raw: &[u8], encoding: Encoding) -> bool {
-    let raw = &raw[..raw.len().min(MAX_SEARCH_BYTES)];
-    matcher.is_match(&crate::encoding::display_text(raw, encoding))
 }
 
 fn apply_suggestion(data: &mut crate::session::SessionData, profile: Option<&Profile>) {

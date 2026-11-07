@@ -39,6 +39,7 @@ import {
 import { LogSessionService } from '../sessions/log-session.service';
 import { labelWidth } from '../merge/merge-logic';
 import { ColumnMenuComponent } from './column-menu';
+import { RowMenuAction, RowMenuComponent, RowMenuItem, rowMenuItems } from './row-menu';
 import { SessionState } from '../sessions/session-state';
 import { COL_NUMBER, COL_TEXT, ID_NUMBER, ID_TEXT, LogAreaModel } from './log-area-model';
 import {
@@ -82,6 +83,16 @@ interface TableConfig {
   columns: ViewColumn[];
 }
 
+interface RowMenu {
+  x: number;
+  y: number;
+  items: RowMenuItem[];
+  line: number | null;
+  text: string;
+  cell: { column: string; value: string } | null;
+  returnTo: HTMLElement | null;
+}
+
 interface ColumnMenu {
   x: number;
   y: number;
@@ -117,7 +128,7 @@ const BASE_OPTIONS: TableOptionsIf = {
   selector: 'app-log-table-view',
   changeDetection: ChangeDetectionStrategy.OnPush,
   encapsulation: ViewEncapsulation.None,
-  imports: [TableSignalComponent, ColumnMenuComponent],
+  imports: [TableSignalComponent, ColumnMenuComponent, RowMenuComponent],
   host: {
     class: 'lt-host',
     '[class.lt-columns]': 'columnView()',
@@ -157,6 +168,15 @@ const BASE_OPTIONS: TableOptionsIf = {
         (widthChange)="resizeColumnBy($event.id, $event.direction)"
         (resetLayout)="resetColumns()"
         (closed)="closeMenu()"
+      />
+    }
+    @if (rowMenu(); as m) {
+      <app-row-menu
+        [items]="m.items"
+        [x]="m.x"
+        [y]="m.y"
+        (choose)="onRowMenu($event)"
+        (closed)="closeRowMenu()"
       />
     }
   `,
@@ -207,6 +227,7 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
   private columns: ViewColumn[] = [];
   protected readonly menuColumns = signal<ViewColumn[]>([]);
   protected readonly menu = signal<ColumnMenu | null>(null);
+  protected readonly rowMenu = signal<RowMenu | null>(null);
 
   private readonly metrics = computed<ViewMetrics>(() => ({
     count: this.session().displayedLines(),
@@ -777,12 +798,96 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
   }
 
   private readonly onOutsideMouseDown = (event: MouseEvent): void => {
-    if (!this.menu()) return;
     const target = event.target as HTMLElement;
-    if (!target.closest?.('.lt-colmenu')) this.menu.set(null);
+    if (this.menu() && !target.closest?.('.lt-colmenu')) this.menu.set(null);
+    if (this.rowMenu() && !target.closest?.('.lt-rowmenu')) this.rowMenu.set(null);
   };
 
+  /** Prompt 010: right click on a line, the quick ways into the filter tree. */
+  private openRowMenu(event: GeMouseEvent): void {
+    const original = event.originalEvent;
+    original?.preventDefault();
+    const session = this.session();
+    const line = event.rowIndex >= 0 ? session.cache.line(event.rowIndex) : null;
+    const text = window.getSelection()?.toString() ?? '';
+    let cell: RowMenu['cell'] = null;
+    let cellLabel = '';
+    const area = this.config().area;
+    if (line && !line.isContinuation && area.columnView && event.columnIndex >= 0) {
+      const id = area.columnAt(event.columnIndex).id;
+      const columns = session.columns()?.columns ?? [];
+      const index = columns.findIndex((c) => c.id === id);
+      const span = index >= 0 ? line.fields[index] : undefined;
+      if (span && span[1] > span[0]) {
+        cell = { column: id, value: line.text.slice(span[0], span[1]) };
+        cellLabel = columns[index].label;
+      }
+    }
+    const items = rowMenuItems({
+      selectedText: text,
+      cell: cell ? { label: cellLabel, value: cell.value } : null,
+      hasLine: !!line,
+    });
+    if (!items.length) return;
+    const host = this.host.nativeElement;
+    const box = host.getBoundingClientRect();
+    this.rowMenu.set({
+      x: Math.max(0, Math.min((original?.clientX ?? box.left) - box.left, host.clientWidth - 240)),
+      y: Math.max(0, Math.min((original?.clientY ?? box.top) - box.top, host.clientHeight - 140)),
+      items,
+      line: line?.line ?? null,
+      text,
+      cell,
+      returnTo:
+        document.activeElement instanceof HTMLElement && document.activeElement !== document.body
+          ? document.activeElement
+          : null,
+    });
+  }
+
+  protected closeRowMenu(): void {
+    const menu = this.rowMenu();
+    if (!menu) return;
+    this.rowMenu.set(null);
+    menu.returnTo?.focus();
+  }
+
+  protected async onRowMenu(action: RowMenuAction): Promise<void> {
+    const menu = this.rowMenu();
+    this.closeRowMenu();
+    if (!menu) return;
+    const session = this.session();
+    switch (action) {
+      case 'filter-text':
+      case 'exclude-text':
+        this.sessions.filterOnText(session, menu.text, action === 'exclude-text');
+        break;
+      case 'filter-value':
+        if (menu.cell) this.sessions.filterByValue(session, menu.cell.column, menu.cell.value);
+        break;
+      case 'from-here':
+      case 'to-here': {
+        // The line under the pointer: its entry becomes the selection, the section starts or ends there.
+        const selection = session.selection();
+        const inSelection =
+          selection &&
+          menu.line !== null &&
+          menu.line >= selection.first &&
+          menu.line <= selection.last;
+        if (!inSelection && menu.line !== null) {
+          await this.sessions.selectEntry(session, menu.line, false);
+        }
+        this.sessions.filterSection(session, action === 'from-here' ? 'from' : 'to');
+        break;
+      }
+    }
+  }
+
   protected onTableContextMenu(event: GeMouseEvent): void {
+    if (event.areaIdent === 'body') {
+      this.openRowMenu(event);
+      return;
+    }
     if (event.areaIdent !== 'header' || !this.config().area.columnView) return;
     const original = event.originalEvent;
     original?.preventDefault();
@@ -876,7 +981,7 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
   };
 
   private readonly onWheel = (event: WheelEvent): void => {
-    if ((event.target as HTMLElement).closest?.('.lt-colmenu')) return;
+    if ((event.target as HTMLElement).closest?.('.lt-colmenu, .lt-rowmenu')) return;
     event.preventDefault();
     event.stopPropagation();
     const unit = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? WHEEL_LINE_PX : 1;
@@ -910,7 +1015,7 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
 
   private readonly onKey = (event: KeyboardEvent): void => {
     const target = event.target as HTMLElement;
-    if (target.closest?.('input, textarea, select, dialog, .lt-colmenu')) return;
+    if (target.closest?.('input, textarea, select, dialog, .lt-colmenu, .lt-rowmenu')) return;
     // The detail panel, splitters, sidebar tree and statistics have their own keys; only D closes the panel there.
     const inPanel = !!target.closest?.('.detail, [role=separator], [role=tree], .stats');
     if (inPanel && event.key !== 'd' && event.key !== 'D') return;
@@ -993,6 +1098,21 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
       case 'g':
       case 'G':
         void this.sessions.toggleFullLog(session);
+        break;
+      // Prompt 010: marked text into the filter tree (Shift: exclude it), sections from the selection.
+      case 'i':
+      case 'I':
+        this.sessions.filterOnText(
+          session,
+          window.getSelection()?.toString() ?? '',
+          event.shiftKey,
+        );
+        break;
+      case '>':
+        this.sessions.filterSection(session, 'from');
+        break;
+      case '<':
+        this.sessions.filterSection(session, 'to');
         break;
       default:
         return;

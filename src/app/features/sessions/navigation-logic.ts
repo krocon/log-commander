@@ -1,6 +1,7 @@
 import { Level, SearchMode, SearchQuery } from '../../core/log/log.models';
 import { ALL_SOURCES, allVisible } from '../merge/merge-logic';
 import { ALL_LEVELS, sameLevels } from './filter-logic';
+import { FilterGroupNode, countConditions, emptyTree } from './filter-tree';
 import { ScrollPos } from './session-state';
 
 /** Rows above a jump target, so it is not glued to the top edge (as `find` does). */
@@ -48,14 +49,17 @@ export interface KeptFilter {
   query: SearchQuery;
   mode: SearchMode;
   sourceMask: number;
+  /** The filter tree (prompt 010). */
+  tree: FilterGroupNode;
 }
 
-/** The view hides lines: levels, a filtering search or sources of a merge. */
+/** The view hides lines: levels, a filtering search, sources of a merge or conditions of the tree. */
 export function filterActive(filter: KeptFilter, sourceCount: number): boolean {
   return (
     !sameLevels(filter.levels, ALL_LEVELS) ||
     (filter.mode === 'filter' && filter.query.text !== '') ||
-    (sourceCount > 0 && !allVisible(filter.sourceMask, sourceCount))
+    (sourceCount > 0 && !allVisible(filter.sourceMask, sourceCount)) ||
+    countConditions(filter.tree) > 0
   );
 }
 
@@ -69,5 +73,6 @@ export function fullLogOf(filter: KeptFilter): KeptFilter {
     query: filter.query,
     mode: filter.query.text ? 'highlight' : filter.mode,
     sourceMask: ALL_SOURCES,
+    tree: emptyTree(),
   };
 }

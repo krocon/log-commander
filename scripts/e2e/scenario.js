@@ -232,6 +232,120 @@
     click(treeKind('filter-query').querySelector('.remove'));
     await waitFor('back to everything', () => searchValue() === '' && stat('Zeilen', 'view') === 15);
 
+    // Filter tree (prompt 010): a request id by marking it, AND and OR, a condition switched off, a section
+    // between two markers, an error at its node.
+    const exprConds = () => $$('app-log-tree [role=treeitem].kind-expr-cond');
+    const exprRoot = () => $('app-log-tree [role=treeitem].kind-expr-group');
+    /** Marks `text` inside the log view like a user dragging over it; returns the element holding it. */
+    const markText = (text) => {
+      const walker = document.createTreeWalker($('app-log-table-view'), NodeFilter.SHOW_TEXT);
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        const at = node.data.indexOf(text);
+        if (at < 0) continue;
+        const range = document.createRange();
+        range.setStart(node, at);
+        range.setEnd(node, at + text.length);
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+        return node.parentElement;
+      }
+      throw new Error(`text not in the view: ${text}`);
+    };
+    const requestId = '123e4567-e89b-12d3-a456-426614174000';
+    const marked = markText(requestId);
+    const box = marked.getBoundingClientRect();
+    marked.dispatchEvent(
+      new MouseEvent('contextmenu', {
+        bubbles: true,
+        cancelable: true,
+        button: 2,
+        clientX: box.left + 4,
+        clientY: box.top + 4,
+      }),
+    );
+    const menuItem = (start) =>
+      $$('app-row-menu [role=menuitem]').find((b) => b.textContent.trim().startsWith(start));
+    await waitFor('right click on marked text offers to filter on it', () => menuItem('Filtern auf „123e4567'));
+    click(menuItem('Filtern auf'));
+    await waitFor('the request id filters its whole entry, stack trace included', () =>
+      stat('Zeilen', 'view') === 8 && status().includes('1 Bedingung · 8 von 15 Zeilen') &&
+      exprConds().length === 1 && exprConds()[0].textContent.includes(requestId),
+    );
+    window.getSelection().removeAllRanges();
+    // Switched off, the whole log is back for marking the next text.
+    click(exprConds()[0].querySelector('input.onoff'));
+    await waitFor('the check mark switches the condition off', () =>
+      stat('Zeilen', 'view') === 15 && exprConds()[0].getAttribute('aria-checked') === 'false',
+    );
+    markText('anna.berg');
+    press('i');
+    await waitFor('I adds the marked text', () => exprConds().length === 2 && stat('Zeilen', 'view') === 1);
+    window.getSelection().removeAllRanges();
+    click(exprConds()[0].querySelector('input.onoff'));
+    await waitFor('both on, AND: no entry has both', () =>
+      status().includes('2 Bedingungen') && stat('Zeilen', 'view') === 0,
+    );
+    await waitFor('the second condition says how it joins, as text', () =>
+      exprConds()[1].querySelector('.joiner')?.textContent.trim() === 'UND',
+    );
+    click(exprRoot().querySelector('button.op'));
+    await waitFor('OR: both entries', () =>
+      stat('Zeilen', 'view') === 9 && exprConds()[1].querySelector('.joiner')?.textContent.trim() === 'ODER',
+    );
+    exprConds()[0].focus();
+    keyOn(exprConds()[0], 'ArrowDown', { altKey: true });
+    await waitFor('Alt+ArrowDown moves the condition down', () =>
+      exprConds()[0].textContent.includes('anna.berg') && exprConds()[1].textContent.includes(requestId),
+    );
+    click(exprConds()[1].querySelector('input.onoff'));
+    await waitFor('switched off: only the other condition counts', () =>
+      stat('Zeilen', 'view') === 1 && status().includes('1 Bedingung ·') &&
+      exprConds()[1].getAttribute('aria-checked') === 'false' && exprConds()[1].classList.contains('off'),
+    );
+    click(exprRoot().querySelector('button[aria-label$="entfernen"]'));
+    await waitFor('× on the conditions takes the whole tree away', () =>
+      !exprRoot() && !treeKind('active-filter') && stat('Zeilen', 'view') === 15,
+    );
+
+    // The form: a section between a start and an end marker.
+    const dialogInput = (selector, value) => {
+      const el = $(`app-condition-dialog ${selector}`);
+      el.value = value;
+      el.dispatchEvent(new Event(el.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true }));
+    };
+    click(treeItem('e2e.log').querySelector('button.add'));
+    await waitFor('the form for a condition opens', () => $('app-condition-dialog dialog')?.open);
+    dialogInput('#cond-type', 'range');
+    await waitFor('section fields', () => $('app-condition-dialog #cond-start'));
+    dialogInput('#cond-start', 'Tomcat started');
+    dialogInput('#cond-end', 'Pool usage');
+    await waitFor('the form is complete', () => !$('app-condition-dialog button[type=submit]').disabled);
+    click($('app-condition-dialog button[type=submit]'));
+    await waitFor('the section from the start to the end marker', () =>
+      !$('app-condition-dialog') && stat('Zeilen', 'view') === 3 &&
+      exprConds()[0]?.textContent.includes('Abschnitt'),
+    );
+    // A broken regex: the backend names the node, the form and the tree show it.
+    click(exprRoot().querySelector('button.add'));
+    await waitFor('the form opens again', () => $('app-condition-dialog dialog')?.open);
+    click($$('app-condition-dialog label.check').find((l) => l.textContent.includes('Regex')).querySelector('input'));
+    dialogInput('#cond-text', '(');
+    await waitFor('the error shows in the form', () =>
+      $('app-condition-dialog .error[role=alert]')?.textContent.length > 0,
+    );
+    await waitFor('and at its node in the tree', () =>
+      exprConds().some((n) => n.getAttribute('aria-invalid') === 'true' && n.querySelector('.err-mark')) &&
+      status().includes('Bedingung ungültig'),
+    );
+    click($$('app-condition-dialog button').find((b) => b.textContent.trim() === 'Abbrechen'));
+    await waitFor('cancel takes the broken condition out again', () =>
+      !$('app-condition-dialog') && exprConds().length === 1 && !status().includes('Bedingung ungültig') &&
+      stat('Zeilen', 'view') === 3,
+    );
+    click(exprRoot().querySelector('button[aria-label$="entfernen"]'));
+    await waitFor('everything again', () => stat('Zeilen', 'view') === 15 && !exprRoot());
+
     // Column view (prompt 009): the table's header shows the fields, one cell per field. Afterwards the raw
     // view (T), in which every check below runs as before.
     const heads = () =>

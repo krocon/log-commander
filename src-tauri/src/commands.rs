@@ -2,6 +2,7 @@
 
 use crate::error::{AppError, AppResult, ErrorCode};
 use crate::filter::{SearchMode, SearchQuery};
+use crate::filter_expr::FilterExpr;
 use crate::level::Level;
 use crate::merge::MergeSource;
 use crate::model::{
@@ -135,6 +136,7 @@ pub async fn set_filter(
     case_sensitive: bool,
     mode: SearchMode,
     sources: Option<u16>,
+    expr: Option<FilterExpr>,
 ) -> AppResult<FilterInfo> {
     let session = session(&state, session_id)?;
     let query = SearchQuery {
@@ -142,7 +144,7 @@ pub async fn set_filter(
         is_regex,
         case_sensitive,
     };
-    blocking(move || session.set_filter_with_sources(&levels, &query, mode, sources)).await
+    blocking(move || session.set_filter_expr(&levels, &query, mode, sources, expr.as_ref())).await
 }
 
 #[tauri::command]

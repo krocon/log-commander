@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Level } from '../../core/log/log.models';
 import { ALL_SOURCES } from '../merge/merge-logic';
 import { ALL_LEVELS } from './filter-logic';
+import { emptyTree } from './filter-tree';
 import {
   KeptFilter,
   filterActive,
@@ -17,6 +18,7 @@ const filter = (change: Partial<KeptFilter> = {}): KeptFilter => ({
   query: query(''),
   mode: 'filter',
   sourceMask: ALL_SOURCES,
+  tree: emptyTree(),
   ...change,
 });
 

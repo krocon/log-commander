@@ -3,8 +3,17 @@
  * filters. The component only draws the flat list; `aria-level` carries the depth.
  */
 import { LEVELS, Level, SearchMode, SearchQuery } from '../../core/log/log.models';
-import { SavedFilter } from '../../core/settings/settings.models';
-import { ALL_LEVELS, SEVERITIES, sameLevels } from '../sessions/filter-logic';
+import { SAVED_FILTER_VERSION, SavedFilter } from '../../core/settings/settings.models';
+import { ALL_LEVELS, describeLevels, sameLevels } from '../sessions/filter-logic';
+import {
+  FilterGroupNode,
+  FilterNode,
+  countConditions,
+  describeNode,
+  describeTree,
+  emptyTree,
+  sameTree,
+} from '../sessions/filter-tree';
 
 /** What the tree needs of a session; `SessionState` fits. */
 export interface TreeSession {
@@ -16,10 +25,24 @@ export interface TreeSession {
   mode: SearchMode;
   /** The files of a merge (prompt 006); they become child nodes. */
   sources?: readonly { fileName: string; path: string }[];
+  /** The filter tree (prompt 010). */
+  tree?: FilterGroupNode;
+  /** The node the backend rejected, with its message. */
+  treeError?: { nodeId: string | null; message: string } | null;
+  /** Column labels for field conditions. */
+  columnLabel?: (id: string) => string;
 }
 
 export type TreeNodeKind =
-  'file' | 'source' | 'active-filter' | 'filter-levels' | 'filter-query' | 'saved-group' | 'saved';
+  | 'file'
+  | 'source'
+  | 'active-filter'
+  | 'filter-levels'
+  | 'filter-query'
+  | 'expr-group'
+  | 'expr-cond'
+  | 'saved-group'
+  | 'saved';
 
 export interface TreeNode {
   /**
@@ -43,17 +66,25 @@ export interface TreeNode {
   sourceIndex?: number;
   /** The file of the active tab, or the saved filter the active tab uses right now. */
   current: boolean;
+  /** A node of the filter tree (prompt 010): its id there. */
+  exprId?: string;
+  /** Switched on (filter tree). */
+  enabled?: boolean;
+  negate?: boolean;
+  /** A group of the filter tree: how its children are combined. */
+  op?: 'and' | 'or';
+  /** Not the first child: the word that joins it to the one before (`UND`, `ODER`), as text. */
+  joiner?: string;
+  /** The backend rejected this node. */
+  error?: string;
 }
 
-const UNKNOWN_LABEL = 'Ohne Level';
-
-/** Severity order, unknown last: `WARN, ERROR, FATAL`. */
-export function describeLevels(levels: ReadonlySet<Level>): string {
-  if (levels.size === 0) return 'Keine Level';
-  const names: string[] = SEVERITIES.filter((level) => levels.has(level));
-  if (levels.has('UNKNOWN')) names.push(UNKNOWN_LABEL);
-  return names.join(', ');
+/** Id of the tree node for a node of the filter tree. */
+export function exprNodeId(sessionId: number, exprId: string): string {
+  return `expr:${sessionId}:${exprId}`;
 }
+
+export { describeLevels };
 
 export function describeQuery(query: SearchQuery, mode: SearchMode): string {
   const flags = [query.isRegex ? 'Regex' : '', query.caseSensitive ? 'Aa' : '']
@@ -67,15 +98,25 @@ export function describeQuery(query: SearchQuery, mode: SearchMode): string {
 }
 
 /** Something narrows or marks the view: worth a node and worth saving. */
-export function hasActiveFilter(levels: ReadonlySet<Level>, query: SearchQuery): boolean {
-  return !sameLevels(levels, ALL_LEVELS) || query.text !== '';
+export function hasActiveFilter(
+  levels: ReadonlySet<Level>,
+  query: SearchQuery,
+  tree?: FilterGroupNode,
+): boolean {
+  return !sameLevels(levels, ALL_LEVELS) || query.text !== '' || (tree?.children.length ?? 0) > 0;
 }
 
 /** Name proposed when saving: what the filter does, short. */
-export function suggestName(levels: ReadonlySet<Level>, query: SearchQuery): string {
+export function suggestName(
+  levels: ReadonlySet<Level>,
+  query: SearchQuery,
+  tree?: FilterGroupNode,
+): string {
   const parts: string[] = [];
   if (!sameLevels(levels, ALL_LEVELS)) parts.push(describeLevels(levels));
   if (query.text) parts.push(query.isRegex ? `/${query.text}/` : `„${query.text}“`);
+  const conditions = describeTree(tree ?? null);
+  if (conditions) parts.push(conditions);
   return parts.join(' · ').slice(0, 80) || 'Filter';
 }
 
@@ -84,13 +125,15 @@ export function sameFilter(
   levels: ReadonlySet<Level>,
   query: SearchQuery,
   mode: SearchMode,
+  tree?: FilterGroupNode,
 ): boolean {
   return (
     sameLevels(new Set(saved.levels), levels) &&
     saved.query.text === query.text &&
     saved.query.isRegex === query.isRegex &&
     saved.query.caseSensitive === query.caseSensitive &&
-    (saved.mode === mode || !query.text)
+    (saved.mode === mode || !query.text) &&
+    sameTree(saved.tree, tree ?? null)
   );
 }
 
@@ -110,6 +153,7 @@ export function savedFilterOf(
   levels: ReadonlySet<Level>,
   query: SearchQuery,
   mode: SearchMode,
+  tree: FilterGroupNode = emptyTree(),
 ): SavedFilter {
   return {
     id,
@@ -117,6 +161,8 @@ export function savedFilterOf(
     levels: LEVELS.filter((level) => levels.has(level)),
     query: { ...query },
     mode,
+    version: SAVED_FILTER_VERSION,
+    tree: structuredClone(tree),
   };
 }
 
@@ -135,7 +181,7 @@ export function buildTree(
   const nodes: TreeNode[] = [];
   const active = sessions.find((s) => s.id === activeId) ?? null;
   sessions.forEach((session, index) => {
-    const filtered = hasActiveFilter(session.levels, session.query);
+    const filtered = hasActiveFilter(session.levels, session.query, session.tree);
     const sources = session.sources ?? [];
     const fileId = `file:${session.id}`;
     const fileOpen = (filtered || sources.length > 0) && !collapsed.has(fileId);
@@ -187,9 +233,31 @@ export function buildTree(
         sessionId: session.id,
       });
     }
-    children.forEach((child, i) =>
-      nodes.push({ ...child, posInSet: i + 1, setSize: children.length }),
-    );
+    const tree = session.tree;
+    if (tree && tree.children.length) {
+      const rootId = exprNodeId(session.id, tree.id);
+      const count = countConditions(tree);
+      children.push({
+        ...base(
+          rootId,
+          'expr-group',
+          'Bedingungen',
+          `${count} aktive Bedingung${count === 1 ? '' : 'en'}, verknüpft mit ${tree.op === 'and' ? 'UND' : 'ODER'}`,
+          3,
+          filterId,
+        ),
+        ...exprFields(session, tree),
+        expandable: true,
+        expanded: !collapsed.has(rootId),
+        sessionId: session.id,
+      });
+    }
+    children.forEach((child, i) => {
+      nodes.push({ ...child, posInSet: i + 1, setSize: children.length });
+      if (child.kind === 'expr-group' && child.expanded && tree) {
+        pushExprChildren(nodes, session, tree, 4, collapsed);
+      }
+    });
   });
   if (saved.length) {
     const groupOpen = !collapsed.has('saved');
@@ -212,17 +280,72 @@ export function buildTree(
       sorted.forEach((filter, i) => {
         const parts = [describeLevels(new Set(filter.levels))];
         if (filter.query.text) parts.push(describeQuery(filter.query, filter.mode));
+        const conditions = describeTree(filter.tree);
+        if (conditions) parts.push(conditions);
         nodes.push({
           ...base(`saved:${filter.id}`, 'saved', filter.name, parts.join(' · '), 2, 'saved'),
           posInSet: i + 1,
           setSize: sorted.length,
           savedId: filter.id,
-          current: !!active && sameFilter(filter, active.levels, active.query, active.mode),
+          current:
+            !!active && sameFilter(filter, active.levels, active.query, active.mode, active.tree),
         });
       });
     }
   }
   return nodes;
+}
+
+function exprFields(session: TreeSession, node: FilterNode): Partial<TreeNode> {
+  const error = session.treeError?.nodeId === node.id ? session.treeError.message : undefined;
+  return {
+    exprId: node.id,
+    enabled: node.enabled,
+    negate: node.negate,
+    op: node.kind === 'group' ? node.op : undefined,
+    error,
+  };
+}
+
+/** The children of a group of the filter tree, depth first; a child after the first says how it joins. */
+function pushExprChildren(
+  nodes: TreeNode[],
+  session: TreeSession,
+  group: FilterGroupNode,
+  level: number,
+  collapsed: ReadonlySet<string>,
+): void {
+  const parentId = exprNodeId(session.id, group.id);
+  group.children.forEach((child, i) => {
+    const id = exprNodeId(session.id, child.id);
+    const label = describeNode(child, session.columnLabel);
+    const joiner = i > 0 ? (group.op === 'and' ? 'UND' : 'ODER') : undefined;
+    const isGroup = child.kind === 'group';
+    const expanded = isGroup && !collapsed.has(id);
+    const state = [child.enabled ? '' : 'aus', child.negate ? 'verneint' : '']
+      .filter(Boolean)
+      .join(', ');
+    nodes.push({
+      ...base(
+        id,
+        isGroup ? 'expr-group' : 'expr-cond',
+        label,
+        `${joiner ? `${joiner} ` : ''}${child.negate ? 'NICHT ' : ''}${label}${state ? ` (${state})` : ''}`,
+        level,
+        parentId,
+      ),
+      ...exprFields(session, child),
+      joiner,
+      expandable: isGroup,
+      expanded,
+      posInSet: i + 1,
+      setSize: group.children.length,
+      sessionId: session.id,
+    });
+    if (child.kind === 'group' && expanded) {
+      pushExprChildren(nodes, session, child, level + 1, collapsed);
+    }
+  });
 }
 
 function base(

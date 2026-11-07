@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Level, SearchQuery } from '../../core/log/log.models';
 import { SavedFilter, mergeSavedFilters } from '../../core/settings/settings.models';
 import { ALL_LEVELS } from '../sessions/filter-logic';
+import { condNode, emptyTree } from '../sessions/filter-tree';
 import {
   TreeSession,
   buildTree,
@@ -32,6 +33,8 @@ const saved = (id: string, name: string, levels: Level[] = ['ERROR']): SavedFilt
   levels,
   query: noQuery,
   mode: 'filter',
+  version: 2,
+  tree: emptyTree(),
 });
 
 describe('tree model', () => {
@@ -154,5 +157,53 @@ describe('tree model', () => {
     );
     expect(treeKey(closed, 'file:1', 'ArrowRight')).toEqual({ expand: 'file:1' });
     expect(treeKey(nodes, 'file:1', 'x')).toBeNull();
+  });
+});
+
+describe('tree model with a filter tree (prompt 010)', () => {
+  const text = (t: string) => ({
+    type: 'text' as const,
+    text: t,
+    isRegex: false,
+    caseSensitive: false,
+  });
+
+  it('shows the conditions under the active filter, the joining word as text, errors at their node', () => {
+    const a = condNode(text('a'));
+    const b = { ...condNode(text('b')), negate: true, enabled: false };
+    const tree = { ...emptyTree(), op: 'or' as const, children: [a, b] };
+    const nodes = buildTree(
+      [session(1, { tree, treeError: { nodeId: b.id, message: 'regex parse error' } })],
+      1,
+      [],
+      new Set(),
+    );
+    const root = nodes.find((n) => n.id === 'expr:1:root');
+    expect(root).toMatchObject({ kind: 'expr-group', level: 3, op: 'or', parentId: 'filter:1' });
+    const [first, second] = nodes.filter((n) => n.kind === 'expr-cond');
+    expect(first).toMatchObject({ label: '„a“', level: 4, joiner: undefined, enabled: true });
+    expect(second).toMatchObject({
+      label: '„b“',
+      joiner: 'ODER',
+      negate: true,
+      enabled: false,
+      error: 'regex parse error',
+      posInSet: 2,
+      setSize: 2,
+    });
+    expect(second.title).toBe('ODER NICHT „b“ (aus, verneint)');
+    // Collapsed root: no children.
+    const closed = buildTree([session(1, { tree })], 1, [], new Set(['expr:1:root']));
+    expect(closed.some((n) => n.kind === 'expr-cond')).toBe(false);
+  });
+
+  it('saves the tree and recognises it as the current filter', () => {
+    const tree = { ...emptyTree(), children: [condNode(text('req-42'))] };
+    const entry = savedFilterOf('x', 'Req', ALL_LEVELS, noQuery, 'filter', tree);
+    expect(entry.version).toBe(2);
+    expect(entry.tree).not.toBe(tree);
+    expect(sameFilter(entry, ALL_LEVELS, noQuery, 'filter', tree)).toBe(true);
+    expect(sameFilter(entry, ALL_LEVELS, noQuery, 'filter', emptyTree())).toBe(false);
+    expect(suggestName(ALL_LEVELS, noQuery, tree)).toBe('„req-42“');
   });
 });

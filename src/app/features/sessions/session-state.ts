@@ -15,6 +15,7 @@ import { nextDisplayedLines } from './displayed-lines';
 import { ALL_LEVELS } from './filter-logic';
 import { isNewerColumns } from './format-logic';
 import { KeptFilter, filterActive, jumpScroll } from './navigation-logic';
+import { FilterGroupNode, emptyTree, hasFieldConditions } from './filter-tree';
 import { PageCache } from './page-cache';
 
 export interface ScrollPos {
@@ -67,6 +68,12 @@ export class SessionState {
   readonly query = signal<SearchQuery>({ text: '', isRegex: false, caseSensitive: false });
   readonly searchMode = signal<SearchMode>('filter');
   readonly searchError = signal<string | null>(null);
+  /** The filter tree of the sidebar (prompt 010); an AND below levels and search. */
+  readonly filterTree = signal<FilterGroupNode>(emptyTree());
+  /** What the backend said about the tree: the node it is about, if it names one. */
+  readonly treeError = signal<{ nodeId: string | null; message: string } | null>(null);
+  /** Field conditions are compiled against the columns: a new format needs the filter again. */
+  onColumnsChanged: (() => void) | null = null;
   /** Counts filters set from outside the toolbar (sidebar); a search still being typed yields to them. */
   readonly presetRevision = signal(0);
 
@@ -89,6 +96,7 @@ export class SessionState {
         query: this.query(),
         mode: this.searchMode(),
         sourceMask: this.sourceMask(),
+        tree: this.filterTree(),
       },
       this.sources.length,
     ),
@@ -204,6 +212,10 @@ export class SessionState {
       this.pendingReveal = null;
     } else if (viewChanged) {
       this.onViewChanged();
+    } else if (next.retractedFrom !== null && next.retractedFrom !== undefined) {
+      // A filter expression took lines out of the end (prompt 010): from there on the view may hold other
+      // lines even if the count is the same again.
+      this.cache.invalidateTail(Math.min(prev.filteredLines, next.retractedFrom + 1));
     } else if (next.filteredLines !== prev.filteredLines || next.fileSize !== prev.fileSize) {
       this.cache.invalidateTail(prev.filteredLines);
     }
@@ -217,7 +229,10 @@ export class SessionState {
       this.showTransient(next.status);
     }
     this.update.set(next);
-    if (next.columnsRevision !== prev.columnsRevision) this.loadColumns(next.columnsRevision);
+    if (next.columnsRevision !== prev.columnsRevision) {
+      this.loadColumns(next.columnsRevision);
+      if (hasFieldConditions(this.filterTree())) this.onColumnsChanged?.();
+    }
     if (viewChanged && !this.follow()) this.pausedAtCount.set(next.filteredLines);
   }
 
