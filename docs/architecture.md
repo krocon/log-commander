@@ -1,6 +1,6 @@
 # Architektur
 
-Stand: Quellen ohne Datei mit Spool und Syslog-Empfang (Prompt 016), Export und Arbeitsstand (Prompt 015), Zeitstrahl (Prompt 014), Filter als eigener Tab (Prompt 013), Dashboard und SQL-Timeline (Prompt 012), Felder aus der Nachricht (Prompt 011), Verkettete Filter (Prompt 010), Overview Ruler und Navigation (Prompt 007), Dateien zusammenführen (Prompt 006), Seitenleiste (Prompt 005), Detail-Panel (Prompt 004), Spaltenansicht (Prompt 009) und Formaterkennung (Prompt 008) auf Basis des Startauftrags, des Flacker-Fixes (001), des Freeze-Buttons (002) und
+Stand: Remote-Dateien über SSH/SFTP (Prompt 017), Quellen ohne Datei mit Spool und Syslog-Empfang (Prompt 016), Export und Arbeitsstand (Prompt 015), Zeitstrahl (Prompt 014), Filter als eigener Tab (Prompt 013), Dashboard und SQL-Timeline (Prompt 012), Felder aus der Nachricht (Prompt 011), Verkettete Filter (Prompt 010), Overview Ruler und Navigation (Prompt 007), Dateien zusammenführen (Prompt 006), Seitenleiste (Prompt 005), Detail-Panel (Prompt 004), Spaltenansicht (Prompt 009) und Formaterkennung (Prompt 008) auf Basis des Startauftrags, des Flacker-Fixes (001), des Freeze-Buttons (002) und
 der GuiExpert Table (003). Dieses Dokument beschreibt
 Entscheidungen, nicht Wünsche. Geplantes steht in `docs/roadmap.md` und in `prompts/`.
 
@@ -34,6 +34,9 @@ Entscheidungen, nicht Wünsche. Geplantes steht in `docs/roadmap.md` und in `pro
 │  export.rs / anchor.rs / workspace.rs   Export-Jobs, Anker, .lcw      │
 │  spool.rs      Spool: SpoolWriter, Schreib-Thread, Rotation, Grenze   │
 │  sources/      Source-Trait, Monitor; syslog.rs (UDP/TCP → Spool)     │
+│                sftp.rs (SFTP-Polling → Spool, Prompt 017)             │
+│  remote/       SSH (russh): Hub/Pool, known_hosts, Schlüsselbund,     │
+│                ~/.ssh/config-Teilmenge, Rotation aus stat-Folgen      │
 │  encoding.rs / platform.rs   Encodings, ANSI; Share-Flags, Datei-ID   │
 │  model.rs / error.rs   DTOs (camelCase), AppError { code, message }   │
 │  e2e.rs        nur Debug-Build: Szenario im WebView                   │
@@ -61,6 +64,10 @@ Entscheidungen, nicht Wünsche. Geplantes steht in `docs/roadmap.md` und in `pro
    (`sources::prepare`), legt den Spool an, startet die Quelle auf einem eigenen Thread und öffnet dann eine normale
    Sitzung auf `spool.log`. Der Empfang schreibt über eine begrenzte Warteschlange in den Schreib-Thread des Spools, der
    mindestens alle 100 ms auf die Platte bringt; ab dort ist es eine Datei wie jede andere.
+   **SFTP (017):** `open_source` mit `credentials` (Geheimnis, bestätigter Fingerabdruck; nie gespeichert) verbindet über
+   `remote::Hub::lease` (eine Verbindung je `user@host:port`), prüft den Pfad, öffnet die Datei und sucht den Start; der
+   Thread der Quelle pollt `fstat`/`stat` und schreibt neue Zeilen mit `line_blocking`, Truncation und Rotation über
+   `rotate_blocking`.
 6. **Ändern:** `set_filter` und `set_profile` starten Hintergrund-Jobs. Eine neue `viewGeneration` macht gecachte Seiten
    ungültig, eine neue `epoch` die Zeilennummern.
 
@@ -84,6 +91,7 @@ Entscheidungen, nicht Wünsche. Geplantes steht in `docs/roadmap.md` und in `pro
 | Anker und Arbeitsstand | Lesezeichen und Notizen (je Datei, im Frontend) werden beim Speichern zu Ankern `{line, source, offset, len, hash}` (`line_anchors`, FNV-1a über 256 Byte) und beim Öffnen gesucht (`resolve_anchors`: gleiche Nummer, sonst ±10 000 Zeilen um Nummer und alte Byte-Position, nur Zeilen gleicher Länge werden gelesen). Ein `.lcw` ist JSON mit `format`/`version` (Migration aus Version 1), Pfade absolut und relativ; das Backend liest und schreibt nur `.lcw` (≤ 8 MB, Temp + Rename), `parseWorkspace` prüft jedes Feld. Fehlende Dateien: `probe_paths`, Dialog „Suchen …“/„Überspringen“. Native Dialoge über `core/dialog/native-dialog.ts` (e2e: `window.__lcDialogPaths`) | Zeilennummern ändern sich beim Neuschreiben; der Hash macht „nicht gefunden“ ehrlich. Ein geteilter Arbeitsstand ist fremde Eingabe und bringt kein SQL mit (Dashboards bleiben je Format). Prompt 015. |
 | Quellen ohne Datei | **Spool statt eigenem Lesepfad:** jede Quelle schreibt Zeilen in `<cache>/spool/<pid>/source-N/spool.log`, die Sitzung tailt die Datei. `trait Source` (`sources/mod.rs`): `prepare` (bindet/verbindet, Fehler gehen in den Dialog), `run(ctx)` auf eigenem Thread bis zum `StopToken`, Zeilen über `SpoolWriter` (`try_line`: nie blockieren, voll = verwerfen und zählen; `line_blocking` für ziehende Quellen), Zustand und Zähler über `SourceMonitor` in `SessionUpdate.sourceStatus` (Benachrichtigung höchstens alle 200 ms), `SessionInfo.source` statt Pfad. Spool: Schreib-Thread mit 1 MiB Puffer, Flush ≤ 100 ms, Rotation per Umbenennen bei 1/8 der Gesamtgrenze (höchstens 256 MB), älteste Datei gelöscht; die Sitzung beginnt neu, wenn sie so viele Dateien hält wie der Spool (`max_segments`), denn ein offenes Handle hielte gelöschten Platz fest. Ein Merge mit einem Spool begrenzt dessen Segmente ebenso. Schließen stoppt die Quelle sofort (Port frei), der Spool wird mit der Sitzung gelöscht oder nach `spool/kept/` verschoben; Reste toter Prozesse löscht der Start | Ein eigener Lesepfad hieße jede Funktion von `tail.rs`/`session.rs` doppelt. Kosten: Plattenplatz (begrenzt) und ~0,1 s bis zum Index. 50 000 und 100 000 Meldungen/s über UDP ohne Verlust (`syslog_integration`, `measure_`). Prompt 016. |
 | Syslog | UDP (eine Meldung je Datagramm), TCP mit Octet-Counting oder `\n` (RFC 6587, `TcpFramer`, höchstens 64 KB im Puffer), kein TLS. Spool-Zeile: Empfangszeit (ISO 8601 mit ms und Zone, je Sekunde gecacht), Absender (IPv4-gemappte Adressen als IPv4), Meldung roh, aber eindeutig escaped (`\\`, `\n`, `\r`, `\xNN` für C0/DEL/ungültige Bytes, `\u{XXXX}` für C1, Bidi, U+2028/2029), über 64 KB gekürzt und markiert. Eigenes Profil `syslog-received` (Level aus PRI hinter dem Präfix, Layouts 5424/3164/roh mit `sender`, `sent`, `pri`), fest gewählt; Zeitstrahl und Merge nutzen die Empfangszeit. Standard `127.0.0.1:5514`, andere Adressen nur mit `allowRemote` (auch im Backend geprüft), keine Hostnamen, Absender-Filter (Adressen/Netze), höchstens 64 TCP-Verbindungen (8 je Absender, Leerlauf 120 s, unfertiger Rahmen 30 s, am Limit weicht die längste ruhige), höchstens 8 Quellen, Spool 0700/0600, nichts wird zurückgesendet | Die Uhr des Senders kann falsch gehen und 3164 hat kein Jahr; die Empfangszeit ist monoton genug für Zeitstrahl und Merge. PRI am Zeilenanfang hätte das Präfix nicht erkannt (`detect_syslog_pri` prüfte nur `^<`). Prompt 016. |
+| Remote über SSH/SFTP | `russh` 0.64 + `russh-sftp` 3 (Spike: 204 MB/s, ssh2 187 MB/s; kein OpenSSL, ed25519 auch unter Windows). Polling in den Spool: je Runde `fstat(handle)`, `stat(path)` und bei Abweichung ein zweites `fstat`; `remote/watch.rs` entscheidet Wachstum, Truncation (gleiche Datei kürzer), Rotation (zweimal hintereinander eine andere Datei; die alte wird über den Handle zu Ende gelesen) und „Pfad weg“ (weiter über den Handle). Truncation/Rotation → `SpoolWriter::rotate_blocking`. Zeilen über `LineSplitter`, dekodiert, ANSI weg, `escape_controls_into`. `remote::Hub`: known_hosts (eigener Parser wie OpenSSH; `@revoked`, `@cert-authority`, unlesbare Einträge = Ablehnung; Nutzer-Datei nur lesen, eigene 0600), `~/.ssh/config`-Teilmenge (nichts wird ausgeführt), Schlüsselbund (`keyring-core`, nur auf Häkchen, nach erfolgreicher Anmeldung), Pool mit Leerlauf 60 s, eigener tokio-Runtime (2 Threads), Zeitgrenze 20 s je Aufruf. Wiederverbinden 1–60 s, nicht nach abgelehnter Anmeldung oder Host-Schlüssel-Fehler. Nur Subsystem `sftp` | SFTP v3 hat keinen Inode, mtime nur in Sekunden; der offene Handle verliert bei Rotation nichts. Spool statt eigenem Lesepfad wie 016: alle Funktionen ohne Sonderfall. `tail -F` über eine Shell bräuchte Shell-Zugang. Prompt 017. |
 | Gezeichnet wird, was da ist | `displayedLines` trennt den Stand der Ansicht vom Stand des Backends. Der Tail rückt erst vor, wenn das neue Ende im `PageCache` liegt | Sonst blitzt je Update die Fläche ohne Level-Farbe auf. Prompt 001. |
 | Virtuelle Offsets | Jede Datei einer Sitzung (vor und nach Rotation) belegt einen eigenen Offset-Bereich (`Segment`), der Handle bleibt offen, höchstens 32 Dateien | Zeilennummern bleiben bei „alte Zeilen behalten“ gültig, und das Lesen braucht keinen Pfad. |
 | Gefilterte Ansicht | `FilteredLines`: bei Identität keine Liste, sonst `Vec<u32>` der Zeilennummern. Im Tail inkrementell, bei Filterwechsel neu per Job | Positionen in der Ansicht sind Indizes in die Liste, Suche und Kopieren arbeiten darauf. |
@@ -131,6 +139,9 @@ Entscheidungen, nicht Wünsche. Geplantes steht in `docs/roadmap.md` und in `pro
   64 MB bis 8 GB je Quelle (Vorgabe 2 GB); beim Überlauf beginnt die Ansicht neu. Spitze auf der Platte etwa Grenze plus
   eine Datei, im Freeze höchstens das Doppelte (die Sitzung hält ihre Dateien, der Spool schreibt weiter). Mehrere
   Rotationen im Freeze: Zwischenstände fehlen in der Ansicht. Kein TLS, kein GELF.
+- SFTP (017): je Runde höchstens 8 MB, Zeile 1 MiB, Intervall 200 ms bis 60 s, Erstabruf 1–10 000 MB oder ganz, kein
+  ProxyJump, keine Host-Zertifikate, nur die erste vorhandene Schlüsseldatei; Rotation während einer Unterbrechung nur über
+  die Größe erkannt.
 - Anzeige 128 KB je Zeile, Suche 1 MB je Zeile. Eine Zeile ohne Ende wird bei 16 MB geteilt.
 - Felder: zerlegt werden die ersten 16 KB einer Zeile, höchstens 12 Spalten aus JSON-/logfmt-Schlüsseln bzw. FIX-Tags.
   Nach einer Rotation mit anderem Format fallen die neuen Zeilen auf `message` zurück.
@@ -160,6 +171,12 @@ Entscheidungen, nicht Wünsche. Geplantes steht in `docs/roadmap.md` und in `pro
 | `parking_lot` 0.12 | `RwLock` der Sitzungsdaten | Kurze Sperren ohne Poisoning. |
 | `serde`, `serde_json`, `thiserror` | DTOs, JSON-Level, Fehler | Standard. |
 | `windows-sys` 0.61 (nur Windows) | Datei-Identität | `GetFileInformationByHandle` statt Erstellzeit. |
+| `russh` 0.64 (`ring`, `flate2`, `rsa`, ohne `aws-lc-rs`), `russh-sftp` 3 | SSH und SFTP (Prompt 017) | Reines Rust, kein OpenSSL (Windows ohne Perl/NASM, ed25519 überall), async mit Zeitgrenzen; Spike gegen `ssh2` in `prompts/done/017-remote-sftp.design.md`. Dieselben Versionen in files-and-folders-tauri. |
+| `tokio` 1 (`rt-multi-thread`, `time`, `net`, `sync`, `io-util`, `macros`) | Laufzeit der SSH-Verbindungen | War über Tauri im Baum; eigener kleiner Runtime, damit Tauris frei bleibt. |
+| `keyring-core` 1 + `apple-native-keyring-store` / `windows-native-keyring-store` / `dbus-secret-service-keyring-store` (`crypto-rust`) | Passwort/Passphrase im Schlüsselbund des Systems, nur auf Wunsch | Der Nachfolger von `keyring` 3 in Teilen (Linux: Secret Service über D-Bus, Kryptografie in Rust); dieselben Versionen in files-and-folders-tauri. |
+| `zeroize` 1.8 | Geheimnisse beim Freigeben überschreiben | Klein, Standard. |
+| `hmac` 0.13, `sha1` 0.11, `data-encoding` 2 | Gehashte Hosts in known_hosts (HMAC-SHA1, Base64) im eigenen Parser | Waren über `russh` im Baum; dessen Parser ist für eine harte Prüfung zu lückenhaft (Review 017 M1). |
+| `sha2` 0.11 | Kontoname im Schlüsselbund als Hash (kein Host im Klartext) | War über `russh` im Baum. |
 | Angular 22, `@tauri-apps/api` samt Plugin-Paketen, `rxjs` | Oberfläche | Vorgabe. Kein UI-Framework, kein CDK. |
 | Dev: Vitest + jsdom, angular-eslint, Prettier, `playwright` (nur Screenshots), `tempfile` | Tests und Werkzeuge | Kein Laufzeitcode. |
 

@@ -10,6 +10,7 @@ import { countConditions, emptyTree } from '../sessions/filter-tree';
 import { LogSessionService } from '../sessions/log-session.service';
 import { LostMark, SessionState } from '../sessions/session-state';
 import { sourceKey, sourceLabel } from '../sources/source-logic';
+import { sftpAddress } from '../remote/remote-logic';
 import {
   WORKSPACE_EXTENSION,
   WORKSPACE_FORMAT,
@@ -211,7 +212,11 @@ export class WorkspaceService {
         files.push({
           kind: 'source',
           sources: [],
-          source: { ...first.source.config },
+          // Prompt 017: host, user, port, path and start only; never a secret, no local key file.
+          source:
+            first.source.config.kind === 'sftp'
+              ? { ...first.source.config, keyFile: null }
+              : { ...first.source.config },
           profileId: profileId === first.suggestedProfileId ? null : profileId,
           tabs: wsTabs.map((t) => ({ ...t, top: null, selection: null })).slice(0, 8),
           bookmarks: [],
@@ -398,7 +403,18 @@ export class WorkspaceService {
     this.confirm.set({
       name: baseName(wsPath),
       items: doc.files.map((f, file) => {
-        if (f.kind === 'source' && f.source) {
+        if (f.kind === 'source' && f.source?.kind === 'sftp') {
+          // Prompt 017: connecting to a server is a side effect: only when ticked here.
+          return {
+            file,
+            label: `${sourceLabel(f.source)} (Remote)`,
+            paths: [`verbindet mit ${sftpAddress(f.source)} über SSH/SFTP (erst nach Häkchen)`],
+            network: false,
+            reason: null,
+            checked: false,
+          };
+        }
+        if (f.kind === 'source' && f.source?.kind === 'syslog') {
           // Prompt 016: starting a listener is a side effect; one beyond this computer never from a file.
           const remote = isRemoteSourceFile(f);
           return {
@@ -488,7 +504,14 @@ export class WorkspaceService {
       .savedSources.find((s) => sourceKey(s.config) === sourceKey(config))?.keep;
     const error = await this.sessions.openSource(config, keep ?? false);
     if (error) {
-      report.skipped.push(`${label}: ${describeError(error)}`);
+      // Prompt 017: what needs the user (a host key to confirm, a password) goes to the dialog, prefilled.
+      const interactive = ['host_key_unknown', 'secret_required'].includes(error.code);
+      if (config.kind === 'sftp' && interactive && !this.sessions.remoteRequest()) {
+        this.sessions.remoteRequest.set({ config, error });
+        report.skipped.push(`${label}: im Dialog „Remote-Datei“ bestätigen`);
+      } else {
+        report.skipped.push(`${label}: ${describeError(error)}`);
+      }
       return [];
     }
     const fileTab =

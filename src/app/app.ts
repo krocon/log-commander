@@ -34,6 +34,7 @@ import { LogSessionService } from './features/sessions/log-session.service';
 import { SettingsDialogComponent } from './features/settings/settings-dialog';
 import { SidebarComponent } from './features/sidebar/sidebar';
 import { SourceDialogComponent } from './features/sources/source-dialog';
+import { RemoteDialogComponent } from './features/remote/remote-dialog';
 import { SIDEBAR_MIN, sidebarMax, sidebarWidth } from './features/sidebar/sidebar-logic';
 import { SidebarState } from './features/sidebar/sidebar-state';
 import { StartScreenComponent } from './features/start/start-screen';
@@ -59,6 +60,7 @@ import { SplitterComponent } from './shared/splitter';
     SettingsDialogComponent,
     SidebarComponent,
     SourceDialogComponent,
+    RemoteDialogComponent,
     StartScreenComponent,
     SplitterComponent,
     StatusBarComponent,
@@ -73,6 +75,7 @@ import { SplitterComponent } from './shared/splitter';
       (openPath)="pathDialogOpen.set(true)"
       (merge)="mergeDialogOpen.set(true)"
       (openSource)="openSource()"
+      (openRemote)="openRemote()"
     />
     <app-toolbar (openSettings)="settingsOpen.set(true)" />
     @if (active(); as session) {
@@ -147,6 +150,7 @@ import { SplitterComponent } from './shared/splitter';
         (openPath)="pathDialogOpen.set(true)"
         (merge)="mergeDialogOpen.set(true)"
         (openSource)="openSource()"
+        (openRemote)="openRemote()"
       />
     }
     <app-status-bar />
@@ -181,6 +185,16 @@ import { SplitterComponent } from './shared/splitter';
       <!-- Prompt 016: a source without a file (syslog). -->
       @defer (on immediate) {
         <app-source-dialog [start]="request.config" (closed)="sessions.sourceRequest.set(null)" />
+      }
+    }
+    @if (sessions.remoteRequest(); as request) {
+      <!-- Prompt 017: a log file on a server over SSH/SFTP. -->
+      @defer (on immediate) {
+        <app-remote-dialog
+          [start]="request.config"
+          [startError]="request.error ?? null"
+          (closed)="sessions.remoteRequest.set(null)"
+        />
       }
     }
     @if (sessions.fieldsDialog(); as request) {
@@ -377,6 +391,7 @@ export class App implements OnInit, OnDestroy {
     this.cleanups.push(await listen('menu-merge', () => this.mergeDialogOpen.set(true)));
     this.cleanups.push(await listen('menu-export', () => this.openExport()));
     this.cleanups.push(await listen('menu-open-source', () => this.openSource()));
+    this.cleanups.push(await listen('menu-open-remote', () => this.openRemote()));
     this.cleanups.push(
       await listen('menu-workspace-open', () => void this.workspaceService.open()),
     );
@@ -433,6 +448,11 @@ export class App implements OnInit, OnDestroy {
     if (!this.sessions.sourceRequest()) this.sessions.sourceRequest.set({ config: null });
   }
 
+  /** Prompt 017: the dialog „Remote-Datei“. */
+  protected openRemote(): void {
+    if (!this.sessions.remoteRequest()) this.sessions.remoteRequest.set({ config: null });
+  }
+
   /** Prompt 015: the export dialog for the active tab. */
   protected openExport(): void {
     const session = this.sessions.active();
@@ -470,6 +490,10 @@ export class App implements OnInit, OnDestroy {
       // Prompt 016: a source without a file.
       event.preventDefault();
       this.openSource();
+    } else if (key === 'h' && event.shiftKey && !event.altKey) {
+      // Prompt 017: a remote file over SSH/SFTP.
+      event.preventDefault();
+      this.openRemote();
     } else if (key === 'w') {
       event.preventDefault();
       const id = this.sessions.activeId();

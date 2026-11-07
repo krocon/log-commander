@@ -50,8 +50,8 @@ export interface SessionUpdate {
   sourceStatus?: SourceStatus | null;
 }
 
-/** Kinds of sources without a file (prompt 016); 017–019 add theirs. */
-export type SourceKind = 'syslog';
+/** Kinds of sources without a file (prompt 016); 017: a file on a server over SSH/SFTP. */
+export type SourceKind = 'syslog' | 'sftp';
 
 export type SyslogProtocol = 'udp' | 'tcp' | 'both';
 
@@ -69,8 +69,69 @@ export interface SyslogConfig {
   allowRemote: boolean;
 }
 
-/** What `open_source` takes; never holds secrets (017–019 keep those in the keychain). */
-export type SourceConfig = SyslogConfig;
+/** How to log in on an SSH server (prompt 017). */
+export type RemoteAuth = 'agent' | 'key' | 'password';
+
+/** Where to connect (mirrors `remote::Target`); never a secret. */
+export interface RemoteTarget {
+  /** Host name, address or an alias of `~/.ssh/config`. */
+  host: string;
+  /** 0: from `~/.ssh/config`, else 22. */
+  port: number;
+  /** Empty: from `~/.ssh/config`, else the local user. */
+  user: string;
+  auth: RemoteAuth;
+  /** Key file (auth `key`); null: `IdentityFile` of the config, else `~/.ssh/id_ed25519` … */
+  keyFile: string | null;
+}
+
+/** A remote log file over SSH/SFTP (mirrors `SftpConfig` in sources/sftp.rs); never a secret. */
+export interface SftpConfig extends RemoteTarget {
+  kind: 'sftp';
+  /** Absolute path on the server. */
+  path: string;
+  /** The first fetch takes at most the last `startMb` MB; null: the whole file. */
+  startMb: number | null;
+  /** How often the file is checked. */
+  pollMs: number;
+}
+
+/** What the dialog sends with a connect; never stored. */
+export interface RemoteCredentials {
+  /** Password (auth `password`) or passphrase of the key file. */
+  secret?: string;
+  /** Put the secret into the system keychain once the login worked. */
+  remember?: boolean;
+  /** The fingerprint the user confirmed for an unknown host key. */
+  trustFingerprint?: string;
+}
+
+/** A host of `~/.ssh/config` (mirrors `HostConfig`). */
+export interface RemoteHost {
+  alias: string;
+  hostName: string;
+  user: string | null;
+  port: number | null;
+  identityFiles: string[];
+  /** ProxyJump/ProxyCommand: not supported. */
+  proxy: boolean;
+}
+
+export interface RemoteEntry {
+  name: string;
+  dir: boolean;
+  size: number | null;
+  modifiedMs: number | null;
+}
+
+export interface RemoteListing {
+  path: string;
+  entries: RemoteEntry[];
+  truncated: boolean;
+}
+
+/** What `open_source` takes; never holds secrets (those come from the dialog or the keychain). */
+export type SourceConfig = SyslogConfig | SftpConfig;
 
 /** Shown instead of the spool path. */
 export interface SourceDescriptor {
@@ -90,6 +151,7 @@ export type SourceState =
   | { kind: 'listening' }
   | { kind: 'connected' }
   | { kind: 'error'; message: string }
+  | { kind: 'reconnecting'; message: string; retryInS: number }
   | { kind: 'stopped' };
 
 /** State and counters of a source, with every update of its tab. */
@@ -107,6 +169,12 @@ export interface SourceStatus {
   /** Lines written to the spool. */
   spooled: number;
   spoolError: string | null;
+  /** Bytes fetched from the remote file (SFTP). */
+  bytes: number;
+  /** Round trip of the last check in ms (SFTP). */
+  latencyMs: number | null;
+  /** Remote bytes not fetched yet (SFTP). */
+  pendingBytes: number;
 }
 
 /** Live state of one source of a merge. */

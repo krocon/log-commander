@@ -1774,6 +1774,96 @@
     await sleep(500);
     if ($('[role=alert]')?.textContent.trim()) throw new Error(`error shown: ${$('[role=alert]').textContent}`);
 
+
+    // ---- Prompt 017: a remote file over SFTP (server in the app, debug builds only): host key confirmation,
+    // password, folder browser, live lines, rotation; a changed host key is refused with no way around it.
+    const remoteRoot = `${wsDir}${wsSep}remote`;
+    const sftpPort = await invoke('e2e_sftp_server', { root: remoteRoot, seed: 7 });
+    const remDialog = () => $('app-remote-dialog dialog');
+    const setRemField = (selector, value) => {
+      const el = $(selector);
+      el.value = value;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    const remSubmit = () => $('#remote-connect').closest('form').requestSubmit();
+    press('h', { metaKey: true, ctrlKey: true, shiftKey: true });
+    await waitFor('„Remote-Datei“ with Cmd/Ctrl+Shift+H', () => remDialog()?.open);
+    await waitFor(
+      'defaults: agent, last 50 MB, 500 ms',
+      () => $('#remote-auth-agent').checked && $('#remote-start-mb').value === '50' && $('#remote-poll').value === '500',
+    );
+    setRemField('#remote-host', '127.0.0.1');
+    setRemField('#remote-port', String(sftpPort));
+    setRemField('#remote-user', 'e2e');
+    click($('#remote-auth-password'));
+    await sleep(50);
+    click($('#remote-browse'));
+    await waitFor(
+      'unknown host key: fingerprint shown, explicit confirmation needed',
+      () => $('#remote-fingerprint')?.textContent.includes('SHA256:') && $('#remote-trust'),
+    );
+    if ($('#remote-secret')) throw new Error('password asked for before the host key was confirmed');
+    click($('#remote-trust'));
+    await waitFor('then the password is asked for', () => $('#remote-secret'));
+    if ($('#remote-secret').type !== 'password') throw new Error('the password field shows its text');
+    setRemField('#remote-secret', 'wrong-password');
+    remSubmit();
+    await waitFor(
+      'a wrong password is said and asked again',
+      () => $('#remote-secret-wrong')?.textContent.includes('nicht angenommen') && $('#remote-secret').value === '',
+    );
+    setRemField('#remote-secret', 'testSecretQx7-sftp');
+    remSubmit();
+    await waitFor('the folder browser lists the server folder, folders first', () => {
+      const names = $$('#remote-listing .entry').map((e) => e.textContent.trim());
+      return names.length >= 2 && names[0].includes('archive') && names.some((n) => n.includes('app.log'));
+    });
+    click($$('#remote-listing .entry').find((e) => e.textContent.includes('app.log')));
+    await waitFor('the chosen file is the path', () => $('#remote-path').value === '/app.log');
+    remSubmit();
+    const remLabel = '127.0.0.1:/app.log';
+    await waitFor('connected over the browser connection, the dialog closed', () => !remDialog(), 20000);
+    await waitFor('the tab shows host:path with the remote symbol', () => {
+      const tab = tabs().find((t) => t.textContent.includes(remLabel));
+      return tab?.querySelector('.src')?.textContent.includes('⇅');
+    });
+    await waitFor(
+      'status bar: connected, lines, latency',
+      () => status().includes('Verbunden') && status().includes('2 Zeilen') && / ms/.test(status()),
+    );
+    await waitFor(
+      'remote lines with levels and umlauts',
+      () => rowTexts().some((t) => t.includes('remote größe 😀')) && count('ERROR') === 1,
+    );
+    await act('sftpappend 2026-01-15 10:00:02,000 WARN  [main] app.Live - live über SFTP');
+    await waitFor('a line written on the server arrives', () => rowTexts().some((t) => t.includes('live über SFTP')), 20000);
+    await act('sftprotate 2026-01-15 10:00:03,000 ERROR [main] app.Live - after rotation');
+    await waitFor(
+      'rotation on the server: the new file follows, old lines stay',
+      () => rowTexts().some((t) => t.includes('after rotation')) && rowTexts().some((t) => t.includes('remote start')),
+      20000,
+    );
+    const remTab = () => tabs().find((t) => t.textContent.includes(remLabel));
+    click(remTab().closest('.tab').querySelector('.close'));
+    await waitFor('the remote tab is closed', () => !remTab());
+    // Another server on the same address and port (another host key): refused, no button to go on.
+    await invoke('e2e_sftp_stop', { port: sftpPort });
+    await invoke('e2e_sftp_server', { root: remoteRoot, seed: 8, port: sftpPort });
+    press('h', { metaKey: true, ctrlKey: true, shiftKey: true });
+    await waitFor(
+      'dialog again, the connection remembered',
+      () => remDialog()?.open && $$('app-remote-dialog .chip').some((c) => c.textContent.includes(remLabel)),
+    );
+    click($$('app-remote-dialog .chip').find((c) => c.textContent.includes(remLabel)));
+    await sleep(50);
+    remSubmit();
+    await waitFor(
+      'changed host key: refused, no way around it',
+      () => $('#remote-changed')?.textContent.includes('geändert') && !$('#remote-trust') && $('#remote-connect').disabled,
+    );
+    remDialog().close();
+    await waitFor('remote dialog closed', () => !remDialog());
+
     await report('DONE');
   } catch (e) {
     await report(`FAIL ${e.message}`);

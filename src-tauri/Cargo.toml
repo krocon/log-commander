@@ -24,6 +24,23 @@ memchr = "2"
 notify = "8.2"
 parking_lot = "0.12"
 regex = "1"
+# Remote logs over SSH/SFTP (prompt 017, spike in prompts/done/017-remote-sftp.design.md): pure Rust, no
+# OpenSSL (ring), the same set as files-and-folders-tauri. Only the `sftp` subsystem is ever requested.
+russh = { version = "0.64", default-features = false, features = ["ring", "flate2", "rsa"] }
+russh-sftp = "3"
+# Own known_hosts parser (security review 017 M1): hashed hosts are HMAC-SHA1 with Base64 salts;
+# all three are already in the tree through russh.
+data-encoding = "2"
+hmac = "0.13"
+sha1 = "0.11"
+# Keychain account names (hash of user@host:port) – already in the tree through russh.
+sha2 = "0.11"
+# Passwords and passphrases only in the OS keychain, on explicit request (prompt 017).
+keyring-core = "1"
+# The async SSH code runs on a small runtime of its own; tokio is in the tree through Tauri.
+tokio = { version = "1", features = ["rt-multi-thread", "time", "net", "sync", "io-util", "macros"] }
+# Secrets are wiped from memory when dropped.
+zeroize = "1.8"
 # Dashboard (prompt 012): SQL over a per-session table of entry heads. Bundled, without extension
 # loading (see `.cargo/config.toml`); `hooks` for the authorizer and the time limit, `functions` for
 # `bucket()`, `limits` for length and attach limits.
@@ -41,8 +58,17 @@ thiserror = "2"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+# Keychain of the OS (prompt 017): Secret Service over D-Bus on Linux, Keychain on macOS, Credential
+# Manager on Windows.
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+dbus-secret-service-keyring-store = { version = "1", features = ["crypto-rust"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+apple-native-keyring-store = { version = "1", features = ["keychain"] }
+
 # File identity (rotation detection) needs GetFileInformationByHandle on Windows.
 [target.'cfg(windows)'.dependencies]
+windows-native-keyring-store = { version = "1.1", default-features = false }
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
 
 [dev-dependencies]

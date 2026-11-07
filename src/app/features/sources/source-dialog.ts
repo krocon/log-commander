@@ -11,7 +11,7 @@ import {
   viewChild,
 } from '@angular/core';
 import { describeError, toAppError } from '../../core/errors/app-error';
-import { SourceConfig, SyslogProtocol } from '../../core/log/log.models';
+import { SourceConfig, SyslogConfig, SyslogProtocol } from '../../core/log/log.models';
 import { SettingsService } from '../../core/settings/settings.service';
 import { LogSessionService } from '../sessions/log-session.service';
 import {
@@ -58,8 +58,9 @@ const OTHER = 'other';
         }
         <label class="row">
           <span>Art</span>
-          <select id="source-kind" disabled>
-            <option>Syslog (UDP/TCP)</option>
+          <select id="source-kind" (change)="chooseKind($event)">
+            <option value="syslog" selected>Syslog (UDP/TCP)</option>
+            <option value="sftp">Remote-Datei (SSH/SFTP) …</option>
           </select>
         </label>
         <fieldset>
@@ -341,7 +342,13 @@ export class SourceDialogComponent implements OnInit {
   private readonly customAddress = signal(false);
   protected readonly busy = signal(false);
   protected readonly error = signal<string | null>(null);
-  protected readonly saved = computed(() => this.settings.settings().savedSources);
+  protected readonly saved = computed(() =>
+    this.settings
+      .settings()
+      .savedSources.filter(
+        (s): s is { config: SyslogConfig; keep: boolean } => s.config.kind === 'syslog',
+      ),
+  );
   protected readonly limit = computed(() => {
     const mb = this.settings.settings().spoolLimitMb;
     return mb >= 1024 ? `${(mb / 1024).toLocaleString('de-DE')} GB` : `${mb} MB`;
@@ -369,7 +376,15 @@ export class SourceDialogComponent implements OnInit {
     this.error.set(null);
   }
 
+  /** Prompt 017: a remote file has a dialog of its own. */
+  protected chooseKind(event: Event): void {
+    if ((event.target as HTMLSelectElement).value !== 'sftp') return;
+    this.dialog().nativeElement.close();
+    this.sessions.remoteRequest.set({ config: null });
+  }
+
   protected useSaved(config: SourceConfig, keep: boolean): void {
+    if (config.kind !== 'syslog') return;
     this.form.set(formOf(config));
     this.customAddress.set(!ADDRESSES.some((a) => a.value === config.address));
     this.keep.set(keep);

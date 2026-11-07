@@ -200,6 +200,32 @@ await shot(start, 'start');
   await shot(src, 'syslog');
 }
 
+// Remote file over SSH/SFTP (prompt 017): the dialog with the folder browser and the host-key confirmation, then
+// the tab with connection, latency and bytes.
+{
+  const rem = await page(browser, {
+    theme: 'dark',
+    withFiles: false,
+    extra: { remoteFiles: { 'app.log': files['app.log'] } },
+  });
+  await rem.click('button:text-is("Remote-Datei …")');
+  await rem.waitForSelector('app-remote-dialog dialog[open]');
+  await rem.fill('#remote-host', 'web-prod');
+  await rem.dispatchEvent('#remote-host', 'change');
+  await rem.click('#remote-auth-password');
+  await rem.click('#remote-browse');
+  await rem.waitForSelector('#remote-listing');
+  await rem.click('#remote-listing button:has-text("app.log")');
+  await rem.click('#remote-connect');
+  await rem.waitForSelector('#remote-trust');
+  await rem.waitForTimeout(200);
+  await shot(rem, 'remote-dialog');
+  await rem.click('#remote-trust');
+  await rem.waitForSelector('.lt-cell');
+  await rem.waitForTimeout(300);
+  await shot(rem, 'remote');
+}
+
 await start.click('button:text-is("Pfad eingeben …")');
 await start.fill('app-open-path-dialog input', '/tmp/app.log');
 await start.waitForTimeout(150);

@@ -51,11 +51,21 @@ Architektur verbaut nichts davon.
   (alle Funktionen inklusive Freeze, Export, Merge, Dashboard); Syslog über UDP (RFC 3164/5424) und TCP (RFC 6587),
   nur lokal ohne ausdrückliche Wahl, Absender-Filter, Zähler (empfangen, verworfen, gekürzt, abgewiesen), Spool
   behalten oder löschen, gespeicherte Quellen, Quellen im Arbeitsstand; Grundlage für 017–019
+- Remote über SSH (Prompt 017): Logdatei auf einem Server per SFTP-Polling in den Spool (`russh`, reines Rust),
+  Rotation/Truncation erkannt (offener Handle gegen Pfad), Erstabruf „letzte 50 MB“ oder ganz, Wiederverbinden bis 60 s,
+  eine Verbindung je Server, Ordner-Browser, Hosts aus `~/.ssh/config`; Host-Schlüssel gegen `known_hosts` mit
+  Bestätigung des Fingerabdrucks, geänderter Schlüssel = Abbruch; Agent, Schlüssel mit Passphrase, Passwort,
+  Geheimnisse nur auf Wunsch im Schlüsselbund; im Arbeitsstand ohne Geheimnis und ohne Auto-Verbinden
 
 ## Offen
 
 **Dateien:** Rotierte Archive als durchgehende Timeline, `.gz`/`.zip`/`.zst` lesen, Ordner/Glob
-beobachten, Remote-Logs über SSH, `stdin`/Pipe-Modus.
+beobachten, `stdin`/Pipe-Modus.
+
+**Remote (Nachfragen zu 017):** Bastion-Hosts (`ProxyJump`), Host-Zertifikate (`@cert-authority`), Kerberos/GSSAPI,
+Ordner mit Glob auf dem Server beobachten, FTP/FTPS als eigene Quelle, SCP-Erstabruf (heute über SFTP), mehrere
+Schlüsseldateien nacheinander probieren, Sichttest gegen echte Server (Linux-Distributionen, Windows-OpenSSH) und
+Windows-Build samt Pageant/OpenSSH-Agent von Hand prüfen.
 
 **Merge (Nachfragen zu 006):** Zeitversatz je Datei für Hosts mit abweichender Uhr, Zeitzone je Datei (heute gilt ohne
 Angabe die lokale Zone), Zeilennummer in der Quelldatei (bräuchte eine Spalte im Index), Merge speichern, exportieren und
@@ -102,7 +112,7 @@ Zeitzone/Versatz je Datei beim Merge, Ausfälle innerhalb eines Abschnitts genau
 
 **Export und Arbeitsstand (Nachfragen zu 015):** PDF, Export als Excel-Datei, Notizen mit Markdown, Arbeitsstand
 automatisch beim Beenden, Filter geschlossener Eltern-Tabs im Arbeitsstand (das Frontend kennt nur ihre Beschriftung),
-Zoom des Zeitstrahls im Arbeitsstand, Quellen aus 017–019 im Arbeitsstand (016: Syslog ist drin), Spalten-Layout nur für den Arbeitsstand
+Zoom des Zeitstrahls im Arbeitsstand, Quellen aus 018–019 im Arbeitsstand (016: Syslog, 017: SFTP sind drin), Spalten-Layout nur für den Arbeitsstand
 statt in den Settings, Plugin-Schnittstelle.
 
 **Quellen (Nachfragen zu 016):** Syslog über TLS (RFC 5425), GELF, Fluentd/Forward, Weiterleiten an andere Server,

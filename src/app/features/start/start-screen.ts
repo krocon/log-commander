@@ -4,6 +4,7 @@ import { baseName } from '../../shared/format';
 import { LogSessionService } from '../sessions/log-session.service';
 import { isWorkspacePath } from '../workspace/workspace-model';
 import { sourceLabel } from '../sources/source-logic';
+import { sftpAddress } from '../remote/remote-logic';
 
 @Component({
   selector: 'app-start-screen',
@@ -19,34 +20,51 @@ import { sourceLabel } from '../sources/source-logic';
           Dateien zusammenführen …
         </button>
         <button type="button" class="secondary" (click)="openSource.emit()">Quelle öffnen …</button>
+        <button type="button" class="secondary" (click)="openRemote.emit()">Remote-Datei …</button>
         <button type="button" class="secondary" (click)="openWorkspace.emit()">
           Arbeitsstand öffnen …
         </button>
       </div>
       <p class="hint">
         oder Datei ins Fenster ziehen · ⌘/Strg+O · Pfad: ⌘/Strg+⇧+O · Zusammenführen: ⌘/Strg+⇧+M ·
-        Quelle (Syslog): ⌘/Strg+⇧+L
+        Quelle (Syslog): ⌘/Strg+⇧+L · Remote (SSH/SFTP): ⌘/Strg+⇧+H
       </p>
       @if (settings().savedSources.length) {
         <h2>Quellen</h2>
         <ul>
           @for (s of settings().savedSources; track $index) {
             <li>
-              <button
-                type="button"
-                class="recent"
-                title="Im Dialog „Quelle öffnen“ prüfen und starten"
-                (click)="sessions.sourceRequest.set({ config: s.config })"
-              >
-                <span class="name"
-                  ><span class="ws" aria-hidden="true">⇣</span><span class="sr-only">Quelle: </span
-                  >{{ sourceLabel(s.config) }}</span
+              @if (s.config.kind === 'sftp') {
+                <!-- Prompt 017: opens the dialog prefilled, connects only from there. -->
+                <button
+                  type="button"
+                  class="recent"
+                  title="Im Dialog „Remote-Datei“ prüfen und verbinden"
+                  (click)="sessions.remoteRequest.set({ config: s.config })"
                 >
-                <span class="dir"
-                  >{{ s.config.address
-                  }}{{ s.config.allow.length ? ' · mit Absender-Filter' : '' }}</span
+                  <span class="name"
+                    ><span class="ws" aria-hidden="true">⇅</span
+                    ><span class="sr-only">Remote-Datei: </span>{{ sourceLabel(s.config) }}</span
+                  >
+                  <span class="dir">{{ address(s.config) }} · SSH/SFTP</span>
+                </button>
+              } @else {
+                <button
+                  type="button"
+                  class="recent"
+                  title="Im Dialog „Quelle öffnen“ prüfen und starten"
+                  (click)="sessions.sourceRequest.set({ config: s.config })"
                 >
-              </button>
+                  <span class="name"
+                    ><span class="ws" aria-hidden="true">⇣</span
+                    ><span class="sr-only">Quelle: </span>{{ sourceLabel(s.config) }}</span
+                  >
+                  <span class="dir"
+                    >{{ s.config.address
+                    }}{{ s.config.allow.length ? ' · mit Absender-Filter' : '' }}</span
+                  >
+                </button>
+              }
               <button
                 type="button"
                 class="forget"
@@ -192,8 +210,10 @@ export class StartScreenComponent {
   readonly merge = output<void>();
   readonly openWorkspace = output<void>();
   readonly openSource = output<void>();
+  readonly openRemote = output<void>();
   protected readonly isWorkspace = isWorkspacePath;
   protected readonly sourceLabel = sourceLabel;
+  protected readonly address = sftpAddress;
 
   protected forget(path: string): void {
     this.settingsService.removeRecentFile(path);

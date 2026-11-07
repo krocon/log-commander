@@ -40,6 +40,45 @@ pub enum ErrorCode {
     InvalidSource,
     /// The port of a source is taken by another program.
     PortInUse,
+    /// SSH (prompt 017): the server's host key is not known yet; `remote` has type and fingerprint.
+    /// Connecting again with the confirmed fingerprint records it.
+    HostKeyUnknown,
+    /// The server's host key differs from the recorded one. Refused, there is no way around it.
+    HostKeyChanged,
+    /// The server refused the login (agent, key).
+    AuthFailed,
+    /// A password or the passphrase of the key file is needed, or the one given was wrong
+    /// (`remote.secret`, `remote.wrong`).
+    SecretRequired,
+    /// The server cannot be reached, does not answer or the connection broke.
+    ConnectionFailed,
+    /// Not supported (e.g. ProxyJump in ~/.ssh/config).
+    Unsupported,
+}
+
+/// Details of an SSH error (prompt 017) for the dialog. Never holds a secret.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteDetail {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key_type: Option<String>,
+    /// `SHA256:…`
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fingerprint: Option<String>,
+    /// Where the other key is recorded (changed host key).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub known_hosts: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub known_hosts_line: Option<usize>,
+    /// Which secret is needed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub secret: Option<crate::remote::secrets::SecretKind>,
+    /// The secret given was not accepted.
+    pub wrong: bool,
+    /// Why a host key is refused: `other_key`, `revoked`, `unusable`, `cert_authority`,
+    /// `unknown_marker`, `unreadable` (security review 017 M1).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, thiserror::Error)]
@@ -53,6 +92,9 @@ pub struct AppError {
     /// The node of a filter expression the error is about (prompt 010).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub node_id: Option<String>,
+    /// SSH details (prompt 017).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remote: Option<Box<RemoteDetail>>,
 }
 
 impl AppError {
@@ -62,7 +104,13 @@ impl AppError {
             message: message.into(),
             path: None,
             node_id: None,
+            remote: None,
         }
+    }
+
+    pub fn with_remote(mut self, detail: RemoteDetail) -> Self {
+        self.remote = Some(Box::new(detail));
+        self
     }
 
     pub fn with_node(mut self, id: &str) -> Self {
@@ -82,6 +130,7 @@ impl AppError {
             message: err.to_string(),
             path: Some(path.display().to_string()),
             node_id: None,
+            remote: None,
         }
     }
 
