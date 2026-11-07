@@ -237,7 +237,9 @@
     const exprConds = () => $$('app-log-tree [role=treeitem].kind-expr-cond');
     const exprRoot = () => $('app-log-tree [role=treeitem].kind-expr-group');
     /** Marks `text` inside the log view like a user dragging over it; returns the element holding it. */
-    const markText = (text) => {
+    // Waits for the text first: counts in the sidebar can be ahead of the rows the table has drawn.
+    const markText = async (text) => {
+      await waitFor(`text in the view: ${text}`, () => $('app-log-table-view').textContent.includes(text));
       const walker = document.createTreeWalker($('app-log-table-view'), NodeFilter.SHOW_TEXT);
       for (let node = walker.nextNode(); node; node = walker.nextNode()) {
         const at = node.data.indexOf(text);
@@ -253,7 +255,7 @@
       throw new Error(`text not in the view: ${text}`);
     };
     const requestId = '123e4567-e89b-12d3-a456-426614174000';
-    const marked = markText(requestId);
+    const marked = await markText(requestId);
     const box = marked.getBoundingClientRect();
     marked.dispatchEvent(
       new MouseEvent('contextmenu', {
@@ -278,7 +280,7 @@
     await waitFor('the check mark switches the condition off', () =>
       stat('Zeilen', 'view') === 15 && exprConds()[0].getAttribute('aria-checked') === 'false',
     );
-    markText('anna.berg');
+    await markText('anna.berg');
     press('i');
     await waitFor('I adds the marked text', () => exprConds().length === 2 && stat('Zeilen', 'view') === 1);
     window.getSelection().removeAllRanges();
