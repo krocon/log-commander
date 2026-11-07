@@ -8,6 +8,7 @@ import { DEFAULT_SETTINGS } from '../../core/settings/settings.models';
 import { SettingsService } from '../../core/settings/settings.service';
 import { LogSessionService } from './log-session.service';
 import { SessionState } from './session-state';
+import { ALL_LEVELS } from './filter-logic';
 
 const update = {
   totalLines: 0,
@@ -144,5 +145,59 @@ describe('LogSessionService.openMerged', () => {
     const tab = service.active()!;
     await service.setSources(tab, 0b10);
     expect(setFilter).toHaveBeenLastCalledWith(7, expect.any(Array), tab.query(), 'filter', 0b10);
+  });
+});
+
+describe('LogSessionService full log and back (prompt 007)', () => {
+  it('lifts levels and the filtering search in one call, keeps the filter and goes back', async () => {
+    const setFilter = vi.fn(() => Promise.resolve({ viewGeneration: 5, pending: false }));
+    const { service, session } = setup(setFilter);
+    const query = { text: 'timeout', isRegex: false, caseSensitive: false };
+    await service.applyPreset(session, { levels: ['ERROR'], query, mode: 'filter' });
+    setFilter.mockClear();
+    session.selection.set({ anchor: 12, first: 12, last: 14 });
+
+    await service.toggleFullLog(session);
+    expect(setFilter).toHaveBeenCalledTimes(1);
+    expect(setFilter).toHaveBeenLastCalledWith(1, [...ALL_LEVELS], query, 'highlight', null);
+    expect(session.keptFilter()?.mode).toBe('filter');
+    expect(session.pendingReveal).toBe(12);
+    expect(session.selection()?.anchor).toBe(12);
+    expect(session.filterActive()).toBe(false);
+
+    await service.toggleFullLog(session);
+    expect(setFilter).toHaveBeenLastCalledWith(1, ['ERROR'], query, 'filter', null);
+    expect(session.keptFilter()).toBeNull();
+    expect(session.selection()?.anchor).toBe(12);
+  });
+
+  it('forgets the kept filter when the user changes the filter', async () => {
+    const { service, session } = setup(vi.fn(() => Promise.resolve({ viewGeneration: 1 })));
+    await service.setLevels(session, new Set(['WARN']));
+    session.selection.set({ anchor: 3, first: 3, last: 3 });
+    await service.revealInFullLog(session);
+    expect(session.keptFilter()).not.toBeNull();
+    await service.setLevels(session, new Set(['INFO']));
+    expect(session.keptFilter()).toBeNull();
+  });
+
+  it('needs a selection and an active filter', async () => {
+    const setFilter = vi.fn(() => Promise.resolve({}));
+    const { service, session } = setup(setFilter);
+    await service.revealInFullLog(session);
+    expect(session.findMessage()).toBe('Keine Zeile gewählt');
+    session.selection.set({ anchor: 3, first: 3, last: 3 });
+    await service.revealInFullLog(session);
+    expect(session.findMessage()).toBe('Kein Filter aktiv');
+    expect(setFilter).not.toHaveBeenCalled();
+  });
+
+  it('toggles a bookmark on the head of the selected entry', () => {
+    const { service, session } = setup();
+    session.selection.set({ anchor: 8, first: 8, last: 11 });
+    service.toggleBookmark(session);
+    expect([...session.bookmarks()]).toEqual([8]);
+    service.toggleBookmark(session);
+    expect(session.bookmarks().size).toBe(0);
   });
 });

@@ -1,0 +1,14 @@
+/* Marks in the gutter, below .lt-host like log-table-view.css. */
+
+/* A bookmark (prompt 007): a flag in the gutter (left, in a merge right of the stripe's name). */
+.lt-host .lt-gutter.bookmark::before {
+  content: '⚑';
+  position: absolute;
+  left: 2px;
+  color: var(--ruler-bookmark);
+}
+
+.lt-host .lt-src.bookmark::before {
+  left: auto;
+  right: 2px;
+}

@@ -34,10 +34,11 @@ src/                         Angular 22 (zoneless, Signals, OnPush, Standalone)
   app/core/log/              LogApi, DTOs (= Rust model.rs)
   app/core/settings/         SettingsService (tauri-plugin-store, wendet Theme/Farben an), reine Merge-Logik
   app/features/sessions/     LogSessionService (Tabs, alle Aktionen), SessionState (je Tab), PageCache, filter-logic,
-                             format-logic (Spalten, Formattext)
+                             format-logic (Spalten, Formattext), navigation-logic (Lesezeichen, Sprung, Gesamtlog)
   app/features/log-table/    LogTableViewComponent (GuiExpert Table), LogAreaModel, viewport-logic (reines
                              Scroll-Modell), table-logic, highlight (Inline-Tokens, cellSegments), columns-logic
-                             (Spaltenansicht: Layout, Breiten, Spannen), column-menu (Spaltenmenü)
+                             (Spaltenansicht: Layout, Breiten, Spannen), column-menu (Spaltenmenü),
+                             overview-ruler + ruler-logic (Overview Ruler, Canvas)
   app/features/merge/        MergeDialog (Prompt 006), merge-logic (Quellenmaske, Namen, Farben, Dialogregeln)
   app/features/detail/       DetailPanel (Prompt 004), detail-format (JSON/XML-Tokenizer), detail-logic (Layout, Neuladen)
   app/shared/splitter.ts     wiederverwendbarer Splitter (Pointer Events, Tastatur), Rechnung in splitter-logic.ts
@@ -52,6 +53,7 @@ src-tauri/src/               Rust; alles außer commands.rs und lib.rs ist frei 
   fields.rs                  Formaterkennung, Felder je Zeile (Spannen in UTF-16), JSON/logfmt/FIX/W3C-Scanner, Inferenz
   timestamp.rs               Zeitstempel erkennen und nach µs UTC wandeln (auch für den Merge, Prompt 006)
   filter.rs                  gefilterte Zeilenliste (inkrementell), Textsuche, Quellenmaske
+  overview.rs                LevelSummary: Level-Bits je Abschnitt für Overview Ruler und find_level (max. 64 KB)
   merge.rs                   mehrere Dateien als eine Sitzung: Merger (rein), Worker (Folgen, Rotation, Haltepuffer)
   encoding.rs, platform.rs   Encodings, ANSI; Share-Flags und Datei-Identität je OS
   e2e.rs                     nur Debug-Build: Szenario im WebView, siehe scripts/e2e/
@@ -113,6 +115,14 @@ samples/                     Beispiel-Logs
   gezählt (`lateLines`), „Neu sortieren“ = neue Epoche. Keine provisorische Zeile (eine Zeile ohne `\n` wird nach 1 s
   endgültig, ihr Rest eine eigene Zeile). Profil je Datei im Dialog, `set_profile` auf einem Merge ist `invalid_merge`.
   Spalten kommen aus dem Format der ersten Datei. Der Tailer für Einzeldateien ist unverändert.
+- **Overview Ruler (007):** rechts neben der Tabelle (deren Scrollleiste bleibt), ein `<canvas>`, Daten aus
+  `get_overview` (Level-Bits je Pixel aus `LevelSummary`, nie ein Index-Scan; die Identität nutzt die des `LineIndex`, ein
+  Filter seine eigene in `FilteredLines`). Positionen der **Ansicht**, höchstens 2 Abfragen/s, Antwort mit fremder
+  `epoch`/`viewGeneration` wird nicht gezeichnet. Ein ODER lässt sich nicht zurückrechnen: Rückzug der provisorischen Zeile
+  kann ein Bit stehen lassen, Neu-Leveln baut eine neue Zusammenfassung und tauscht sie. `find_level` prüft nur Köpfe
+  (`E`/`W`), Lesezeichen (`M`/`N`) nur im Speicher des Frontends, neue `epoch` leert sie. Navigation ändert nie die Auswahl.
+  `G` hebt den Filter auf (Filtersuche wird Hervorhebung), merkt ihn und scrollt erst mit der neuen `viewGeneration`
+  (`pendingReveal`).
 - **Fortsetzungszeilen:** Einrücken, `at `, `Caused by:`, `Traceback`, `... ` wird vor der Regex geprüft
   (`at com.acme.error.Handler` ist keine ERROR-Zeile). Zeilen mit Zeitstempel ohne Level beginnen einen neuen Eintrag.
 - **Felder beim Ausliefern, nicht beim Indexieren (Prompt 008):** `get_lines` zerlegt jede Zeile mit dem `FieldParser`

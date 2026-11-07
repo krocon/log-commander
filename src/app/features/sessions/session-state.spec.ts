@@ -187,3 +187,77 @@ describe('SessionState.displayedLines', () => {
     expect(session.columns()?.revision).toBe(2);
   });
 });
+
+describe('SessionState navigation (prompt 007)', () => {
+  function make(getPosition: (line: number) => Promise<number>) {
+    const api = {
+      getLines: () => new Promise(() => undefined),
+      getPosition: (_id: number, line: number) => getPosition(line),
+      getColumns: () => Promise.resolve(columnSet(1)),
+    } as unknown as LogApi;
+    return new SessionState(
+      {
+        sessionId: 1,
+        path: '/a.log',
+        fileName: 'a.log',
+        suggestedProfileId: 'generic',
+        update: update(100),
+        sources: [],
+      },
+      api,
+    );
+  }
+  const tick = () => new Promise((r) => setTimeout(r));
+
+  it('clears bookmarks, the pending reveal and the jump with a new epoch', () => {
+    const session = make(() => Promise.resolve(0));
+    session.bookmarks.set(new Set([3, 7]));
+    session.pendingReveal = 7;
+    session.jumpTo(20, 7);
+    session.applyUpdate(update(100, { epoch: 1 }));
+    expect(session.bookmarks().size).toBe(0);
+    expect(session.pendingReveal).toBeNull();
+    expect(session.jumpMark).toBeNull();
+  });
+
+  it('keeps bookmarks when only the view changes', () => {
+    const session = make(() => Promise.resolve(0));
+    session.bookmarks.set(new Set([3]));
+    session.applyUpdate(update(10, { viewGeneration: 1 }));
+    expect([...session.bookmarks()]).toEqual([3]);
+  });
+
+  it('scrolls to the pending line only once the new view is there', async () => {
+    const asked: number[] = [];
+    const session = make((line) => {
+      asked.push(line);
+      return Promise.resolve(line * 2);
+    });
+    session.setFollow(false);
+    session.pendingReveal = 40;
+    // Same view (a tail update): nothing yet, positions would be those of the old view.
+    session.applyUpdate(update(101));
+    await tick();
+    expect(asked).toEqual([]);
+    // The identity comes as a new view generation too.
+    session.applyUpdate(update(500, { viewGeneration: 1 }));
+    await tick();
+    expect(asked).toEqual([40]);
+    expect(session.scroll()).toEqual({ top: 75, subPx: 0 });
+    expect(session.pendingReveal).toBeNull();
+    expect(session.jumpMark?.line).toBe(40);
+    expect(session.follow()).toBe(false);
+  });
+
+  it('lets a scroll of the user overtake the pending reveal', async () => {
+    let answer: (position: number) => void = () => undefined;
+    const session = make(() => new Promise<number>((resolve) => (answer = resolve)));
+    session.setFollow(false);
+    session.pendingReveal = 40;
+    session.applyUpdate(update(500, { viewGeneration: 1 }));
+    session.scroll.set({ top: 3, subPx: 0 });
+    answer(80);
+    await tick();
+    expect(session.scroll()).toEqual({ top: 3, subPx: 0 });
+  });
+});

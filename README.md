@@ -44,6 +44,15 @@ Like <code>tail -f</code> with a GUI: millions of lines, instant filters, no wai
   an entry that arrives later than that is appended at the end and counted („N verspätet · Neu sortieren“). Open it
   with `Cmd/Ctrl+Shift+M`, the button in the tab bar or the menu: tick open tabs or pick files, the profile of each
   file is suggested and can be changed, the dialog shows its first and last time.
+- **Overview ruler** – a narrow bar right of the log shows where errors (red), FATAL entries and warnings lie in the
+  current view, the visible part as a band, bookmarks as flags and the selected line as a triangle; a single error
+  among millions of lines is still a 3 px mark. Click a mark to go to its entry, anywhere else to go there; the
+  selection stays. The arrow at its foot goes to the end and follows. `E`/`W` jump to the next error or warning,
+  `M` bookmarks the selected entry (flag in the gutter, kept until the file starts over), `N` goes to the next
+  bookmark. Switch it off in the settings.
+- **From the filter to the whole log** – `G` (or „Im Gesamtlog“ in the toolbar and the detail panel) shows the
+  selected line of a filtered view in the whole log, with the search kept as highlighting; `G` again (or „Zurück zum
+  Filter“) brings the filter back at the same line. Changing the filter by hand forgets the way back.
 - **Search** – filter or highlight, regular expressions, case sensitivity, jump between matches.
 - **Follow** – stays at the end while you are there; scroll up and it pauses and counts the new lines.
 - **Freeze** – holds a tab to read in peace: lines, counts and the position stay put while filters and search keep
@@ -85,6 +94,12 @@ log-commander /var/log/app.log /var/log/other.log
 | `←`, `→` on the sidebar's bar | Sidebar width (`Shift`: bigger steps, double click: default) |
 | `Shift+F10` | Column menu (show, hide, move, resize, reset) |
 | `Home`, `PageUp`, `PageDown`, `↑`, `↓` | Move through the file |
+| `E`, `Shift+E` | Next / previous error (ERROR, FATAL) in the view; the selection stays |
+| `W`, `Shift+W` | Next / previous warning or worse |
+| `M` | Bookmark on the selected entry, or off again |
+| `N`, `Shift+N` | Next / previous bookmark |
+| `G` | Selected line in the whole log (filter lifted and kept), again: back to the filter |
+| Click on the overview ruler | Go to the mark's entry, a bookmark, the selection or that place |
 | `Cmd/Ctrl+F` | Search; `Enter` next match, `Shift+Enter` previous, `Esc` clear |
 | Click, `Shift`+click | Select an entry, or a range (an open detail panel follows) |
 | `Cmd/Ctrl+C` | Copy the selected lines |
@@ -130,6 +145,8 @@ Measured on an Apple Silicon Mac, release build, with
 | Level filter over all lines | 15 ms |
 | Full text search over all lines | 0.7 s |
 | `get_lines`, 200 lines at a random position | 43 µs |
+| `get_overview` (800 px, 1000 bookmarks) | 0.3 ms |
+| `find_level`, no FATAL in 5.1 million lines | 0.13 ms |
 
 At 10,000 lines per second the UI's event loop was never blocked for more than 8 ms (debug build, `npm run e2e`).
 

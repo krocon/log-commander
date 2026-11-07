@@ -14,11 +14,20 @@ import { ALL_SOURCES, mergeKey, mergeTitle, sourceLabels } from '../merge/merge-
 import { nextDisplayedLines } from './displayed-lines';
 import { ALL_LEVELS } from './filter-logic';
 import { isNewerColumns } from './format-logic';
+import { KeptFilter, filterActive, jumpScroll } from './navigation-logic';
 import { PageCache } from './page-cache';
 
 export interface ScrollPos {
   top: number;
   subPx: number;
+}
+
+/** Where the last jump (ruler, `E`, `N`, …) went; the next one goes on from there while the view stays. */
+export interface JumpMark {
+  position: number;
+  line: number | null;
+  /** The scroll position the jump set: once it changes, the reader moved on by himself. */
+  scroll: ScrollPos;
 }
 
 export interface LineSelection {
@@ -68,6 +77,28 @@ export class SessionState {
   readonly pausedAtCount = signal(0);
 
   readonly selection = signal<LineSelection | null>(null);
+  /** Bookmarks of this tab (line numbers, prompt 007), kept in memory only; a new epoch clears them. */
+  readonly bookmarks = signal<ReadonlySet<number>>(new Set());
+  /** The filter `revealInFullLog` lifted, for the way back; changing the filter by hand forgets it. */
+  readonly keptFilter = signal<KeptFilter | null>(null);
+  /** The view hides lines (levels, filtering search, sources of a merge). */
+  readonly filterActive = computed(() =>
+    filterActive(
+      {
+        levels: this.levels(),
+        query: this.query(),
+        mode: this.searchMode(),
+        sourceMask: this.sourceMask(),
+      },
+      this.sources.length,
+    ),
+  );
+  /**
+   * A line to show once the next view is there (`G`). Until the swap `getPosition` answers for the old view,
+   * so this waits for the new view generation instead of scrolling right away.
+   */
+  pendingReveal: number | null = null;
+  jumpMark: JumpMark | null = null;
   readonly currentHitLine = signal<number | null>(null);
   readonly findMessage = signal<string | null>(null);
 
@@ -165,9 +196,12 @@ export class SessionState {
       this.cache.clear();
       this.scroll.set({ top: 0, subPx: 0 });
       this.selection.set(null);
+      this.bookmarks.set(new Set());
       this.currentHitLine.set(null);
       this.pausedAtCount.set(0);
       this.seenErrors = 0;
+      this.jumpMark = null;
+      this.pendingReveal = null;
     } else if (viewChanged) {
       this.onViewChanged();
     } else if (next.filteredLines !== prev.filteredLines || next.fileSize !== prev.fileSize) {
@@ -198,10 +232,23 @@ export class SessionState {
     this.follow.set(follow);
   }
 
+  /** Scrolls to a position as a jump: follow off, the next jump goes on from here. */
+  jumpTo(position: number, line: number | null): void {
+    this.setFollow(false);
+    const scroll = jumpScroll(position);
+    this.scroll.set(scroll);
+    this.jumpMark = { position, line, scroll };
+  }
+
   private onViewChanged(): void {
     // Stay on the line that was on top; positions changed but line numbers did not.
     const anchor = this.cache.line(this.scroll().top)?.line;
     this.cache.clear();
+    this.jumpMark = null;
+    if (this.pendingReveal !== null) {
+      this.revealPending();
+      return;
+    }
     if (this.follow() || anchor === undefined) {
       if (!this.follow()) this.scroll.set({ top: 0, subPx: 0 });
     } else {
@@ -214,6 +261,24 @@ export class SessionState {
           if (this.scroll() === requestedAt) this.scroll.set({ top, subPx: 0 });
         });
     }
+  }
+
+  /**
+   * Shows `pendingReveal` in the current view (the new one, or the same when the filter did not change it).
+   * If the user scrolled in the meantime, that wins.
+   */
+  revealPending(): void {
+    const line = this.pendingReveal;
+    if (line === null) return;
+    this.pendingReveal = null;
+    const requestedAt = this.scroll();
+    void this.api
+      .getPosition(this.id, line)
+      .catch(() => null)
+      .then((position) => {
+        if (position === null || this.scroll() !== requestedAt) return;
+        this.jumpTo(position, line);
+      });
   }
 
   private loadColumns(revision: number): void {

@@ -3,6 +3,7 @@
 
 use crate::error::AppResult;
 use crate::level::Level;
+use crate::overview::{level_bit, LevelSummary, SummaryMark};
 use regex::{Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -170,6 +171,8 @@ pub struct FilteredLines {
     entry_counts: Counts,
     /// `entry_counts` is not all zero.
     entry_pending: bool,
+    /// Levels per chunk of positions in `list`, for the overview ruler (prompt 007).
+    summary: LevelSummary,
 }
 
 /// State to restore when a provisional last line is withdrawn.
@@ -184,6 +187,7 @@ pub struct FilterCheckpoint {
     entry_head: Level,
     entry_counts: Counts,
     entry_pending: bool,
+    summary: SummaryMark,
 }
 
 impl FilteredLines {
@@ -200,6 +204,7 @@ impl FilteredLines {
             entry_head: Level::Unknown,
             entry_counts: [0; Level::COUNT],
             entry_pending: false,
+            summary: LevelSummary::new(),
         }
     }
 
@@ -227,6 +232,11 @@ impl FilteredLines {
         } else {
             *all
         }
+    }
+
+    /// Levels per chunk of positions; `None` for the identity, where the index has them.
+    pub fn summary(&self) -> Option<&LevelSummary> {
+        self.list.is_some().then_some(&self.summary)
     }
 
     /// The line number at a position in the view.
@@ -257,6 +267,7 @@ impl FilteredLines {
         self.entry_head = Level::Unknown;
         self.entry_counts = [0; Level::COUNT];
         self.entry_pending = false;
+        self.summary.clear();
     }
 
     pub fn checkpoint(&self) -> FilterCheckpoint {
@@ -270,6 +281,7 @@ impl FilteredLines {
             entry_head: self.entry_head,
             entry_counts: self.entry_counts,
             entry_pending: self.entry_pending,
+            summary: self.summary.mark(),
         }
     }
 
@@ -282,6 +294,7 @@ impl FilteredLines {
         self.entry_head = checkpoint.entry_head;
         self.entry_counts = checkpoint.entry_counts;
         self.entry_pending = checkpoint.entry_pending;
+        self.summary.restore(checkpoint.summary);
         if let Some(list) = &mut self.list {
             list.truncate(checkpoint.list_len);
         }
@@ -323,6 +336,7 @@ impl FilteredLines {
         } else if self.entry_included {
             list.push(line);
             self.counts[level as usize] += 1;
+            self.summary.push(level);
             return;
         }
         if self.entry_excluded
@@ -341,16 +355,29 @@ impl FilteredLines {
         if line != self.entry_start {
             list.extend(self.entry_start..line);
             self.counts[self.entry_head as usize] += 1;
+            self.summary.push(self.entry_head);
             if self.entry_pending {
-                for (count, pending) in self.counts.iter_mut().zip(self.entry_counts) {
+                // Their order is gone; all of them lie between head and this line, so their chunks get
+                // the bits of all their levels.
+                let mut mask = 0u8;
+                let mut taken = 0u64;
+                for (i, (count, pending)) in
+                    self.counts.iter_mut().zip(self.entry_counts).enumerate()
+                {
                     *count += pending;
+                    if pending > 0 {
+                        mask |= level_bit(Level::ALL[i]);
+                        taken += pending;
+                    }
                 }
+                self.summary.push_run(mask, taken);
                 self.entry_counts = [0; Level::COUNT];
                 self.entry_pending = false;
             }
         }
         list.push(line);
         self.counts[level as usize] += 1;
+        self.summary.push(level);
         self.entry_included = true;
     }
 
@@ -658,5 +685,36 @@ mod tests {
             .unwrap()
             .is_match("abc"));
         assert!(TextMatcher::new(&query("(", true)).is_err());
+    }
+
+    #[test]
+    fn summary_follows_the_list_including_lines_taken_afterwards() {
+        let mut filter = FilteredLines::new(spec(&Level::ALL, Some("needle")));
+        let err = 1u8 << Level::Error as u8;
+        feed(
+            &mut filter,
+            &[
+                (Level::Info, false, "start"),
+                (Level::Error, false, "failed"),
+                (Level::Error, true, "at a"),
+                (Level::Error, true, "at needle"),
+                (Level::Info, false, "after"),
+            ],
+        );
+        let summary = filter.summary().unwrap();
+        assert_eq!(summary.len(), filter.len(5) as u64);
+        assert_eq!(summary.buckets(3, 3), vec![err, err, err]);
+
+        // A provisional line taken and withdrawn again.
+        let checkpoint = filter.checkpoint();
+        feed(&mut filter, &[(Level::Warn, false, "needle warn")]);
+        assert_eq!(filter.summary().unwrap().len(), 4);
+        filter.restore(checkpoint);
+        assert_eq!(filter.summary().unwrap().len(), 3);
+        filter.clear();
+        assert_eq!(filter.summary().unwrap().len(), 0);
+        assert!(FilteredLines::new(FilterSpec::default())
+            .summary()
+            .is_none());
     }
 }

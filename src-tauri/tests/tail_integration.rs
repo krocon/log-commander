@@ -451,6 +451,7 @@ fn measure_500mb() {
         s.view_generation == info.view_generation
     });
     println!("level filter: {:?}", start.elapsed());
+    measure_overview(&fx, "ERROR filter");
 
     let start = Instant::now();
     let query = SearchQuery {
@@ -518,6 +519,7 @@ fn measure_500mb() {
         .set_filter(&Level::ALL, &SearchQuery::default(), SearchMode::Filter)
         .unwrap();
     assert!(!info.pending);
+    measure_overview(&fx, "identity");
     let before = fx.session.stats().total_lines;
     fx.updates.lock().clear();
     let mut file = FsOptions::new().append(true).open(&path).unwrap();
@@ -531,6 +533,33 @@ fn measure_500mb() {
         "tail: {} updates during 3 s at 10k lines/s",
         fx.updates.lock().len()
     );
+}
+
+/// `get_overview` (800 buckets, 1000 marks) and `find_level` (next ERROR, FATAL that is not there).
+fn measure_overview(fx: &Fixture, label: &str) {
+    let lines: Vec<u32> = (0..1000).map(|i| i * 5000).collect();
+    let calls = 50;
+    let start = Instant::now();
+    for _ in 0..calls {
+        fx.session.overview(800, &lines).unwrap();
+    }
+    println!("get_overview ({label}): {:?} each", start.elapsed() / calls);
+    let start = Instant::now();
+    for i in 0..calls {
+        fx.session
+            .find_level(Some(i * 100_000), true, &[Level::Error])
+            .unwrap();
+    }
+    println!(
+        "find_level ERROR ({label}): {:?} each",
+        start.elapsed() / calls
+    );
+    let start = Instant::now();
+    assert!(fx
+        .session
+        .find_level(Some(0), true, &[Level::Fatal])
+        .is_none());
+    println!("find_level FATAL, none ({label}): {:?}", start.elapsed());
 }
 
 /// Long enough for the worker to have read a file if it were reading.
@@ -1253,4 +1282,199 @@ fn view_counts_of_an_empty_file_and_after_truncation_are_zero() {
     fx.wait("truncated", |s| {
         s.total_lines == 1 && s.view_counts.error == 1
     });
+}
+
+// ---------------------------------------------------------------- overview ruler (prompt 007)
+
+const ERR_BIT: u8 = 1 << Level::Error as u8;
+const WARN_BIT: u8 = 1 << Level::Warn as u8;
+const INFO_BIT: u8 = 1 << Level::Info as u8;
+
+fn stack_trace_log() -> &'static str {
+    "2024-01-01 INFO start\n\
+     2024-01-01 ERROR failed\n\
+     \tat com.acme.A.run(A.java:1)\n\
+     \tat com.acme.needle.B(B.java:2)\n\
+     Caused by: java.io.IOException\n\
+     2024-01-01 WARN after\n\
+     2024-01-01 ERROR other\n\
+     2024-01-01 INFO end\n"
+}
+
+#[test]
+fn overview_of_the_identity_and_of_a_filter_with_a_hit_in_a_stack_trace() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("app.log");
+    fs::write(&path, stack_trace_log()).unwrap();
+    let fx = open(&path, true);
+    fx.wait("loaded", |s| s.total_lines == 8);
+
+    let overview = fx.session.overview(8, &[]).unwrap();
+    assert_eq!(overview.count, 8);
+    assert_eq!(
+        overview.buckets,
+        vec![INFO_BIT, ERR_BIT, ERR_BIT, ERR_BIT, ERR_BIT, WARN_BIT, ERR_BIT, INFO_BIT]
+    );
+
+    set_filter_and_wait(&fx, &Level::ALL, "needle");
+    let overview = fx.session.overview(4, &[0, 3]).unwrap();
+    let stats = fx.session.stats();
+    assert_eq!(
+        (overview.count, overview.view_generation),
+        (4, stats.view_generation)
+    );
+    assert_eq!(overview.buckets, vec![ERR_BIT; 4]);
+    // Line 0 is filtered out: its position is that of the next visible line.
+    assert_eq!(
+        (overview.marks[0].position, overview.marks[0].visible),
+        (0, false)
+    );
+    assert_eq!(
+        (overview.marks[1].position, overview.marks[1].visible),
+        (2, true)
+    );
+
+    // Identity again, through a new view generation: the index summary applies.
+    let before = fx.session.stats().view_generation;
+    set_filter_and_wait(&fx, &Level::ALL, "");
+    let overview = fx.session.overview(8, &[0]).unwrap();
+    assert!(overview.view_generation > before);
+    assert_eq!(overview.count, 8);
+    assert_eq!(overview.buckets[5], WARN_BIT);
+    assert!(overview.marks[0].visible);
+
+    // Limits.
+    assert!(fx.session.overview(8193, &[]).is_err());
+    assert!(fx.session.overview(10, &vec![0; 10_001]).is_err());
+}
+
+#[test]
+fn overview_after_a_withdrawn_provisional_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("app.log");
+    fs::write(&path, "2024-01-01 ERROR head\n\tat a\n").unwrap();
+    let fx = open(&path, true);
+    fx.wait("loaded", |s| s.total_lines == 2);
+    set_filter_and_wait(&fx, &[Level::Error], "needle");
+    assert_eq!(fx.session.overview(10, &[]).unwrap().count, 0);
+
+    append(&path, "\tat needle");
+    fx.wait("provisional", |s| s.filtered_lines == 3);
+    assert_eq!(
+        fx.session.overview(3, &[]).unwrap().buckets,
+        vec![ERR_BIT; 3]
+    );
+
+    append(&path, " longer\n2024-01-01 WARN next\n");
+    fx.wait("completed", |s| s.total_lines == 4);
+    let overview = fx.session.overview(3, &[]).unwrap();
+    assert_eq!(overview.count, 3);
+    assert_eq!(overview.buckets, vec![ERR_BIT; 3]);
+    // The identity: the index summary took the line back, too.
+    set_filter_and_wait(&fx, &Level::ALL, "");
+    let overview = fx.session.overview(4, &[]).unwrap();
+    assert_eq!(overview.count, 4);
+    assert_eq!(overview.buckets[3], WARN_BIT);
+}
+
+#[test]
+fn overview_after_relevel_truncation_and_rotation() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("app.log");
+    fs::write(&path, "OOPS one\nMEH two\nOOPS three\n").unwrap();
+    let fx = open(&path, true);
+    fx.wait("loaded", |s| s.total_lines == 3);
+    let unknown = 1u8 << Level::Unknown as u8;
+    assert_eq!(
+        fx.session.overview(3, &[]).unwrap().buckets,
+        vec![unknown; 3]
+    );
+
+    let profile = Profile {
+        id: "mine".into(),
+        name: "Mine".into(),
+        builtin: false,
+        patterns: vec!["^(?P<level>OOPS|MEH) ".into()],
+        mapping: [
+            ("oops".to_string(), Level::Error),
+            ("meh".to_string(), Level::Warn),
+        ]
+        .into(),
+        json: false,
+        syslog_pri: false,
+        head: None,
+        ..Profile::default()
+    };
+    let info = fx.session.set_profile(&profile).unwrap();
+    fx.wait("relevel", |s| {
+        s.view_generation == info.view_generation && !s.filter_pending
+    });
+    assert_eq!(
+        fx.session.overview(3, &[]).unwrap().buckets,
+        vec![ERR_BIT, WARN_BIT, ERR_BIT]
+    );
+
+    // Truncation: a new epoch, the summary starts over.
+    let epoch = fx.session.stats().epoch;
+    fs::write(&path, "MEH only\n").unwrap();
+    fx.wait("truncated", |s| s.epoch > epoch && s.total_lines == 1);
+    let overview = fx.session.overview(3, &[]).unwrap();
+    assert_eq!((overview.count, overview.epoch > epoch), (1, true));
+    // One line fills the ruler.
+    assert_eq!(overview.buckets, vec![WARN_BIT; 3]);
+
+    // Rotation keeping the old lines: they stay in the summary.
+    fs::rename(&path, dir.path().join("app.log.1")).unwrap();
+    fs::write(&path, "OOPS new\n").unwrap();
+    fx.wait("rotated", |s| s.total_lines == 2);
+    assert_eq!(
+        fx.session.overview(2, &[]).unwrap().buckets,
+        vec![WARN_BIT, ERR_BIT]
+    );
+}
+
+#[test]
+fn find_level_goes_by_heads_both_ways_and_wraps() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("app.log");
+    fs::write(&path, stack_trace_log()).unwrap();
+    let fx = open(&path, true);
+    fx.wait("loaded", |s| s.total_lines == 8);
+    let errors = [Level::Error, Level::Fatal];
+
+    let hit = fx.session.find_level(None, true, &errors).unwrap();
+    assert_eq!((hit.line, hit.position, hit.wrapped), (1, 1, false));
+    // The stack trace below its head is no hit of its own.
+    let hit = fx.session.find_level(Some(1), true, &errors).unwrap();
+    assert_eq!((hit.line, hit.wrapped), (6, false));
+    let hit = fx.session.find_level(Some(6), true, &errors).unwrap();
+    assert_eq!((hit.line, hit.wrapped), (1, true));
+    let hit = fx.session.find_level(Some(6), false, &errors).unwrap();
+    assert_eq!((hit.line, hit.wrapped), (1, false));
+    let hit = fx.session.find_level(Some(1), false, &errors).unwrap();
+    assert_eq!((hit.line, hit.wrapped), (6, true));
+    // Warnings and worse.
+    let hit = fx
+        .session
+        .find_level(Some(1), true, &[Level::Warn, Level::Error, Level::Fatal])
+        .unwrap();
+    assert_eq!(hit.line, 5);
+    assert!(fx.session.find_level(None, true, &[Level::Fatal]).is_none());
+    assert!(fx.session.find_level(None, true, &[]).is_none());
+
+    // In a filtered view the positions are those of the view.
+    set_filter_and_wait(&fx, &[Level::Error, Level::Warn], "");
+    let hit = fx.session.find_level(Some(0), true, &errors).unwrap();
+    assert_eq!((hit.line, hit.position), (6, 5));
+}
+
+#[test]
+fn find_level_in_an_empty_file_finds_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("app.log");
+    fs::write(&path, "").unwrap();
+    let fx = open(&path, true);
+    fx.wait("live", |s| s.status == Status::Live);
+    assert!(fx.session.find_level(None, true, &[Level::Error]).is_none());
+    assert_eq!(fx.session.overview(5, &[3]).unwrap().buckets, vec![0; 5]);
 }

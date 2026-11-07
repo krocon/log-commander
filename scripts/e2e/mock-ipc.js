@@ -275,6 +275,32 @@
       matched: false,
     }),
     get_position: ({ line }) => line,
+    get_overview({ sessionId, buckets, lines }) {
+      const session = sessions.get(sessionId);
+      const shown = visible(session);
+      const out = new Array(buckets).fill(0);
+      shown.forEach((l, p) => {
+        const first = Math.floor((p * buckets) / shown.length);
+        const last = Math.max(first + 1, Math.ceil(((p + 1) * buckets) / shown.length));
+        for (let b = first; b < Math.min(last, buckets); b++) out[b] |= 1 << LEVELS.indexOf(l.level);
+      });
+      const marks = lines.map((line) => {
+        const position = Math.max(0, shown.findIndex((l) => l.line >= line));
+        return { line, position, visible: shown[position]?.line === line };
+      });
+      return { viewGeneration: session.generation, epoch: 0, count: shown.length, buckets: out, marks };
+    },
+    find_level({ sessionId, fromPosition, forward, levels }) {
+      const shown = visible(sessions.get(sessionId));
+      const heads = shown
+        .map((l, position) => ({ l, position }))
+        .filter(({ l }) => !l.isContinuation && levels.includes(l.level));
+      const from = fromPosition ?? (forward ? -1 : shown.length);
+      const hit = forward
+        ? heads.find((h) => h.position > from)
+        : heads.findLast((h) => h.position < from);
+      return hit ? { line: hit.l.line, position: hit.position, wrapped: false } : null;
+    },
     get_entry_range: ({ sessionId, line }) => {
       const { first, last } = entryOf(sessions.get(sessionId), line);
       return { first, last };

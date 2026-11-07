@@ -193,6 +193,30 @@ pub struct FindHit {
     pub wrapped: bool,
 }
 
+/// What the overview ruler draws (prompt 007), for the view of `view_generation` in `epoch`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Overview {
+    pub view_generation: u64,
+    pub epoch: u64,
+    /// Positions in the view; buckets and marks belong to this count.
+    pub count: u64,
+    /// Level bits (`1 << level`) per pixel bucket, top to bottom.
+    pub buckets: Vec<u8>,
+    pub marks: Vec<OverviewMark>,
+}
+
+/// Where a line (selection, bookmark) is in the view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OverviewMark {
+    pub line: u32,
+    /// Its position, or that of the next visible line when the filter hides it.
+    pub position: u32,
+    /// The line itself is in the view.
+    pub visible: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EntryRange {

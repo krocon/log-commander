@@ -63,6 +63,17 @@ const GRAPHIC_PAIRS = [
     [`src-${i}`, 'bg-panel'],
     [`src-${i}`, 'bg-raised'],
   ]),
+  // Overview ruler (prompt 007): marks on the ruler and on its visible band, the band's edge, the
+  // bookmark flag in the gutter.
+  ...['ruler-fatal', 'ruler-error', 'ruler-warn', 'ruler-bookmark', 'ruler-selection'].flatMap(
+    (token) => [
+      [token, 'ruler-bg'],
+      [token, 'ruler-band'],
+    ],
+  ),
+  ['ruler-band-edge', 'ruler-bg'],
+  ['ruler-bookmark', 'bg-gutter'],
+  ['ruler-bookmark', 'row-selected'],
 ];
 
 function luminance(hex) {

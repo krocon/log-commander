@@ -13,6 +13,7 @@ import {
   LogViewKind,
   MergeCandidate,
   MergeSourceSpec,
+  Overview,
   Profile,
   SearchMode,
   SearchQuery,
@@ -103,6 +104,21 @@ export class LogApi {
 
   getPosition(sessionId: number, line: number): Promise<number> {
     return call('get_position', { sessionId, line });
+  }
+
+  /** Level bits per pixel bucket of the view and where `lines` are in it (overview ruler). */
+  getOverview(sessionId: number, buckets: number, lines: readonly number[]): Promise<Overview> {
+    return call('get_overview', { sessionId, buckets, lines });
+  }
+
+  /** Next or previous entry of one of `levels`, strictly after / before `fromPosition` (null: start / end). */
+  findLevel(
+    sessionId: number,
+    fromPosition: number | null,
+    forward: boolean,
+    levels: readonly Level[],
+  ): Promise<FindHit | null> {
+    return call('find_level', { sessionId, fromPosition, forward, levels });
   }
 
   getEntryRange(sessionId: number, line: number): Promise<EntryRange> {

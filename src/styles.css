@@ -61,6 +61,16 @@
   --src-6: #4fc9c9;
   --src-7: #f07f7f;
   --src-8: #a7b3ff;
+
+  /* Overview ruler (prompt 007): marks, visible band, bookmarks (also in the gutter), selection. */
+  --ruler-bg: #1b1f26;
+  --ruler-band: #2c333f;
+  --ruler-band-edge: #76808f;
+  --ruler-fatal: #e879f9;
+  --ruler-error: #ff5c5c;
+  --ruler-warn: #f0a94b;
+  --ruler-bookmark: #5aa2f7;
+  --ruler-selection: #d7dce3;
 }
 /* @end */
 
@@ -120,6 +130,15 @@
   --src-6: #00727a;
   --src-7: #c0392b;
   --src-8: #4f5bd5;
+
+  --ruler-bg: #eceef1;
+  --ruler-band: #d5dae1;
+  --ruler-band-edge: #6b7685;
+  --ruler-fatal: #a21caf;
+  --ruler-error: #c62828;
+  --ruler-warn: #975b00;
+  --ruler-bookmark: #1a66d6;
+  --ruler-selection: #1f2933;
 }
 /* @end */
 

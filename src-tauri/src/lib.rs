@@ -21,6 +21,7 @@ pub mod indexer;
 pub mod level;
 pub mod merge;
 pub mod model;
+pub mod overview;
 pub mod platform;
 pub mod profile;
 pub mod session;
@@ -78,6 +79,8 @@ pub fn run() {
             commands::find_prev,
             commands::get_position,
             commands::get_entry_range,
+            commands::get_overview,
+            commands::find_level,
             commands::get_entry,
             commands::copy_lines,
             commands::set_keep_on_rotate,
