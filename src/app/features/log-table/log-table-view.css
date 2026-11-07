@@ -1,228 +1,181 @@
-:host {
+/* Not encapsulated: the table builds its cells outside Angular. Everything below .lt-host. */
+.lt-host {
   display: block;
   position: relative;
   min-height: 0;
   background: var(--bg-app);
+  --ge-table-bg: var(--bg-app);
+  --ge-table-body-center-bg: var(--bg-app);
+  --ge-table-body-west-bg: var(--bg-gutter);
+  --ge-table-body-center-text: var(--lv-unknown-fg);
+  --ge-table-body-west-text: var(--text-dim);
+  --ge-table-row-odd-bg: transparent;
+  --ge-table-row-even-bg: transparent;
+  --ge-table-border: transparent;
 }
 
-.scroller {
+.lt-host .lt-table {
   position: absolute;
   inset: 0;
-  overflow: auto;
-  outline: none;
-}
-
-/* Stays in the viewport of the scroller; the spacer below only provides the scrollbars. */
-.view {
-  position: sticky;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
+  display: block;
   font-family: var(--font-mono);
   font-size: var(--font-size);
+}
+
+.lt-host .ge-table-col-div.lt-cell,
+.lt-host .ge-table-col-div.lt-gutter {
   line-height: var(--row-h);
-}
-
-.spacer {
-  pointer-events: none;
-}
-
-.rows {
-  will-change: transform;
-}
-
-.row {
-  display: flex;
-  min-height: var(--row-h);
-  height: var(--row-h);
+  text-align: left;
+  white-space: pre;
   color: var(--lv-unknown-fg);
   background: var(--lv-unknown-bg);
+}
+
+.lt-host .ge-table-col-div.lt-cell {
+  padding-left: calc(3px + 1ch);
+  user-select: text;
+  -webkit-user-select: text;
   cursor: default;
 }
 
-.view.wrap .row {
-  height: auto;
+/* The level mark at the start of the text, like .mark in the own viewport. */
+.lt-host .ge-table-col-div.lt-cell::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
 }
 
-.gutter {
-  position: relative;
-  z-index: 1;
-  flex: none;
-  width: var(--gutter);
+.lt-host .ge-table-col-div.lt-gutter {
   padding-right: 1ch;
   text-align: right;
   color: var(--text-dim);
-  opacity: 0.75;
   background: var(--bg-gutter);
   font-size: 0.88em;
   user-select: none;
   -webkit-user-select: none;
 }
 
-.mark {
-  position: relative;
-  z-index: 1;
-  flex: none;
-  width: 3px;
-  margin-right: 1ch;
-  background: transparent;
-}
-
-.text {
-  flex: none;
-  white-space: pre;
-  transform: translateX(calc(var(--sx) * -1));
-  user-select: text;
-  -webkit-user-select: text;
-}
-
-.view.wrap .text {
-  flex: 1 1 0;
-  min-width: 0;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  transform: none;
-}
-
-.row.loading .text::before {
+.lt-host .lt-cell.loading .lt-text::before,
+.lt-host .lt-cell.loading::after {
   content: '…';
   color: var(--text-dim);
 }
 
-.row.cont .text {
+.lt-host .lt-cell.cont {
   opacity: 0.92;
 }
 
-.row.lv-TRACE {
+.lt-host .lt-cell.lv-TRACE {
   color: var(--lv-trace-fg);
   background: var(--lv-trace-bg);
 }
 
-.row.lv-DEBUG {
+.lt-host .lt-cell.lv-DEBUG {
   color: var(--lv-debug-fg);
   background: var(--lv-debug-bg);
 }
 
-.row.lv-INFO {
+.lt-host .lt-cell.lv-INFO {
   color: var(--lv-info-fg);
   background: var(--lv-info-bg);
 }
 
-.row.lv-INFO .mark {
+.lt-host .lt-cell.lv-INFO::before {
   background: var(--lv-info-badge);
   opacity: 0.55;
 }
 
-.row.lv-WARN {
+.lt-host .lt-cell.lv-WARN {
   color: var(--lv-warn-fg);
   background: var(--lv-warn-bg);
 }
 
-.row.lv-WARN .mark {
+.lt-host .lt-cell.lv-WARN::before {
   background: var(--lv-warn-fg);
 }
 
-.row.lv-ERROR {
+.lt-host .lt-cell.lv-ERROR {
   color: var(--lv-error-fg);
   background: var(--lv-error-bg);
 }
 
-.row.lv-ERROR .mark {
+.lt-host .lt-cell.lv-ERROR::before {
   background: var(--lv-error-edge);
 }
 
-.row.lv-FATAL {
+.lt-host .lt-cell.lv-FATAL {
   color: var(--lv-fatal-fg);
   background: var(--lv-fatal-bg);
   font-weight: 700;
 }
 
-.row.lv-FATAL .mark {
+.lt-host .lt-cell.lv-FATAL::before {
   background: var(--lv-fatal-fg);
 }
 
-.row.selected,
-.row.selected .gutter {
+.lt-host .lt-cell.selected,
+.lt-host .lt-gutter.selected {
   background: var(--row-selected);
 }
 
-.row.current-hit .gutter {
+.lt-host .lt-gutter.current-hit {
   color: var(--hit-current-bg);
-  opacity: 1;
   font-weight: 700;
 }
 
-/* Inline highlighting: quiet, and only where it does not fight the level colour. */
-.t-time {
+.lt-host .t-time {
   color: var(--tok-time);
 }
 
-.t-number {
+.lt-host .t-number {
   color: var(--tok-number);
 }
 
-.t-string {
+.lt-host .t-string {
   color: var(--tok-string);
 }
 
-.t-id {
+.lt-host .t-id {
   color: var(--tok-id);
 }
 
-.t-url {
+.lt-host .t-url {
   color: var(--tok-url);
 }
 
-.t-level {
+.lt-host .t-level {
   font-weight: 600;
 }
 
-.lv-INFO .t-level {
+.lt-host .lv-INFO .t-level {
   color: var(--lv-info-badge);
 }
 
-.lv-WARN .t-time,
-.lv-WARN .t-number,
-.lv-WARN .t-string,
-.lv-WARN .t-id,
-.lv-WARN .t-url,
-.lv-ERROR .t-time,
-.lv-ERROR .t-number,
-.lv-ERROR .t-string,
-.lv-ERROR .t-id,
-.lv-ERROR .t-url,
-.lv-FATAL .t-time,
-.lv-FATAL .t-number,
-.lv-FATAL .t-string,
-.lv-FATAL .t-id,
-.lv-FATAL .t-url {
+.lt-host :is(.lv-WARN, .lv-ERROR, .lv-FATAL) :is(.t-time, .t-number, .t-string, .t-id, .t-url),
+.lt-host :is(.lv-TRACE, .lv-DEBUG) .t-level {
   color: inherit;
 }
 
-.lv-TRACE .t-level,
-.lv-DEBUG .t-level {
-  color: inherit;
-}
-
-.hit {
+.lt-host .hit {
   background: var(--hit-bg);
   color: var(--hit-text);
   border-radius: 2px;
 }
 
-.current-hit .hit {
+.lt-host .current-hit .hit {
   background: var(--hit-current-bg);
   color: var(--hit-current-text);
 }
 
-.cut {
+.lt-host .cut {
   color: var(--text-dim);
   font-style: italic;
 }
 
-.empty {
+.lt-host .lt-empty {
   position: absolute;
   inset: 0;
   display: grid;
@@ -230,9 +183,10 @@
   color: var(--text-dim);
   font-family: var(--font-ui);
   font-size: 13px;
+  pointer-events: none;
 }
 
-.new-lines {
+.lt-host .new-lines {
   position: absolute;
   right: 26px;
   bottom: 22px;
@@ -245,12 +199,12 @@
   box-shadow: 0 2px 8px rgb(0 0 0 / 35%);
 }
 
-.new-lines:hover {
+.lt-host .new-lines:hover {
   background: var(--accent);
   filter: brightness(1.1);
 }
 
-.new-lines.quiet {
+.lt-host .new-lines.quiet {
   background: var(--bg-raised);
   color: var(--text);
   border-color: var(--border);

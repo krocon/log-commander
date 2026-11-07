@@ -5,7 +5,6 @@ export type ThemeChoice = 'system' | 'dark' | 'light';
 export interface Settings {
   theme: ThemeChoice;
   fontSize: number;
-  wrapLines: boolean;
   showLineNumbers: boolean;
   /** After a rotation: keep the old file's lines above the new ones, or start over. */
   keepOnRotate: boolean;
@@ -18,7 +17,6 @@ export interface Settings {
 export const DEFAULT_SETTINGS: Settings = {
   theme: 'system',
   fontSize: 13,
-  wrapLines: false,
   showLineNumbers: true,
   keepOnRotate: true,
   colorOverrides: {},
@@ -45,9 +43,13 @@ export const COLOR_TOKENS: readonly { token: string; level: Level | null; label:
   { token: 'lv-fatal-bg', level: 'FATAL', label: 'FATAL Hintergrund' },
 ];
 
+const LEGACY_KEYS = ['wrapLines', 'tableView'] as const;
+
 /** Forgiving merge: unknown or broken values in the store fall back to the defaults. */
 export function mergeSettings(saved: Partial<Settings> | null | undefined): Settings {
   const merged: Settings = { ...DEFAULT_SETTINGS, ...(saved ?? {}) };
+  // Gone with the own viewport (prompt 003): no wrapping, the table is the only view.
+  for (const key of LEGACY_KEYS) delete (merged as unknown as Record<string, unknown>)[key];
   if (!['system', 'dark', 'light'].includes(merged.theme)) merged.theme = DEFAULT_SETTINGS.theme;
   const size = Number(merged.fontSize);
   merged.fontSize = Number.isFinite(size)

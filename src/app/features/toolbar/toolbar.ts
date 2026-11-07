@@ -154,14 +154,6 @@ const SEARCH_DEBOUNCE_MS = 200;
           </option>
         }
       </select>
-      <button
-        type="button"
-        title="Zeilen umbrechen"
-        [attr.aria-pressed]="settings().wrapLines"
-        (click)="toggleWrap()"
-      >
-        ⏎
-      </button>
       <button type="button" title="Schrift kleiner" (click)="changeFont(-1)">A−</button>
       <button type="button" title="Schrift größer" (click)="changeFont(1)">A+</button>
       <button type="button" [title]="'Theme: ' + themeLabel()" (click)="cycleTheme()">◐</button>
@@ -400,10 +392,6 @@ export class ToolbarComponent implements OnInit, OnDestroy {
   protected onProfile(event: Event): void {
     const session = this.session();
     if (session) void this.sessions.setProfile(session, (event.target as HTMLSelectElement).value);
-  }
-
-  protected toggleWrap(): void {
-    this.settingsService.update({ wrapLines: !this.settings().wrapLines });
   }
 
   protected changeFont(step: number): void {

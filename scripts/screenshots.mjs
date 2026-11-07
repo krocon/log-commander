@@ -50,7 +50,7 @@ async function page(browser, { theme, withFiles = true }) {
     recent: ['/var/log/shop/app.log', '/srv/worker/worker.log', '/var/log/nginx/error.log'],
   });
   await p.goto(url);
-  await p.waitForSelector(withFiles ? '.row' : 'app-start-screen');
+  await p.waitForSelector(withFiles ? '.lt-cell' : 'app-start-screen');
   await p.waitForTimeout(200);
   return p;
 }

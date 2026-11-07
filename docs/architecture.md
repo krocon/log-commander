@@ -7,8 +7,8 @@ Entscheidungen, nicht Wünsche. Geplantes steht in `docs/roadmap.md` und in `pro
 
 ```
 ┌──────────────── WebView (Angular 22, zoneless, Signals) ──────────────┐
-│  App ── Tabs, Toolbar, LogView, StatusBar, Dialoge                    │
-│   │      LogView: eigener Viewport (Zeile + Pixel-Offset)             │
+│  App ── Tabs, Toolbar, LogTableView, StatusBar, Dialoge               │
+│   │      LogTableView: GuiExpert Table, Zeile + Pixel-Offset          │
 │  LogSessionService (Root) ── Tabs, Aktionen, Fehleranzeige            │
 │   └ SessionState je Tab ── update, Filter, Scroll, Auswahl,           │
 │       displayedLines, PageCache (Seiten zu 200 Zeilen, max. 64)       │
@@ -52,7 +52,7 @@ Entscheidungen, nicht Wünsche. Geplantes steht in `docs/roadmap.md` und in `pro
 | Thema | Entscheidung | Begründung |
 |---|---|---|
 | Text im Speicher | Nein. Nur ein Index mit 16 Byte je Zeile, der Text wird bei Bedarf aus der Datei gelesen | Dateien mit vielen GB bleiben offen- und scrollbar. Grenze 2³² Zeilen je Sitzung (Index dann 64 GB). |
-| Viewport | Eigene Implementierung, Position = Zeile + Pixel-Offset, die native Scrollleiste bildet nur einen Bruchteil ab (`viewport-logic.ts`, höchstens 8 Mio. px) | CDK und Tabellen machen ein Element so hoch wie alle Zeilen (Browser-Limit etwa 33 Mio. px). Erlaubt variable Höhen beim Umbruch. Abwägung zur GuiExpert Table: `prompts/003-gui-expert-table.md`. |
+| Ansicht | GuiExpert Table (`log-table-view.ts`, `LogAreaModel`), eigenes Scroll-Modell: Position = Zeile + Pixel-Offset (`viewport-logic.ts`), die Tabelle zeichnet sie mit `repaintHard({ px, py })` bzw. `scrollToPixel`. Feste Zeilenhöhe, kein Umbruch, Ziehen an der Scrollleiste wird auf eine Zeile umgerechnet | Die Tabelle kappt die Scrollhöhe bei 8 Mio. px; mit dem eigenen Modell wandert die Ansicht beim Anhängen nicht. Messwerte: `prompts/done/003-gui-expert-table.design.md`. |
 | Gezeichnet wird, was da ist | `displayedLines` trennt den Stand der Ansicht vom Stand des Backends. Der Tail rückt erst vor, wenn das neue Ende im `PageCache` liegt | Sonst blitzt je Update die Fläche ohne Level-Farbe auf. Prompt 001. |
 | Virtuelle Offsets | Jede Datei einer Sitzung (vor und nach Rotation) belegt einen eigenen Offset-Bereich (`Segment`), der Handle bleibt offen, höchstens 32 Dateien | Zeilennummern bleiben bei „alte Zeilen behalten“ gültig, und das Lesen braucht keinen Pfad. |
 | Gefilterte Ansicht | `FilteredLines`: bei Identität keine Liste, sonst `Vec<u32>` der Zeilennummern. Im Tail inkrementell, bei Filterwechsel neu per Job | Positionen in der Ansicht sind Indizes in die Liste, Suche und Kopieren arbeiten darauf. |

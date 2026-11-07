@@ -16,6 +16,11 @@ describe('settings', () => {
     expect(broken.colorOverrides).toEqual({});
   });
 
+  it('drops the settings of the removed own viewport', () => {
+    const merged = mergeSettings({ wrapLines: true, tableView: true } as never);
+    expect(merged).toEqual(DEFAULT_SETTINGS);
+  });
+
   it('limits the font size', () => {
     expect(mergeSettings({ fontSize: 500 }).fontSize).toBe(24);
     expect(mergeSettings({ fontSize: 1 }).fontSize).toBe(9);

@@ -1,6 +1,6 @@
 # Prompt 003: Log-Ansicht auf GuiExpert Table umstellen
 
-> Start in neuer Sitzung: „Lies `prompts/000-analyse-flackern-freeze-tabelle.md` und führe `prompts/003-gui-expert-table.md` aus.“
+> Start in neuer Sitzung: „Lies `prompts/000-analyse-flackern-freeze-tabelle.md` und führe `prompts/done/003-gui-expert-table.md` aus.“
 > Voraussetzung: 001 ist umgesetzt. **Erst nach dem Sichttest von 001 entscheiden, ob dieser Prompt noch gewollt ist.**
 > Nach Abschluss: Prompt nach `prompts/done/` verschieben.
 
@@ -44,7 +44,7 @@ und mit `npm run demo:log` gegen das echte Backend laufen lassen. Nacheinander m
 4. Bundle-Größe vorher und nachher (`npm run build`), CSP in `tauri.conf.json` (`style-src`).
 5. Vergleich mit dem Viewport aus 001: Scrollen per Rad und Balken, Speicher, CPU.
 
-Ergebnis ist `prompts/003-gui-expert-table.design.md` mit den Messwerten, einer Tabelle „Blocker → Lösung → Aufwand →
+Ergebnis ist `prompts/done/003-gui-expert-table.design.md` mit den Messwerten, einer Tabelle „Blocker → Lösung → Aufwand →
 Core-Änderung ja/nein“ und einer Empfehlung für oder gegen den Umbau. **Danach anhalten und die Entscheidung einholen.** Vor
 allem zum Zeilenumbruch muss Marc entscheiden. Ein negatives Ergebnis ist ein gültiges Ergebnis.
 

@@ -68,7 +68,7 @@ Sortieren, Filtern aus der Kopfzeile (kommt mit 010), feste (angepinnte) Spalten
 - [ ] Kopfzeile und Zellen bleiben beim horizontalen Scrollen, Umbruch und Fenster-Änderung bündig
 - [ ] Layout überlebt Neustart, je Profil getrennt
 - [ ] Keine Verschlechterung der Rohansicht
-- [ ] Screenshots erneuert, `README.md`, `CLAUDE.md` (Entscheidung zum Viewport), `docs/roadmap.md` (Spaltenansicht) und Kopf von `prompts/003-gui-expert-table.md` (Spalten erledigt, Nutzen neu bewerten) angepasst
+- [ ] Screenshots erneuert, `README.md`, `CLAUDE.md` (Entscheidung zum Viewport), `docs/roadmap.md` (Spaltenansicht) und Kopf von `prompts/done/003-gui-expert-table.md` (Spalten erledigt, Nutzen neu bewerten) angepasst
 - [ ] Sichttest mit `npm run demo:log` und `npm run demo:app`, sonst im Bericht als offen genannt
 
 Kein Commit ohne Rückfrage.

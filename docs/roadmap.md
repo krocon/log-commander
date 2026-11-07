@@ -8,14 +8,16 @@ Architektur verbaut nichts davon.
 - Live Tail, Autoscroll-Steuerung, Freeze je Tab, Rotation und Truncation, Chunk-basiertes Nachladen
 - Format-Erkennung (JSON, Log4j/Logback, nginx/Apache, Syslog), Multi-Line-Blöcke beim Filtern
 - Level-Chips, Volltextsuche mit Regex, Groß-/Kleinschreibung, Match-Highlighting, Farbcodierung nach Level
+- Log-Ansicht auf der GuiExpert Table (Prompt 003), feste Zeilenhöhe, kein Umbruch
 
 ## Offen
 
 **Dateien:** Rotierte Archive als durchgehende Timeline, `.gz`/`.zip`/`.zst` lesen, Merge-View nach Zeitstempel, Ordner/Glob
 beobachten, Remote-Logs über SSH, `stdin`/Pipe-Modus.
 
-**Struktur:** Feld-Extraktion und Spaltenansicht (dafür passt die GuiExpert Table, sobald die Zeilenzahl der Ansicht klein
-genug ist oder die Tabelle Scroll-Skalierung bekommt), W3C- und Common-Log-Format, einklappbare Stacktraces.
+**Struktur:** Feld-Extraktion und Spaltenansicht (auf der GuiExpert Table, seit Prompt 003 die einzige Ansicht),
+W3C- und Common-Log-Format, einklappbare Stacktraces, Zeilenumbruch als Folgezeilen fester Höhe (eine Logzeile belegt
+mehrere Tabellenzeilen; braucht eine Zeilen-zu-Bildschirmzeilen-Liste im Backend, neu je Breite und Schrift).
 
 **Filter:** Feld-Filter (Klasse, Thread, Mandant), Query-DSL (`level:ERROR AND NOT "x"`), Zeitfenster, eigene Regex-Marker,
 persistente Lesezeichen und Notizen.
