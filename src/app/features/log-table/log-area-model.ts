@@ -193,6 +193,7 @@ export class LogAreaModel extends AreaModel {
     const classes = rowClasses(line, session.selection(), session.currentHitLine());
     if (columnIndex === COL_NUMBER) {
       classes.push('lt-gutter');
+      if (line && session.bookmarks().has(line.line)) classes.push('bookmark');
       if (line && session.isMerge) classes.push('lt-src', `src-${sourceColor(line.source)}`);
       return classes;
     }

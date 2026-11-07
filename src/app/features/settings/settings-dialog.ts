@@ -63,6 +63,14 @@ import { draftFromInference, parseLayouts } from '../sessions/format-logic';
             />
             Zeilennummern anzeigen
           </label>
+          <label class="check">
+            <input
+              type="checkbox"
+              [checked]="settings().showOverviewRuler"
+              (change)="setCheck('showOverviewRuler', $event)"
+            />
+            Übersichtsleiste rechts (Fehler, Warnungen, Lesezeichen)
+          </label>
         </section>
 
         <section>
@@ -359,7 +367,7 @@ export class SettingsDialogComponent implements OnInit {
     this.settingsService.update({ fontSize: Number((event.target as HTMLInputElement).value) });
   }
 
-  protected setCheck(key: 'showLineNumbers', event: Event): void {
+  protected setCheck(key: 'showLineNumbers' | 'showOverviewRuler', event: Event): void {
     this.settingsService.update({ [key]: (event.target as HTMLInputElement).checked });
   }
 

@@ -22,6 +22,10 @@ Architektur verbaut nichts davon.
   Farbe), Quellenfilter als Chips, Quelldateien im Baum und in der Statistik, live mit 1 s Haltepuffer, verspätete
   Zeilen gezählt, „Neu sortieren“
 
+- Overview Ruler und Navigation (Prompt 007): Leiste rechts mit Fehlern, Warnungen, Lesezeichen, Auswahl und
+  sichtbarem Bereich, Klick springt; `E`/`W` nächster Fehler bzw. Warnung, `M`/`N` Lesezeichen (nur im Speicher), `G`
+  aus dem Filter ins Gesamtlog und zurück
+
 ## Offen
 
 **Dateien:** Rotierte Archive als durchgehende Timeline, `.gz`/`.zip`/`.zst` lesen, Ordner/Glob
@@ -38,6 +42,10 @@ mehrere Tabellenzeilen; braucht eine Zeilen-zu-Bildschirmzeilen-Liste im Backend
 
 **Seitenleiste:** verschachtelte Filter als Baum (010), Thread/Logger als Knoten und Statistik-Zeilen (011),
 Zeitfilter (006/014), Tortendiagramme, Lesezeichen und Notizen.
+
+**Overview Ruler (Nachfragen zu 007):** Treffer der Suche im Ruler (im Highlight-Modus nur mit Textscan, eigener
+Hintergrund-Job), Anzahlen je Marke im Tooltip (heute Level und Zeilenbereich, die Zusammenfassung kennt nur Bits),
+Ziehen im Ruler, Mini-Vorschau beim Hover, eigene Regex-Marker.
 
 **Filter:** Feld-Filter (Klasse, Thread, Mandant), Query-DSL (`level:ERROR AND NOT "x"`), Zeitfenster, eigene Regex-Marker,
 persistente Lesezeichen und Notizen.

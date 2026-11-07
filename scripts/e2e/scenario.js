@@ -507,6 +507,118 @@
     await waitFor('D closes the panel', () => !panel() && detailButton().getAttribute('aria-pressed') === 'false');
     press('Escape');
 
+    // Overview ruler and navigation (prompt 007). The canvas is not read: marks and pins come as data
+    // attributes (`LEVEL:y` and `kind:line:y`, y in px from the top of the track).
+    const ruler = () => $('app-overview-ruler');
+    const track = () => ruler().querySelector('.track');
+    const rulerMarks = () =>
+      (ruler().dataset.marks || '').split(',').filter(Boolean).map((m) => {
+        const [level, y] = m.split(':');
+        return { level, y: Number(y) };
+      });
+    const pins = () =>
+      (ruler().dataset.pins || '').split(',').filter(Boolean).map((p) => {
+        const [kind, line, y] = p.split(':');
+        return { kind, line: Number(line), y: Number(y) };
+      });
+    const pin = (kind) => pins().find((p) => p.kind === kind);
+    const clickRuler = (y) => {
+      const box = track().getBoundingClientRect();
+      track().dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: box.left + 7, clientY: box.top + y }));
+    };
+    const lineInView = (line) => inView($$('.lt-gutter')).some((g) => Number(g.dataset.line) === line);
+    const errorHeadInView = () => rows().some((r) => r.classList.contains('lv-ERROR') && !r.classList.contains('cont'));
+    await waitFor('ruler shows the view with its error marks', () =>
+      ruler() && Number(ruler().dataset.count) > 700 && rulerMarks().some((m) => m.level === 'ERROR') &&
+      rulerMarks().some((m) => m.level === 'FATAL') && track().getAttribute('aria-hidden') === 'true',
+    );
+    await waitFor('ruler button "Ans Ende" is pressed while following', () =>
+      ruler().querySelector('button.to-end').getAttribute('aria-pressed') === 'true',
+    );
+    press('Home');
+    await waitFor('home again', () => rowTexts()[0]?.includes('Starting ShopApplication'));
+    click(rows()[0]);
+    await waitFor('selection shows on the ruler', () => pin('selection')?.line === 0);
+    press('m');
+    await waitFor('M sets a bookmark: flag in the gutter and on the ruler', () =>
+      $('.lt-gutter.bookmark')?.dataset.line === '0' && pin('bookmark')?.line === 0,
+    );
+    press('e');
+    // The first error is on screen already: the jump keeps the top line, give its answer time to arrive.
+    await sleep(300);
+    await waitFor('E goes to the first error, the view stays at the top', () => errorHeadInView() && topLine() === 0);
+    press('e');
+    await waitFor('E again: the FATAL entry, below the stack trace', () =>
+      topLine() === 9 && rows().some((r) => r.classList.contains('lv-FATAL')),
+    );
+    press('e');
+    await waitFor('and on to the error appended later', () => rowTexts().some((t) => t.includes('after the filter')));
+    press('E', { shiftKey: true });
+    await waitFor('Shift+E goes back', () => topLine() === 9);
+    press('W', { shiftKey: true });
+    await waitFor('Shift+W: the warning before', () => rows().some((r) => r.classList.contains('lv-WARN')) && topLine() === 0);
+    await waitFor('jumps leave the selection alone', () =>
+      pin('selection')?.line === 0 && $('.lt-gutter.selected')?.dataset.line === '0',
+    );
+    press('End');
+    await waitFor('following again', () => status().includes('Live'));
+    const lastError = rulerMarks().filter((m) => m.level === 'ERROR').at(-1);
+    clickRuler(lastError.y);
+    await waitFor('a click on an error mark shows its entry', () =>
+      rowTexts().some((t) => t.includes('after the filter')) && status().includes('Pausiert'),
+    );
+    await waitFor('the click leaves the selection alone', () => pin('selection')?.line === 0);
+    clickRuler(2);
+    await waitFor('a click near the top goes there', () => topLine() < 10);
+    press('End');
+    await waitFor('following once more', () => status().includes('Live'));
+    press('n');
+    await waitFor('N wraps around to the bookmark', () =>
+      rowTexts()[0]?.includes('Starting ShopApplication') && $('.find-message')?.textContent.includes('fortgesetzt'),
+    );
+    // A filter on ERROR lays the marks out again, positions are those of the view.
+    const generation = Number(ruler().dataset.generation);
+    click(chip('ERROR'), { altKey: true });
+    await waitFor('ERROR filter: the ruler shows the view, only error marks', () =>
+      Number(ruler().dataset.generation) > generation && Number(ruler().dataset.count) === 9 &&
+      rulerMarks().length > 0 && rulerMarks().every((m) => m.level === 'ERROR'),
+    );
+    await waitFor('the hidden bookmark stays on the ruler', () => pin('bookmark')?.line === 0);
+    await waitFor('error rows in the filter', () => rows().some((r) => r.textContent.includes('after the filter')));
+    const revealRow = rows().find((r) => r.textContent.includes('after the filter'));
+    const revealed = Number(revealRow.dataset.line);
+    click(revealRow);
+    await waitFor('selected in the filter', () => pin('selection')?.line === revealed && button('⇱ Im Gesamtlog'));
+    press('g');
+    await waitFor('G shows the selected line in the whole log', () =>
+      !status().includes(' von ') && lineInView(revealed) && button('↩ Zurück zum Filter') &&
+      chip('INFO').getAttribute('aria-pressed') === 'true',
+    );
+    await waitFor('the selection is the same', () => pin('selection')?.line === revealed);
+    press('g');
+    await waitFor('G again: back to the filter, the line in view', () =>
+      status().includes(' von ') && Number(ruler().dataset.count) === 9 && lineInView(revealed) &&
+      chip('INFO').getAttribute('aria-pressed') === 'false' && !button('↩ Zurück zum Filter'),
+    );
+    await waitFor('the selection is still the same', () => pin('selection')?.line === revealed);
+    click(button('⇱ Im Gesamtlog'));
+    await waitFor('the button does the same', () => button('↩ Zurück zum Filter') && lineInView(revealed));
+    click(button('Alle'));
+    await waitFor('a filter set by hand forgets the kept one', () =>
+      !button('↩ Zurück zum Filter') && !status().includes(' von '),
+    );
+    press('Escape');
+    press('End');
+    await waitFor('following', () => status().includes('Live'));
+    // The ruler during the tail: it keeps up and the button stays pressed.
+    const rulerCount = Number(ruler().dataset.count);
+    await act('bulk 300');
+    await waitFor('the ruler follows the tail', () =>
+      Number(ruler().dataset.count) >= rulerCount + 300 &&
+      ruler().querySelector('button.to-end').getAttribute('aria-pressed') === 'true',
+    );
+    await waitFor('the bookmark stays while the file grows', () => pin('bookmark')?.line === 0);
+
     // Font size.
     const fontOf = () => getComputedStyle($('app-log-table-view .lt-table')).fontSize;
     const before = fontOf();
@@ -518,6 +630,7 @@
     press('End');
     await act('truncate');
     await waitFor('truncation empties the view', () => status().match(/\b0 Zeilen/) && $('.lt-empty'));
+    await waitFor('a new epoch clears the bookmarks', () => !pin('bookmark') && !$('.lt-gutter.bookmark'));
     await act('append 2026-01-15T10:03:00.000+01:00  WARN 4711 --- [t] a.B : after truncate');
     await waitFor('reads on after truncation', () => rowTexts().some((t) => t.includes('after truncate')));
     await act('rotate 2026-01-15T10:04:00.000+01:00 ERROR 4711 --- [t] a.B : first in new file');

@@ -1,6 +1,7 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { LogApi } from '../../core/log/log-api';
 import {
+  FilterInfo,
   Level,
   MergeSourceSpec,
   Profile,
@@ -13,6 +14,11 @@ import { mergeKey, maskForBackend } from '../merge/merge-logic';
 import { AppError, describeError, toAppError } from '../../core/errors/app-error';
 import { SettingsService } from '../../core/settings/settings.service';
 import { SessionState } from './session-state';
+import { fullLogOf, nextBookmark, toggleBookmark } from './navigation-logic';
+
+/** Levels `E` and `W` jump to: errors, or warnings and worse. */
+const ERROR_LEVELS: readonly Level[] = ['ERROR', 'FATAL'];
+const WARN_LEVELS: readonly Level[] = ['WARN', 'ERROR', 'FATAL'];
 
 const ERROR_VISIBLE_MS = 7000;
 const FIND_MESSAGE_MS = 2500;
@@ -193,9 +199,14 @@ export class LogSessionService {
     await this.applyFilter(session);
   }
 
-  private async applyFilter(session: SessionState): Promise<void> {
+  /**
+   * Sends the tab's filter to the backend. A filter set by hand forgets the one `revealInFullLog` kept;
+   * `keep` is for that way and back.
+   */
+  private async applyFilter(session: SessionState, keep = false): Promise<FilterInfo | null> {
+    if (!keep) session.keptFilter.set(null);
     try {
-      await this.api.setFilter(
+      const info = await this.api.setFilter(
         session.id,
         [...session.levels()],
         session.query(),
@@ -203,10 +214,159 @@ export class LogSessionService {
         maskForBackend(session.sourceMask(), session.sources.length),
       );
       session.searchError.set(null);
+      return info;
     } catch (e) {
       const err = toAppError(e);
       if (err.code === 'invalid_search') session.searchError.set(err.message);
       else this.showError(err);
+      return null;
+    }
+  }
+
+  /**
+   * The selected line in the whole log (prompt 007, `G`): levels, sources and a filtering search are lifted
+   * in one filter call (the search stays as highlighting), the filter is kept for `returnToFilter`. The
+   * selection stays; the scroll waits for the new view (`pendingReveal`).
+   */
+  async revealInFullLog(session: SessionState): Promise<void> {
+    const selection = session.selection();
+    if (!selection) {
+      this.showFindMessage(session, 'Keine Zeile gewählt');
+      return;
+    }
+    if (!session.filterActive()) {
+      this.showFindMessage(session, 'Kein Filter aktiv');
+      return;
+    }
+    const kept = {
+      levels: session.levels(),
+      query: session.query(),
+      mode: session.searchMode(),
+      sourceMask: session.sourceMask(),
+    };
+    await this.switchFilter(session, fullLogOf(kept), selection.anchor);
+    session.keptFilter.set(kept);
+  }
+
+  /** Back to the filter `revealInFullLog` kept, showing the selected line if the filter has it. */
+  async returnToFilter(session: SessionState): Promise<void> {
+    const kept = session.keptFilter();
+    if (!kept) return;
+    session.keptFilter.set(null);
+    await this.switchFilter(session, kept, session.selection()?.anchor ?? null);
+  }
+
+  /** `G`: to the whole log, or back to the kept filter. */
+  async toggleFullLog(session: SessionState): Promise<void> {
+    if (session.keptFilter()) await this.returnToFilter(session);
+    else await this.revealInFullLog(session);
+  }
+
+  private async switchFilter(
+    session: SessionState,
+    filter: {
+      levels: ReadonlySet<Level>;
+      query: SearchQuery;
+      mode: SearchMode;
+      sourceMask: number;
+    },
+    reveal: number | null,
+  ): Promise<void> {
+    session.levels.set(filter.levels);
+    session.query.set(filter.query);
+    session.searchMode.set(filter.mode);
+    session.sourceMask.set(filter.sourceMask);
+    session.presetRevision.update((r) => r + 1);
+    if (reveal !== null) {
+      session.setFollow(false);
+      session.pendingReveal = reveal;
+    }
+    const info = await this.applyFilter(session, true);
+    // The update with the new view may have come first and shown the line already.
+    if (session.pendingReveal === reveal && reveal !== null) {
+      if (!info) session.pendingReveal = null;
+      else if (session.update().viewGeneration === info.viewGeneration) session.revealPending();
+    }
+  }
+
+  /** `E`/`W`: next (previous) entry of errors, or of warnings and worse, in the view; the selection stays. */
+  async jumpToLevel(
+    session: SessionState,
+    kind: 'error' | 'warn',
+    forward: boolean,
+  ): Promise<void> {
+    const mark = session.jumpMark;
+    const scroll = session.scroll();
+    let from: number | null;
+    if (mark && mark.scroll === scroll) from = mark.position;
+    else if (forward) from = scroll.top > 0 ? scroll.top - 1 : null;
+    else from = scroll.top;
+    try {
+      const hit = await this.api.findLevel(
+        session.id,
+        from,
+        forward,
+        kind === 'error' ? ERROR_LEVELS : WARN_LEVELS,
+      );
+      if (!hit) {
+        this.showFindMessage(
+          session,
+          kind === 'error' ? 'Keine Fehler in der Ansicht' : 'Keine Warnungen in der Ansicht',
+        );
+        return;
+      }
+      session.jumpTo(hit.position, hit.line);
+      this.showFindMessage(session, hit.wrapped ? wrappedText(forward) : null);
+    } catch (e) {
+      this.showError(toAppError(e));
+    }
+  }
+
+  /** A position from the overview ruler (or a mark's entry), the selection stays. */
+  async jumpToRulerLevel(
+    session: SessionState,
+    from: number | null,
+    levels: readonly Level[],
+    fallback: number,
+  ): Promise<void> {
+    try {
+      const hit = await this.api.findLevel(session.id, from, true, levels);
+      if (hit) session.jumpTo(hit.position, hit.line);
+      else session.jumpTo(fallback, null);
+    } catch (e) {
+      this.showError(toAppError(e));
+    }
+  }
+
+  /** `M`: bookmark on the head of the selected entry, or off again. */
+  toggleBookmark(session: SessionState): void {
+    const selection = session.selection();
+    if (!selection) {
+      this.showFindMessage(session, 'Keine Zeile gewählt');
+      return;
+    }
+    const had = session.bookmarks().has(selection.anchor);
+    session.bookmarks.set(toggleBookmark(session.bookmarks(), selection.anchor));
+    this.showFindMessage(session, had ? 'Lesezeichen entfernt' : 'Lesezeichen gesetzt');
+  }
+
+  /** `N`/`Shift+N`: next (previous) bookmark, from the last jump or the top of the view. */
+  async jumpToBookmark(session: SessionState, forward: boolean): Promise<void> {
+    const mark = session.jumpMark;
+    const exact = mark !== null && mark.scroll === session.scroll() && mark.line !== null;
+    const from =
+      exact && mark ? mark.line : (session.cache.line(session.scroll().top)?.line ?? null);
+    const next = nextBookmark(session.bookmarks(), from, forward, !exact && forward);
+    if (!next) {
+      this.showFindMessage(session, 'Keine Lesezeichen');
+      return;
+    }
+    try {
+      const position = await this.api.getPosition(session.id, next.line);
+      session.jumpTo(position, next.line);
+      this.showFindMessage(session, next.wrapped ? wrappedText(forward) : null);
+    } catch (e) {
+      this.showError(toAppError(e));
     }
   }
 
@@ -251,7 +411,7 @@ export class LogSessionService {
     }
   }
 
-  private showFindMessage(session: SessionState, message: string | null): void {
+  showFindMessage(session: SessionState, message: string | null): void {
     session.findMessage.set(message);
     if (message) {
       setTimeout(() => {
@@ -302,6 +462,10 @@ export class LogSessionService {
     if (this.errorTimer) clearTimeout(this.errorTimer);
     this.errorTimer = setTimeout(() => this.error.set(null), ERROR_VISIBLE_MS);
   }
+}
+
+function wrappedText(forward: boolean): string {
+  return forward ? 'Von vorn fortgesetzt' : 'Von hinten fortgesetzt';
 }
 
 async function writeClipboard(text: string): Promise<void> {

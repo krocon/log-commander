@@ -56,7 +56,11 @@ async function page(browser, { theme, withFiles = true }) {
 }
 
 const browser = await webkit.launch();
-const shot = (p, name) => p.screenshot({ path: join(outDir, `${name}.png`) });
+// The overview ruler loads at most twice a second (prompt 007): give it that time before each picture.
+const shot = async (p, name) => {
+  await p.waitForTimeout(600);
+  await p.screenshot({ path: join(outDir, `${name}.png`) });
+};
 
 const dark = await page(browser, { theme: 'dark' });
 await dark.click('.tab .title >> text=app.log');

@@ -83,6 +83,25 @@ import { EntryKey, lineRangeLabel, needsReload } from './detail-logic';
       >
         ↵ Umbruch
       </button>
+      @if (session().keptFilter()) {
+        <button
+          type="button"
+          class="full-log"
+          title="Zurück zum gemerkten Filter (G)"
+          (click)="toggleFullLog()"
+        >
+          ↩ Zurück zum Filter
+        </button>
+      } @else if (session().filterActive() && session().selection()) {
+        <button
+          type="button"
+          class="full-log"
+          title="Diese Zeile im ungefilterten Log zeigen, der Filter wird gemerkt (G)"
+          (click)="toggleFullLog()"
+        >
+          ⇱ Im Gesamtlog
+        </button>
+      }
       <button type="button" title="Ganzen Eintrag kopieren" [disabled]="!entry()" (click)="copy()">
         Kopieren
       </button>
@@ -435,6 +454,10 @@ export class DetailPanelComponent {
 
   protected toggleWrap(): void {
     this.settingsService.update({ detailWrap: !this.wrap() });
+  }
+
+  protected toggleFullLog(): void {
+    void this.sessions.toggleFullLog(this.session());
   }
 
   protected copy(): void {

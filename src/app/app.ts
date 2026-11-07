@@ -21,6 +21,7 @@ import { SettingsService } from './core/settings/settings.service';
 import { DetailPanelComponent } from './features/detail/detail-panel';
 import { PANEL_MIN, panelHeight, panelMax } from './features/detail/detail-logic';
 import { LogTableViewComponent } from './features/log-table/log-table-view';
+import { OverviewRulerComponent } from './features/log-table/overview-ruler';
 import { MergeDialogComponent } from './features/merge/merge-dialog';
 import { OpenPathDialogComponent } from './features/open-path/open-path-dialog';
 import { LogSessionService } from './features/sessions/log-session.service';
@@ -42,6 +43,7 @@ import { SplitterComponent } from './shared/splitter';
     LogTableViewComponent,
     MergeDialogComponent,
     OpenPathDialogComponent,
+    OverviewRulerComponent,
     SettingsDialogComponent,
     SidebarComponent,
     StartScreenComponent,
@@ -76,7 +78,12 @@ import { SplitterComponent } from './shared/splitter';
           />
         }
         <div class="column">
-          <app-log-table-view class="log" [session]="session" />
+          <div class="log-row">
+            <app-log-table-view class="log" [session]="session" />
+            @if (settings.settings().showOverviewRuler) {
+              <app-overview-ruler [session]="session" />
+            }
+          </div>
           @if (panelH() > 0) {
             <app-splitter
               orientation="horizontal"
@@ -147,9 +154,14 @@ import { SplitterComponent } from './shared/splitter';
       display: flex;
       flex-direction: column;
     }
-    .log {
+    .log-row {
       flex: 1 1 0;
       min-height: 0;
+      display: flex;
+    }
+    .log {
+      flex: 1 1 0;
+      min-width: 0;
     }
     app-detail-panel {
       flex: none;

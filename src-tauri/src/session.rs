@@ -14,9 +14,10 @@ use crate::indexer::{
 use crate::level::{Level, LevelDetector, PrevLine};
 use crate::merge::{MergeSource, MergeWorker};
 use crate::model::{
-    ColumnSet, EntryDetail, EntryRange, FilterInfo, FindHit, LogLine, SessionInfo, SessionUpdate,
-    SourceInfo, SourceUpdate, Status,
+    ColumnSet, EntryDetail, EntryRange, FilterInfo, FindHit, LogLine, Overview, OverviewMark,
+    SessionInfo, SessionUpdate, SourceInfo, SourceUpdate, Status,
 };
+use crate::overview::{level_bit, LevelSummary};
 use crate::platform::open_shared;
 use crate::profile::{Profile, ProfileRegistry};
 use crate::tail::Tailer;
@@ -41,6 +42,10 @@ const MAX_COPY_LINES: usize = 1_000_000;
 const MAX_COPY_BYTES: usize = 256 * 1024 * 1024;
 /// An entry longer than this is not a stack trace; selecting it stops here.
 const MAX_ENTRY_WALK: usize = 100_000;
+/// Pixel buckets of the overview ruler (its height in CSS pixels).
+pub const MAX_OVERVIEW_BUCKETS: usize = 8192;
+/// Lines (selection and bookmarks) whose position the overview reports.
+pub const MAX_OVERVIEW_LINES: usize = 10_000;
 
 pub type UpdateSink = Box<dyn Fn(SessionUpdate) + Send + Sync>;
 
@@ -703,6 +708,74 @@ impl LogSession {
         Ok(None)
     }
 
+    /// Levels per pixel bucket of the current view plus where the given lines are (prompt 007). Reads
+    /// the running summary only, no line: a short read lock.
+    pub fn overview(&self, buckets: usize, lines: &[u32]) -> AppResult<Overview> {
+        if buckets > MAX_OVERVIEW_BUCKETS || lines.len() > MAX_OVERVIEW_LINES {
+            return Err(AppError::new(
+                ErrorCode::TooLarge,
+                format!(
+                    "at most {MAX_OVERVIEW_BUCKETS} buckets and {MAX_OVERVIEW_LINES} lines per overview"
+                ),
+            ));
+        }
+        let data = self.shared.data.read();
+        let total = data.index.len();
+        let count = data.filter.len(total);
+        let summary = data.filter.summary().unwrap_or(&data.index.summary);
+        let marks = lines
+            .iter()
+            .map(|&line| {
+                let position = data.filter.position_of(line, total);
+                OverviewMark {
+                    line,
+                    position: position as u32,
+                    visible: data.filter.line_at(position, total) == Some(line),
+                }
+            })
+            .collect();
+        Ok(Overview {
+            view_generation: data.view_generation,
+            epoch: data.epoch,
+            count: count as u64,
+            buckets: summary.buckets(count as u64, buckets),
+            marks,
+        })
+    }
+
+    /// Next (or previous) entry head of one of `levels` in the current view, strictly after (before)
+    /// `from_position` or from the start (end), wrapping around once. Chunks of the summary without
+    /// such a level are skipped, no text is read. Continuations do not count: a stack trace is one hit.
+    pub fn find_level(
+        &self,
+        from_position: Option<u32>,
+        forward: bool,
+        levels: &[Level],
+    ) -> Option<FindHit> {
+        let mask = levels.iter().fold(0u8, |m, l| m | level_bit(*l));
+        if mask == 0 {
+            return None;
+        }
+        let data = self.shared.data.read();
+        let total = data.index.len();
+        let count = data.filter.len(total) as u64;
+        let summary = data.filter.summary().unwrap_or(&data.index.summary);
+        let (position, wrapped) =
+            summary.find(count, from_position.map(u64::from), forward, mask, |p| {
+                let Some(line) = data.filter.line_at(p as usize, total) else {
+                    return false;
+                };
+                let entry = data.index.entries[line as usize];
+                (line == 0 || !entry.is_continuation()) && mask & level_bit(entry.level()) != 0
+            })?;
+        let line = data.filter.line_at(position as usize, total)?;
+        Some(FindHit {
+            line,
+            position: position as u32,
+            wrapped,
+        })
+    }
+
     /// Position of a line in the filtered view (or of the next visible line after it).
     pub fn position_of_line(&self, line: u32) -> u32 {
         let data = self.shared.data.read();
@@ -922,6 +995,8 @@ fn run_relevel(shared: &Shared, generation: u64) -> bool {
     let mut reader = LineReader::new(segments, SCAN_BLOCK);
     let mut prev = PrevLine::default();
     let mut position = 0usize;
+    // The summary of the index cannot take back old levels: a new one grows alongside and is swapped in.
+    let mut summary = LevelSummary::new();
     loop {
         if !is_current(shared, generation) {
             return false;
@@ -940,6 +1015,13 @@ fn run_relevel(shared: &Shared, generation: u64) -> bool {
             let mut data = shared.data.write();
             if data.epoch == epoch {
                 data.prev = prev;
+                // Lines that came in meanwhile already carry the new levels.
+                let len = data.index.len();
+                summary.truncate(len as u64);
+                for entry in &data.index.entries[summary.len() as usize..len] {
+                    summary.push(entry.level());
+                }
+                data.index.summary = summary;
             }
             data.relevel_needed = false;
             return true;
@@ -953,6 +1035,9 @@ fn run_relevel(shared: &Shared, generation: u64) -> bool {
             let text = detection_bytes(raw, encoding);
             let (level, continuation) = detector.classify(&text, &mut prev);
             updated.push(LineEntry::new(entry.offset, entry.len, level, continuation));
+        }
+        for entry in &updated {
+            summary.push(entry.level());
         }
         let mut data = shared.data.write();
         if data.epoch == epoch {

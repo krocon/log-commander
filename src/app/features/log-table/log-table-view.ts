@@ -160,7 +160,7 @@ const BASE_OPTIONS: TableOptionsIf = {
       />
     }
   `,
-  styleUrls: ['./log-table-view.css', './log-table-columns.css'],
+  styleUrls: ['./log-table-view.css', './log-table-columns.css', './log-table-marks.css'],
 })
 export class LogTableViewComponent implements OnInit, OnDestroy {
   readonly session = input.required<SessionState>();
@@ -319,7 +319,7 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
         pos: session.scroll(),
         left: session.scrollLeft(),
         revision: session.cache.revision(),
-        marks: `${JSON.stringify(session.selection())}|${session.currentHitLine()}|${session.update().totalLines}`,
+        marks: `${JSON.stringify(session.selection())}|${session.currentHitLine()}|${session.update().totalLines}|${session.bookmarks().size}`,
         follow: session.follow(),
       };
       void [this.viewportW(), this.bodyH(), this.redraw()];
@@ -972,6 +972,27 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
         break;
       case 'Escape':
         session.selection.set(null);
+        break;
+      // Prompt 007: errors, warnings and bookmarks in the view, the whole log and back.
+      case 'e':
+      case 'E':
+        void this.sessions.jumpToLevel(session, 'error', !event.shiftKey);
+        break;
+      case 'w':
+      case 'W':
+        void this.sessions.jumpToLevel(session, 'warn', !event.shiftKey);
+        break;
+      case 'n':
+      case 'N':
+        void this.sessions.jumpToBookmark(session, !event.shiftKey);
+        break;
+      case 'm':
+      case 'M':
+        this.sessions.toggleBookmark(session);
+        break;
+      case 'g':
+      case 'G':
+        void this.sessions.toggleFullLog(session);
         break;
       default:
         return;

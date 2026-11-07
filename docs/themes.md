@@ -39,6 +39,7 @@ Einstellung `theme`: `system` (Standard), `dark`, `light`. Der `SettingsService`
 | Level | `--lv-<level>-fg`, `--lv-<level>-bg` für `trace`, `debug`, `info`, `warn`, `error`, `fatal`, `unknown`; dazu `--lv-info-badge`, `--lv-error-edge` | Zeilenfarbe je Level, Markierung am Zeilenrand |
 | Splitter | `--splitter-bg`, `--splitter-grip`, `--splitter-hover-bg` | Leiste, Griff in der Mitte, Hover/Ziehen (`shared/splitter.ts`) |
 | Quellen (Merge) | `--src-1` … `--src-8`, Klasse `src-N` setzt `--src` | Streifen im Zeilenrand, Chips, Dialog, Baum und Statistik (Prompt 006); ab der neunten Quelle wiederholt, der Dateiname unterscheidet |
+| Overview Ruler | `--ruler-bg`, `--ruler-band`, `--ruler-band-edge`, `--ruler-fatal`, `--ruler-error`, `--ruler-warn`, `--ruler-bookmark`, `--ruler-selection` | Leiste rechts (Prompt 007): Fläche, Band des sichtbaren Bereichs und seine Kanten, Level-Marken, Lesezeichen (auch das Fähnchen `⚑` im Zeilenrand), Auswahl. Der Canvas liest sie per `getComputedStyle`, bei Themewechsel neu |
 | Inline-Tokens | `--tok-time`, `--tok-number`, `--tok-string`, `--tok-id`, `--tok-url` | Hervorhebung in der Zeile (`highlight.ts`) |
 
 Alle Zellen einer Zeile (Rohansicht: Nummer und Text, Spaltenansicht: jede Spalte) tragen die Klasse `lv-<LEVEL>` (`table-logic.ts`). `log-table-view.css` setzt daraus Vorder- und
@@ -65,6 +66,10 @@ läuft als erster Schritt in `npm run check`.
 - Quellfarben (Prompt 006): `--src-1` … `--src-8` sind Grafik (Streifen, Farbfeld) und stehen in `GRAPHIC_PAIRS` gegen
   `--bg-gutter`, `--row-selected`, `--bg-panel` und `--bg-raised`. Text in ihnen gibt es nicht, die Quelle steht immer als
   Name daneben.
+- Overview Ruler (Prompt 007): alle Marken (`--ruler-fatal`, `-error`, `-warn`, `-bookmark`, `-selection`) stehen in
+  `GRAPHIC_PAIRS` gegen `--ruler-bg` und `--ruler-band` (Marken liegen auch im Band), dazu die Kante des Bands gegen
+  `--ruler-bg` und das Lesezeichen gegen `--bg-gutter` und `--row-selected`. Der Ruler hat keinen Text; welches Level eine
+  Marke ist, sagt der Tooltip.
 - Seitenleiste (Prompt 005): aktuelle Datei mit `--text` auf `--row-selected` (in `PAIRS`), sonst vorhandene Tokens.
 - Farbe ist nie die einzige Information: Level steht als Wort in der Zeile, Zustände haben Text oder Symbol.
 

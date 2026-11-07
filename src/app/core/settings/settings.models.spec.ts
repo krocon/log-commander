@@ -140,4 +140,10 @@ describe('settings', () => {
       },
     ]);
   });
+
+  it('shows the overview ruler unless it was switched off', () => {
+    expect(mergeSettings(null).showOverviewRuler).toBe(true);
+    expect(mergeSettings({ showOverviewRuler: false }).showOverviewRuler).toBe(false);
+    expect(mergeSettings({ showOverviewRuler: 'no' as never }).showOverviewRuler).toBe(true);
+  });
 });

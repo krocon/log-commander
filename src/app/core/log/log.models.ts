@@ -148,6 +148,25 @@ export interface FindHit {
   wrapped: boolean;
 }
 
+/** What the overview ruler draws (prompt 007), for the view of `viewGeneration` in `epoch`. */
+export interface Overview {
+  viewGeneration: number;
+  epoch: number;
+  /** Positions in the view; buckets and marks belong to this count. */
+  count: number;
+  /** Level bits (`1 << LEVELS.indexOf(level)`) per pixel bucket, top to bottom. */
+  buckets: number[];
+  marks: OverviewMark[];
+}
+
+/** Where a line (selection, bookmark) is in the view. */
+export interface OverviewMark {
+  line: number;
+  /** Its position, or that of the next visible line when the filter hides it. */
+  position: number;
+  visible: boolean;
+}
+
 export interface EntryRange {
   first: number;
   last: number;

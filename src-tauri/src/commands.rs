@@ -6,7 +6,7 @@ use crate::level::Level;
 use crate::merge::MergeSource;
 use crate::model::{
     ColumnSet, EntryDetail, EntryRange, FieldPreview, FilterInfo, FindHit, LogLine, MergeCandidate,
-    SessionInfo, SessionUpdate, Stats,
+    Overview, SessionInfo, SessionUpdate, Stats,
 };
 use crate::profile::Profile;
 use crate::session::{LogSession, OpenOptions, SessionManager};
@@ -204,6 +204,29 @@ pub async fn get_position(
     line: u32,
 ) -> AppResult<u32> {
     Ok(session(&state, session_id)?.position_of_line(line))
+}
+
+/// What the overview ruler draws: level bits per pixel bucket and where the given lines are.
+#[tauri::command]
+pub async fn get_overview(
+    state: State<'_, SessionManager>,
+    session_id: u64,
+    buckets: usize,
+    lines: Vec<u32>,
+) -> AppResult<Overview> {
+    session(&state, session_id)?.overview(buckets, &lines)
+}
+
+/// Next or previous entry of one of `levels` in the view, from the summary, without reading text.
+#[tauri::command]
+pub async fn find_level(
+    state: State<'_, SessionManager>,
+    session_id: u64,
+    from_position: Option<u32>,
+    forward: bool,
+    levels: Vec<Level>,
+) -> AppResult<Option<FindHit>> {
+    Ok(session(&state, session_id)?.find_level(from_position, forward, &levels))
 }
 
 #[tauri::command]

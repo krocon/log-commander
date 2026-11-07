@@ -149,6 +149,29 @@ const SEARCH_DEBOUNCE_MS = 200;
         ERROR+
       </button>
     </div>
+    @if (s?.keptFilter()) {
+      <div class="group">
+        <button
+          type="button"
+          class="full-log"
+          title="Zurück zum gemerkten Filter, die gewählte Zeile bleibt (G)"
+          (click)="toggleFullLog()"
+        >
+          ↩ Zurück zum Filter
+        </button>
+      </div>
+    } @else if (s?.filterActive() && s?.selection()) {
+      <div class="group">
+        <button
+          type="button"
+          class="full-log"
+          title="Gewählte Zeile im ungefilterten Log zeigen, der Filter wird gemerkt (G)"
+          (click)="toggleFullLog()"
+        >
+          ⇱ Im Gesamtlog
+        </button>
+      </div>
+    }
     <div class="group search" role="search" [hidden]="!s">
       <input
         #search
@@ -320,6 +343,7 @@ const SEARCH_DEBOUNCE_MS = 200;
       --chip: var(--lv-error-edge);
     }
     .sidebar-toggle,
+    .full-log,
     .freeze,
     .columns,
     .detail-toggle {
@@ -454,6 +478,11 @@ export class ToolbarComponent implements OnInit, OnDestroy {
     if (session) {
       void this.sessions.setLevels(session, level ? levelAndSevere(level) : ALL_LEVELS);
     }
+  }
+
+  protected toggleFullLog(): void {
+    const session = this.session();
+    if (session) void this.sessions.toggleFullLog(session);
   }
 
   protected toggleFreeze(): void {

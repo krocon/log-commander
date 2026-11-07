@@ -24,6 +24,8 @@ export interface Settings {
   theme: ThemeChoice;
   fontSize: number;
   showLineNumbers: boolean;
+  /** Overview ruler right of the log (prompt 007). */
+  showOverviewRuler: boolean;
   /** After a rotation: keep the old file's lines above the new ones, or start over. */
   keepOnRotate: boolean;
   /** CSS colour per token name without the `--` (e.g. `lv-error-fg`). */
@@ -48,6 +50,7 @@ export const DEFAULT_SETTINGS: Settings = {
   theme: 'system',
   fontSize: 13,
   showLineNumbers: true,
+  showOverviewRuler: true,
   keepOnRotate: true,
   colorOverrides: {},
   customProfiles: [],
@@ -112,6 +115,9 @@ export function mergeSettings(saved: Partial<Settings> | null | undefined): Sett
     merged.columnMode = DEFAULT_SETTINGS.columnMode;
   }
   merged.columnLayouts = mergeColumnLayouts(merged.columnLayouts);
+  if (typeof merged.showOverviewRuler !== 'boolean') {
+    merged.showOverviewRuler = DEFAULT_SETTINGS.showOverviewRuler;
+  }
   if (typeof merged.detailVisible !== 'boolean')
     merged.detailVisible = DEFAULT_SETTINGS.detailVisible;
   if (typeof merged.detailWrap !== 'boolean') merged.detailWrap = DEFAULT_SETTINGS.detailWrap;

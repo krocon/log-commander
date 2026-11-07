@@ -7,6 +7,7 @@
 
 use crate::encoding::Encoding;
 use crate::level::Level;
+use crate::overview::LevelSummary;
 use memchr::memchr_iter;
 use std::fs::File;
 use std::io;
@@ -79,6 +80,9 @@ impl LineEntry {
 pub struct LineIndex {
     pub entries: Vec<LineEntry>,
     pub counts: [u64; Level::COUNT],
+    /// Levels per chunk of lines for the overview ruler while the view is the identity (prompt 007).
+    /// `replace` leaves it alone: a re-levelling builds a new one and swaps it in.
+    pub summary: LevelSummary,
 }
 
 impl LineIndex {
@@ -92,12 +96,14 @@ impl LineIndex {
 
     pub fn push(&mut self, entry: LineEntry) {
         self.counts[entry.level() as usize] += 1;
+        self.summary.push(entry.level());
         self.entries.push(entry);
     }
 
     pub fn pop(&mut self) -> Option<LineEntry> {
         let entry = self.entries.pop()?;
         self.counts[entry.level() as usize] -= 1;
+        self.summary.pop();
         Some(entry)
     }
 
@@ -111,6 +117,7 @@ impl LineIndex {
     pub fn clear(&mut self) {
         self.entries.clear();
         self.counts = [0; Level::COUNT];
+        self.summary.clear();
     }
 }
 
