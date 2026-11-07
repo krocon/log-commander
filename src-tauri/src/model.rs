@@ -208,6 +208,9 @@ pub struct Overview {
     pub count: u64,
     /// Level bits (`1 << level`) per pixel bucket, top to bottom.
     pub buckets: Vec<u8>,
+    /// Per bucket three densities 0–255 (FATAL, ERROR, WARN): how much of the bucket's positions lie in
+    /// summary chunks with the level (`overview::LevelSummary::buckets`).
+    pub density: Vec<u8>,
     pub marks: Vec<OverviewMark>,
 }
 

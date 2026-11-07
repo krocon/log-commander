@@ -57,7 +57,9 @@ Zeitfilter (006/014), Tortendiagramme, Lesezeichen und Notizen.
 
 **Overview Ruler (Nachfragen zu 007):** Treffer der Suche im Ruler (im Highlight-Modus nur mit Textscan, eigener
 Hintergrund-Job), Anzahlen je Marke im Tooltip (heute Level und Zeilenbereich, die Zusammenfassung kennt nur Bits),
-Ziehen im Ruler, Mini-Vorschau beim Hover, eigene Regex-Marker.
+Ziehen im Ruler, Mini-Vorschau beim Hover, eigene Regex-Marker. Zähler je Abschnitt statt Bits, damit die Dichte auch
+über 1 Mio. Zeilen nicht sättigt (heute Anteil der Abschnitte mit dem Level, siehe Nachtrag in
+`prompts/done/007-overview-ruler.design.md`).
 
 **Filter:** Query-DSL (`level:ERROR AND NOT "x"`) auf dem Ausdruck aus 010, Bedingungen des Baums als Highlight-Farben,
 Zeitfenster per Ziehen im Zeitstrahl (014), Filter-Vorlagen teilen, eigene Regex-Marker, persistente Lesezeichen und

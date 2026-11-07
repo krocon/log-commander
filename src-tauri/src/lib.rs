@@ -41,14 +41,18 @@ const MENU_OPEN_PATH: &str = "open-log-path";
 const MENU_MERGE: &str = "merge-logs";
 
 pub fn run() {
+    #[allow(unused_mut)] // changed by end-to-end runs (debug builds) only
+    let mut context = tauri::generate_context!();
     let builder = tauri::Builder::default();
     #[cfg(debug_assertions)]
     let builder = match e2e::scenario() {
-        Some(script) => builder.on_page_load(move |webview, payload| {
-            if payload.event() == tauri::webview::PageLoadEvent::Finished {
-                let _ = webview.eval(&script);
-            }
-        }),
+        Some(script) => {
+            e2e::keep_in_background(builder, &mut context).on_page_load(move |webview, payload| {
+                if payload.event() == tauri::webview::PageLoadEvent::Finished {
+                    let _ = webview.eval(&script);
+                }
+            })
+        }
         None => builder,
     };
     builder
@@ -118,7 +122,7 @@ pub fn run() {
             #[cfg(debug_assertions)]
             e2e::e2e_report,
         ])
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("error while running Log Commander");
 }
 

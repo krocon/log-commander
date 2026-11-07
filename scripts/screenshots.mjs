@@ -175,6 +175,27 @@ await metrics.waitForTimeout(300);
 await scrollRight();
 await shot(metrics, 'extracted');
 
+// Overview ruler on a dense log: a burst like the demo (every level everywhere), a quiet stretch with a single
+// ERROR and WARN, then another burst. Shows the densities per lane and that the lone error stays visible.
+{
+  let state = 815;
+  const random = () => (state = (state * 16807) % 2147483647) / 2147483647;
+  const start = Date.UTC(2026, 0, 15, 9);
+  const at = (i) => new Date(start + i * 200);
+  let text = '';
+  let i = 0;
+  for (; i < 6000; i++) text += `${makeEntry('spring', at(i), random, 0.2)}\n`;
+  for (let quiet = 0; quiet < 12000; quiet++, i++) {
+    const level = quiet === 5000 ? 'ERROR' : quiet === 9000 ? ' WARN' : ' INFO';
+    text += `${at(i).toISOString()}  ${level} 4711 --- [worker-1] c.a.service.Handler : ${level.trim() === 'INFO' ? 'heartbeat ok' : 'payment gateway timed out'}\n`;
+  }
+  for (const end = i + 3000; i < end; i++) text += `${makeEntry('spring', at(i), random, 0.2)}\n`;
+  for (const theme of ['dark', 'light']) {
+    const dense = await page(browser, { theme, only: { 'demo.log': text } });
+    await shot(dense, theme === 'dark' ? 'ruler-dense' : 'ruler-dense-light');
+  }
+}
+
 // Dashboard (prompt 012): two hours of a shop with measurements, the default panels.
 {
   let state = 4711;

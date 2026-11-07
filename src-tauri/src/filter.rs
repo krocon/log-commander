@@ -937,7 +937,7 @@ mod tests {
         );
         let summary = filter.summary().unwrap();
         assert_eq!(summary.len(), filter.len(5) as u64);
-        assert_eq!(summary.buckets(3, 3), vec![err, err, err]);
+        assert_eq!(summary.buckets(3, 3).bits, vec![err, err, err]);
 
         // A provisional line taken and withdrawn again.
         let checkpoint = filter.checkpoint();

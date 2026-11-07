@@ -1,7 +1,8 @@
 // Measurement of prompt 003: the log view (GuiExpert Table) in the real webview. Until 1.1.107 it compared the
 // own viewport as well; the numbers are in prompts/done/003-gui-expert-table.design.md. Since prompt 009 it
 // compares the column view with the raw view (prompts/done/009-tabellen-header.design.md).
-// Run: node scripts/e2e/run.mjs --scenario scripts/e2e/spike-003.js
+// Run: node scripts/e2e/run.mjs --scenario scripts/e2e/spike-003.js --foreground (frames need a visible,
+// unobscured window; without the flag the window opens behind the others).
 // Every measurement goes out as a PASS line, the harness prints them.
 (async () => {
   const invoke = window.__TAURI_INTERNALS__.invoke;

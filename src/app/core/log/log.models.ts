@@ -199,6 +199,11 @@ export interface Overview {
   count: number;
   /** Level bits (`1 << LEVELS.indexOf(level)`) per pixel bucket, top to bottom. */
   buckets: number[];
+  /**
+   * Three densities 0–255 per bucket (FATAL, ERROR, WARN): how much of the bucket lies in summary chunks with
+   * the level, exact while the view has fewer than 64 K lines.
+   */
+  density: number[];
   marks: OverviewMark[];
 }
 

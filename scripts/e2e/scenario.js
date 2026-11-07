@@ -622,13 +622,14 @@
     press('Escape');
 
     // Overview ruler and navigation (prompt 007). The canvas is not read: marks and pins come as data
-    // attributes (`LEVEL:y` and `kind:line:y`, y in px from the top of the track).
+    // attributes (`LEVEL:y:percent` and `kind:line:y`, y in px from the top of the track, percent the highest
+    // density of the mark: its bar is that long).
     const ruler = () => $('app-overview-ruler');
     const track = () => ruler().querySelector('.track');
     const rulerMarks = () =>
       (ruler().dataset.marks || '').split(',').filter(Boolean).map((m) => {
-        const [level, y] = m.split(':');
-        return { level, y: Number(y) };
+        const [level, y, percent] = m.split(':');
+        return { level, y: Number(y), percent: Number(percent) };
       });
     const pins = () =>
       (ruler().dataset.pins || '').split(',').filter(Boolean).map((p) => {
@@ -645,6 +646,10 @@
     await waitFor('ruler shows the view with its error marks', () =>
       ruler() && Number(ruler().dataset.count) > 700 && rulerMarks().some((m) => m.level === 'ERROR') &&
       rulerMarks().some((m) => m.level === 'FATAL') && track().getAttribute('aria-hidden') === 'true',
+    );
+    await waitFor('WARN has marks of its own next to the errors, every mark with a density', () =>
+      rulerMarks().some((m) => m.level === 'WARN') &&
+      rulerMarks().every((m) => m.percent >= 1 && m.percent <= 100),
     );
     await waitFor('ruler button "Ans Ende" is pressed while following', () =>
       ruler().querySelector('button.to-end').getAttribute('aria-pressed') === 'true',
@@ -732,6 +737,13 @@
       ruler().querySelector('button.to-end').getAttribute('aria-pressed') === 'true',
     );
     await waitFor('the bookmark stays while the file grows', () => pin('bookmark')?.line === 0);
+    // More lines than pixels now: the stack trace fills its pixels, the lone error line only part of one,
+    // and it still has its mark.
+    await waitFor('density: the stack trace is dense, the lone error is light but marked', () => {
+      const errors = rulerMarks().filter((m) => m.level === 'ERROR');
+      return Number(ruler().dataset.count) > track().clientHeight &&
+        errors.some((m) => m.percent === 100) && errors.some((m) => m.percent < 100);
+    });
 
     // Font size.
     const fontOf = () => getComputedStyle($('app-log-table-view .lt-table')).fontSize;
