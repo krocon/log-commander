@@ -86,6 +86,13 @@ const GRAPHIC_PAIRS = [
   ['accent', 'ruler-band'],
   ['ruler-bookmark', 'bg-gutter'],
   ['ruler-bookmark', 'row-selected'],
+  // Notes (prompt 015): the pencil in the gutter (also on a selected row), the mark on the ruler and its band, the
+  // symbol in the detail panel.
+  ['note', 'bg-gutter'],
+  ['note', 'row-selected'],
+  ['note', 'ruler-bg'],
+  ['note', 'ruler-band'],
+  ['note', 'bg-app'],
   // Dashboard (prompt 012): series and level series on the panel; the legend names each, so colour is
   // never the only hint.
   ...[1, 2, 3, 4, 5, 6, 7, 8].map((i) => [`chart-${i}`, 'bg-panel']),

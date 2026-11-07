@@ -20,6 +20,8 @@ import { AppError, describeError, toAppError } from '../../core/errors/app-error
 import { SettingsService } from '../../core/settings/settings.service';
 import { SessionState } from './session-state';
 import { fullLogOf, nextBookmark, toggleBookmark } from './navigation-logic';
+import { ShareKind, shareText } from '../share/share-format';
+import { MAX_NOTE_LENGTH, isWorkspacePath } from '../workspace/workspace-model';
 import {
   FilterGroupNode,
   ROOT_ID,
@@ -55,6 +57,9 @@ export interface FieldsRequest {
   draft: SelectionDraft | null;
 }
 
+/** Lines of a selection taken for sharing at most; the text is cut at 64 KB anyway. */
+const SHARE_MAX_LINES = 20_000;
+
 /** The open files (tabs) and everything that changes a session in the backend. */
 @Injectable({ providedIn: 'root' })
 export class LogSessionService {
@@ -66,8 +71,20 @@ export class LogSessionService {
   readonly active = computed(() => this.sessions().find((s) => s.id === this.activeId()) ?? null);
   readonly profiles = signal<readonly Profile[]>([]);
   readonly error = signal<string | null>(null);
+  /** A short message in the status bar (export finished, workspace saved, prompt 015). */
+  readonly notice = signal<string | null>(null);
+  private noticeTimer: ReturnType<typeof setTimeout> | null = null;
   /** The dialog „Felder“ (prompt 011). */
   readonly fieldsDialog = signal<FieldsRequest | null>(null);
+  /** The note dialog (prompt 015) for a line of a tab. */
+  readonly noteRequest = signal<{ session: SessionState; line: number } | null>(null);
+  /** The export dialog (prompt 015) for a tab. */
+  readonly exportRequest = signal<SessionState | null>(null);
+  /**
+   * Opens a workspace (`.lcw`) given as a path, wherever a path is opened (dialog, path field, drop, command line,
+   * recent files). Set by the workspace service, which needs this service itself.
+   */
+  workspaceOpener: ((path: string) => Promise<AppError | null>) | null = null;
   private errorTimer: ReturnType<typeof setTimeout> | null = null;
 
   async refreshProfiles(): Promise<void> {
@@ -92,6 +109,7 @@ export class LogSessionService {
 
   /** Opens or activates a file and hands a failure to the caller instead of showing it. */
   async tryOpen(path: string): Promise<AppError | null> {
+    if (isWorkspacePath(path) && this.workspaceOpener) return this.workspaceOpener(path);
     const open = tabOfFile(this.sessions().filter((s) => s.path === path));
     if (open) {
       this.activate(open.id);
@@ -216,16 +234,30 @@ export class LogSessionService {
    */
   async openFilterTab(
     parent: SessionState,
-    start: { cond?: FilterCond; levels?: ReadonlySet<Level>; sourceMask?: number } = {},
+    start: {
+      cond?: FilterCond;
+      levels?: ReadonlySet<Level>;
+      sourceMask?: number;
+      /** A whole filter (a workspace, prompt 015) instead of one condition. */
+      tree?: FilterGroupNode;
+      query?: SearchQuery;
+      mode?: SearchMode;
+    } = {},
   ): Promise<SessionState | null> {
     const limit = this.filterTabLimit(parent);
     if (limit) {
       this.showError(limit);
       return null;
     }
-    const tree = start.cond ? addNode(emptyTree(), ROOT_ID, condNode(start.cond)) : emptyTree();
+    const tree = start.tree
+      ? sanitizeTree(structuredClone(start.tree))
+      : start.cond
+        ? addNode(emptyTree(), ROOT_ID, condNode(start.cond))
+        : emptyTree();
     const levels = start.levels ?? ALL_LEVELS;
     const sourceMask = start.sourceMask ?? ALL_SOURCES;
+    const query = start.query ?? { text: '', isRegex: false, caseSensitive: false };
+    const mode = start.mode ?? 'filter';
     let state: SessionState | null = null;
     const early: SessionUpdate[] = [];
     try {
@@ -234,8 +266,8 @@ export class LogSessionService {
         parent.viewId,
         {
           levels: [...levels],
-          query: { text: '', isRegex: false, caseSensitive: false },
-          mode: 'filter',
+          query,
+          mode,
           sources: maskForBackend(sourceMask, parent.sources.length),
           expr: compileTree(tree),
         },
@@ -258,6 +290,8 @@ export class LogSessionService {
     created.levels.set(levels);
     created.sourceMask.set(sourceMask);
     created.filterTree.set(tree);
+    created.query.set({ ...query });
+    created.searchMode.set(mode);
     created.onColumnsChanged = () => void this.applyFilter(created, true);
     for (const update of early) created.applyUpdate(update);
     if (!this.sessions().includes(parent)) {
@@ -686,6 +720,89 @@ export class LogSessionService {
     this.showFindMessage(session, had ? 'Lesezeichen entfernt' : 'Lesezeichen gesetzt');
   }
 
+  // ---------------------------------------------------------------- notes and sharing (prompt 015)
+
+  /** `Shift+M`: the note of the selected entry (its head line), to write, change or delete. */
+  openNote(session: SessionState, line: number | null = session.selection()?.anchor ?? null): void {
+    if (line === null) {
+      this.showFindMessage(session, 'Keine Zeile gewählt');
+      return;
+    }
+    this.noteRequest.set({ session, line });
+  }
+
+  /** Writes a note; an empty text removes it. */
+  setNote(session: SessionState, line: number, text: string): void {
+    const clean = text.trim().slice(0, MAX_NOTE_LENGTH);
+    const next = new Map(session.notes());
+    const had = next.has(line);
+    if (clean) next.set(line, clean);
+    else next.delete(line);
+    session.notes.set(next);
+    this.showFindMessage(
+      session,
+      clean ? (had ? 'Notiz geändert' : 'Notiz gesetzt') : had ? 'Notiz entfernt' : null,
+    );
+  }
+
+  /**
+   * The selection for a ticket (prompt 015): head with file, lines, time and filter, the text as a code block,
+   * the notes in it as a list; Markdown or Jira, into the clipboard, at most 64 KB.
+   */
+  async shareSelection(session: SessionState, kind: ShareKind): Promise<void> {
+    const selection = session.selection();
+    if (!selection) {
+      this.showFindMessage(session, 'Keine Zeile gewählt');
+      return;
+    }
+    const last = Math.min(selection.last, selection.first + SHARE_MAX_LINES - 1);
+    try {
+      const text = await this.api.copyLines(
+        session.sessionId,
+        selection.first,
+        last,
+        'filtered',
+        session.viewId,
+      );
+      const timeIndex = session.columns()?.columns.findIndex((c) => c.kind === 'timestamp') ?? -1;
+      const timeOf = async (line: number): Promise<string | null> => {
+        if (timeIndex < 0) return null;
+        const range = await this.api.getEntryRange(session.sessionId, line);
+        const [head] = await this.api.getLines(session.sessionId, 'all', range.first, 1);
+        const span = head?.fields[timeIndex];
+        return head && span && span[1] > span[0] ? head.text.slice(span[0], span[1]) : null;
+      };
+      const steps =
+        session.viewId === 0 ? (session.ownLabel() ? [session.ownLabel()] : []) : session.steps();
+      const notes = [...session.notes()]
+        .filter(([line]) => line >= selection.first && line <= last)
+        .sort((a, b) => a[0] - b[0])
+        .map(([line, note]) => ({ line, text: note }));
+      const result = shareText(kind, {
+        file: session.fileName,
+        first: selection.first,
+        last,
+        lineCount: text ? text.replace(/\n$/, '').split('\n').length : 0,
+        from: await timeOf(selection.first),
+        to: await timeOf(last),
+        filter: steps.length ? steps.join(' › ') : null,
+        text,
+        notes,
+        more: last < selection.last,
+      });
+      await writeClipboard(result.text);
+      const what = kind === 'markdown' ? 'Markdown' : 'Jira';
+      this.showFindMessage(
+        session,
+        result.truncated
+          ? `Als ${what} kopiert, gekürzt auf 64 KB – mehr per Export`
+          : `Als ${what} kopiert`,
+      );
+    } catch (e) {
+      this.showError(toAppError(e));
+    }
+  }
+
   /** `N`/`Shift+N`: next (previous) bookmark, from the last jump or the top of the view. */
   async jumpToBookmark(session: SessionState, forward: boolean): Promise<void> {
     const mark = session.jumpMark;
@@ -850,6 +967,12 @@ export class LogSessionService {
     } catch (e) {
       return toAppError(e);
     }
+  }
+
+  showNotice(text: string): void {
+    this.notice.set(text);
+    if (this.noticeTimer) clearTimeout(this.noticeTimer);
+    this.noticeTimer = setTimeout(() => this.notice.set(null), ERROR_VISIBLE_MS);
   }
 
   showError(error: AppError | string): void {

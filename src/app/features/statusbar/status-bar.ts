@@ -6,6 +6,8 @@ import { formatSummary, partlyRecognised } from '../sessions/format-logic';
 import { lateLines, sourceProblems } from '../merge/merge-logic';
 import { countConditions } from '../sessions/filter-tree';
 import { hintText } from '../fields/fields-logic';
+import { ExportService } from '../export/export.service';
+import { progressText } from '../export/export-logic';
 
 @Component({
   selector: 'app-status-bar',
@@ -66,6 +68,17 @@ import { hintText } from '../fields/fields-logic';
       <span>{{ lines() }}</span>
     } @else {
       <span class="path">Keine Datei geöffnet</span>
+      <span class="spring"></span>
+    }
+    <!-- Prompt 015: running exports with „Abbrechen“, and short messages (export done, workspace saved). -->
+    @for (job of exports.jobs(); track job.jobId) {
+      <span class="export" role="status" [title]="job.progress.path">
+        {{ progressText(job.progress) }} ·
+        <button type="button" class="link" (click)="exports.cancel(job.jobId)">Abbrechen</button>
+      </span>
+    }
+    @if (sessions.notice(); as notice) {
+      <span class="notice" role="status">{{ notice }}</span>
     }
   `,
   styles: `
@@ -122,6 +135,10 @@ import { hintText } from '../fields/fields-logic';
     .late {
       color: var(--lv-warn-fg);
     }
+    .notice,
+    .export {
+      color: var(--text);
+    }
     .link {
       padding: 0 2px;
       color: var(--accent);
@@ -136,7 +153,9 @@ import { hintText } from '../fields/fields-logic';
   `,
 })
 export class StatusBarComponent {
-  private readonly sessions = inject(LogSessionService);
+  protected readonly sessions = inject(LogSessionService);
+  protected readonly exports = inject(ExportService);
+  protected readonly progressText = progressText;
   protected readonly session = this.sessions.active;
 
   protected readonly pill = computed(() => {

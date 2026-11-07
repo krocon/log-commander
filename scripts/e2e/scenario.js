@@ -1456,6 +1456,231 @@
     await waitFor('Z shows it again', () => Number(tlStrip()?.dataset.entries) === 600);
     if ($('[role=alert]')?.textContent.trim()) throw new Error(`error shown: ${$('[role=alert]').textContent}`);
 
+    // ---- Prompt 015: export, notes, workspace. Native dialogs are not covered: the scenario puts the paths into
+    // `window.__lcDialogPaths` (core/dialog/native-dialog.ts); the harness checks the files it finds.
+    const wsDialogPaths = (...paths) => {
+      window.__lcDialogPaths = paths;
+    };
+    const wsPins = () => $('app-overview-ruler')?.dataset.pins || '';
+    const wsButton = (text) =>
+      [...($('app-workspace-dialog')?.querySelectorAll('button') ?? [])].find((b) =>
+        b.textContent.trim().startsWith(text),
+      );
+    while (tabs().length) {
+      click(tabs()[0].parentElement.querySelector('.close'));
+      await sleep(40);
+    }
+    await waitFor('every tab closed before the workspace test', () => !tabs().length && $('app-start-screen'));
+    click(button('Pfad eingeben'));
+    await waitFor('path dialog for the workspace test', () => $('app-open-path-dialog dialog')?.open);
+    typePath('~/metrics.log').requestSubmit();
+    await waitFor('metrics.log open again', () => tabOf('metrics.log') && rowTexts().some((t) => t.includes('cpu=')));
+    const wsLog = tabOf('metrics.log').title.split('\n')[0];
+    const wsSep = wsLog.includes('\\') ? '\\' : '/';
+    const wsDir = wsLog.slice(0, wsLog.lastIndexOf(wsSep));
+    let wsId = null;
+    for (let id = 80; id >= 1 && wsId === null; id--) {
+      const info = await invoke('get_stats', { sessionId: id }).catch(() => null);
+      if (info?.totalLines === 300) wsId = id;
+    }
+    if (wsId === null) throw new Error('metrics session not found');
+
+    // Export through the command with a fixed path: progress over a channel, the file next to the log.
+    const wsChannel = (onMessage) =>
+      `__CHANNEL__:${window.__TAURI_INTERNALS__.transformCallback((raw) =>
+        onMessage(raw && typeof raw === 'object' && 'message' in raw ? raw.message : raw),
+      )}`;
+    const exportRun = (args) =>
+      new Promise((resolve, reject) => {
+        const onProgress = wsChannel((p) => {
+          if (p && p.state && p.state !== 'running') resolve(p);
+        });
+        invoke('export_view', { ...args, onProgress }).catch(reject);
+      });
+    const csvDone = await exportRun({
+      sessionId: wsId,
+      viewId: 0,
+      range: { kind: 'all' },
+      format: 'csv',
+      columns: null,
+      targetPath: `${wsDir}${wsSep}export.csv`,
+    });
+    if (csvDone.state !== 'done' || csvDone.lines !== 300) throw new Error(`export: ${JSON.stringify(csvDone)}`);
+    await report('PASS export command writes 300 lines as CSV');
+    await act('expectfile export.csv|"line","level","text"|cpu=');
+    await act('expectnofile .part');
+    const refused = await invoke('export_view', {
+      sessionId: wsId,
+      viewId: 0,
+      range: { kind: 'all' },
+      format: 'txt',
+      columns: null,
+      targetPath: wsLog,
+      onProgress: wsChannel(() => {}),
+    }).then(
+      () => null,
+      (e) => e,
+    );
+    if (refused?.code !== 'invalid_export') throw new Error(`the log itself as target: ${JSON.stringify(refused)}`);
+    await report('PASS the open log is refused as export target');
+    // The dialog with a scripted save path: JSON Lines of the view.
+    press('e', { metaKey: true, shiftKey: true });
+    await waitFor('Cmd+Shift+E opens the export dialog', () => $('app-export-dialog dialog')?.open);
+    click($('app-export-dialog input[name=format][value=jsonl]'));
+    wsDialogPaths(`${wsDir}${wsSep}view`);
+    $('app-export-dialog form').requestSubmit();
+    await waitFor(
+      'the export finishes, the status bar says so',
+      () => !$('app-export-dialog') && status().includes('Exportiert: view.jsonl'),
+      20000,
+    );
+    await act('expectfile view.jsonl|"line":1,|"level":"');
+
+    // A filter, a filter tab, a bookmark and a note; then the workspace.
+    click(chip('INFO'), { altKey: true });
+    await waitFor('INFO only', () => rows().length > 3 && rows().every((r) => r.classList.contains('lv-INFO')));
+    const wsRow = rows()[2];
+    const wsLine = Number(wsRow.dataset.line);
+    click(wsRow);
+    await waitFor('row selected for the marks', () => $(`.lt-cell.selected[data-line="${wsLine}"]`));
+    press('m');
+    press('M', { shiftKey: true });
+    await waitFor('Shift+M opens the note dialog', () => $('app-note-dialog dialog')?.open);
+    const noteArea = $('app-note-dialog textarea');
+    noteArea.value = 'Hier wird es langsam: `took` {code}';
+    noteArea.dispatchEvent(new Event('input', { bubbles: true }));
+    noteArea.form.requestSubmit();
+    await waitFor(
+      'the note shows in the gutter and on the ruler, next to the bookmark',
+      () =>
+        !$('app-note-dialog') &&
+        $(`.lt-gutter.note[data-line="${wsLine}"]`) &&
+        wsPins().includes(`note:${wsLine}:`) &&
+        wsPins().includes(`bookmark:${wsLine}:`),
+    );
+    press('t', { metaKey: true, shiftKey: true });
+    await waitFor('a filter tab below metrics.log', () => tabs().length === 2);
+    search('took');
+    await waitFor('the filter tab searches', () => tabs()[1]?.textContent.includes('took'), 20000);
+    const columnsButtonOn = () => button('▦ Spalten');
+    const columnsOn = () => columnsButtonOn()?.getAttribute('aria-pressed') === 'true';
+    // Raw lines, set on the file's tab (it is in front when saved).
+    click(tabs()[0]);
+    await waitFor('the file tab knows its columns', () => !columnsButtonOn().disabled);
+    if (columnsOn()) press('t');
+    await waitFor('raw lines for the workspace', () => !columnsOn() && !columnsButtonOn().disabled);
+    wsDialogPaths(`${wsDir}${wsSep}case`);
+    click(button('❖ Speichern'));
+    await waitFor('workspace saved', () => status().includes('Arbeitsstand gespeichert: case.lcw'));
+    await act(
+      'expectfile case.lcw|"format": "log-commander-workspace"|"relPath": "metrics.log"|Hier wird es langsam|"text": "took"|"columnMode": "raw"',
+    );
+
+    // Back to nothing: columns on, every tab closed. Then open it from the recent files.
+    press('t');
+    await waitFor('columns again', () => columnsOn());
+    while (tabs().length) {
+      click(tabs()[0].parentElement.querySelector('.close'));
+      await sleep(40);
+    }
+    await waitFor('start screen lists the workspace with its symbol', () =>
+      $$('app-start-screen .recent').some((b) => b.textContent.includes('case.lcw') && b.querySelector('.ws')),
+    );
+    click($$('app-start-screen .recent').find((b) => b.textContent.includes('case.lcw')));
+    // Nothing of a workspace is touched before the user agrees (security review of 015).
+    await waitFor(
+      'the workspace asks which files to open, layouts not taken over by default',
+      () =>
+        $('app-workspace-dialog')?.textContent.includes('metrics.log') &&
+        !tabs().length &&
+        $('app-workspace-dialog .layouts input')?.checked !== true,
+    );
+    click(wsButton('Öffnen'));
+    await waitFor(
+      'the workspace brings both tabs back',
+      () => tabs().length === 2 && tabOf('metrics.log') && tabs()[1].textContent.includes('took'),
+      20000,
+    );
+    click(tabs()[1]);
+    await waitFor('the filter tab searches again', () => $('input[type=search]').value === 'took');
+    click(tabs()[0]);
+    await waitFor(
+      'the file tab shows INFO only',
+      () => chip('INFO').getAttribute('aria-pressed') === 'true' && chip('ERROR').getAttribute('aria-pressed') === 'false',
+    );
+    await waitFor('raw lines again', () => !columnsOn() && !columnsButtonOn().disabled);
+    await waitFor(
+      'bookmark, note and selection are back on their line',
+      () =>
+        wsPins().includes(`bookmark:${wsLine}:`) &&
+        wsPins().includes(`note:${wsLine}:`) &&
+        wsPins().includes(`selection:${wsLine}:`),
+      20000,
+    );
+    press('t');
+
+    // A workspace from elsewhere: a missing file is skipped, the other is found next to the workspace, a note that
+    // does not fit is reported, a broken bookmark is dropped.
+    const foreign = {
+      format: 'log-commander-workspace',
+      version: 2,
+      files: [
+        { kind: 'file', sources: [{ path: `${wsDir}${wsSep}gone.log`, relPath: 'gone.log' }], tabs: [{}] },
+        { kind: 'file', sources: [{ path: '//attacker/share/a.log', relPath: 'other.log' }], tabs: [{}] },
+        {
+          kind: 'file',
+          sources: [{ path: '/nowhere/other.log', relPath: 'other.log' }],
+          tabs: [{ filter: { levels: ['ERROR'] } }],
+          notes: [{ anchor: { line: 1, offset: 9, len: 5, hash: '0123456789abcdef' }, text: 'passt nicht' }],
+          bookmarks: [{ anchor: { line: 0, offset: 0, len: 1e30, hash: 'bad' } }],
+        },
+      ],
+    };
+    await invoke('write_workspace', { path: `${wsDir}${wsSep}foreign.lcw`, content: JSON.stringify(foreign) });
+    const wsOther = await invoke('write_workspace', { path: `${wsDir}${wsSep}evil.sh`, content: 'x' }).then(
+      () => null,
+      (e) => e,
+    );
+    if (wsOther?.code !== 'invalid_workspace') throw new Error('write_workspace wrote something else than .lcw');
+    await report('PASS write_workspace writes .lcw files only');
+    click(button('Pfad'));
+    await waitFor('path dialog for the foreign workspace', () => $('app-open-path-dialog dialog')?.open);
+    typePath('~/foreign.lcw').requestSubmit();
+    await waitFor('the network path is listed and cannot be chosen', () => {
+      const net = [...($('app-workspace-dialog')?.querySelectorAll('li') ?? [])].find((li) =>
+        li.textContent.includes('//attacker'),
+      );
+      return net && net.textContent.includes('Netzwerkpfad') && net.querySelector('input').disabled;
+    });
+    click(wsButton('Öffnen'));
+    await waitFor(
+      'the missing file is listed',
+      () => wsButton('Überspringen') && $('app-workspace-dialog').textContent.includes('gone.log'),
+    );
+    click(wsButton('Überspringen'));
+    await waitFor('skipping enables „Öffnen“', () => !wsButton('Öffnen').disabled);
+    click(wsButton('Öffnen'));
+    await waitFor(
+      'the rest opens and the report names what did not come back',
+      () =>
+        tabOf('other.log') &&
+        $('app-workspace-dialog')?.textContent.includes('gone.log') &&
+        $('app-workspace-dialog').textContent.includes('Netzwerkpfad, nicht geöffnet') &&
+        $('app-workspace-dialog').textContent.includes('1 Notiz') &&
+        $('app-workspace-dialog').textContent.includes('ungültige'),
+      20000,
+    );
+    click(wsButton('Schließen'));
+    await waitFor(
+      'report closed, other.log filtered on ERROR',
+      () =>
+        !$('app-workspace-dialog') &&
+        rowTexts().some((t) => t.includes('other file')) &&
+        !rowTexts().some((t) => t.includes('still here')),
+    );
+    window.__lcDialogPaths = undefined;
+    if ($('[role=alert]')?.textContent.trim()) throw new Error(`error shown: ${$('[role=alert]').textContent}`);
+
     await report('DONE');
   } catch (e) {
     await report(`FAIL ${e.message}`);

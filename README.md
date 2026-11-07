@@ -98,6 +98,24 @@ Like <code>tail -f</code> with a GUI: millions of lines, instant filters, no wai
   `←`/`→` and `Enter`) to jump to the first line of that minute, a table row with a `line` column to that line, a bar
   without time axis (`GROUP BY logger`) to a filter tab on it. Queries only read: one statement, no `ATTACH`, no
   `PRAGMA`, no extensions, at most 10,000 rows and 10 s. Dashboards are stored per format.
+- **Export** – the selection, the view or the whole file as text, CSV or JSON Lines (`Cmd/Ctrl+Shift+E`, „⤓ Export“
+  or File → Export…): pick the scope, the format and (for CSV/JSON Lines) the columns, then where to save. The backend
+  writes straight into the file in the background, so gigabytes are fine (500 MB as text in about half a second);
+  progress and „Abbrechen“ are in the status bar, a cancelled export leaves nothing behind. The end is fixed when it
+  starts, so a growing file does not keep it going. CSV quotes every field and puts a `'` in front of cells that a
+  spreadsheet would run as a formula (`=`, `+`, `-`, `@`); the open log itself is refused as target.
+- **Notes** – `Shift+M` (or right click „Notiz …“) puts a short note on an entry: a pencil in the gutter, a diamond on
+  the ruler, the text in the detail panel. Like bookmarks they belong to the file.
+- **Workspace** – „❖ Speichern …“ in the tab bar or File → Save Workspace… writes a `.lcw` file (JSON): the open files
+  and merges, every tab with its filter, filter tree and chain, dashboard mode, position and selection, bookmarks and
+  notes, the column mode and layouts, detail panel, sidebar, timeline and ruler. Open it from the start screen, File →
+  Open Workspace…, the recent files (marked ❖) or like any file. Paths are kept absolute and relative to the `.lcw`,
+  so a folder with the workspace and its logs can be moved or shared; missing files can be looked for or skipped.
+  Bookmarks and notes are anchored by line, byte offset and a hash of the line, so they are found again after lines
+  were inserted before them; what is not found is listed and kept. A workspace from someone else is checked field by
+  field and never runs anything; dashboards are not part of it.
+- **Share** – right click „Als Markdown kopieren“ or „Als Jira kopieren“: file, lines, time span and filter as a head,
+  the selected lines as a code block, the notes as a list, up to 64 KB (for more there is the export).
 - **Search** – filter or highlight, regular expressions, case sensitivity, jump between matches.
 - **Follow** – stays at the end while you are there; scroll up and it pauses and counts the new lines.
 - **Freeze** – holds a tab to read in peace: lines, counts and the position stay put while filters and search keep
@@ -154,6 +172,8 @@ log-commander /var/log/app.log /var/log/other.log
 | `E`, `Shift+E` | Next / previous error (ERROR, FATAL) in the view; the selection stays |
 | `W`, `Shift+W` | Next / previous warning or worse |
 | `M` | Bookmark on the selected entry, or off again |
+| `Shift+M` | Note on the selected entry (write, change, delete) |
+| `Cmd/Ctrl+Shift+E` | Export the selection, the view or the file |
 | `N`, `Shift+N` | Next / previous bookmark |
 | `G` | Selected line in the whole log (filter lifted and kept, the filter tree too), again: back to the filter |
 | `I`, `Shift+I` | Filter on the marked text, or exclude it (filter tree); also by right click on a line |
@@ -214,6 +234,7 @@ Measured on an Apple Silicon Mac, release build, with
 | `get_lines`, 5000 lines with 0 / 4 / 16 extracted fields (`extract_integration`) | 7.8 / 11.8 / 12.8 ms |
 | Dashboard database: build / size (numbers only) / errors per minute (`report_integration`) | 12.8 s / 226 MB / 1.0 s |
 | Read and filter with 1 / 4 / 8 filter tabs open (`views_integration`) | 2.2 / 3.6 / 4.6 s |
+| Export of all lines as text / CSV with 5 columns (`export_integration`) | 0.55 / 9.8 s |
 
 At 10,000 lines per second the UI's event loop was never blocked for more than 8 ms (debug build, `npm run e2e`).
 

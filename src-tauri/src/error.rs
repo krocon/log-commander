@@ -29,6 +29,12 @@ pub enum ErrorCode {
     UnknownView,
     /// More than `MAX_VIEWS` views of one file (prompt 013).
     TooManyViews,
+    /// An export (prompt 015) that cannot be written: target path, the open log itself, columns.
+    InvalidExport,
+    /// The file started over (truncated, rotated without keeping) while an export ran.
+    FileChanged,
+    /// A workspace file (prompt 015) that cannot be read or written: path, size, not a workspace.
+    InvalidWorkspace,
 }
 
 #[derive(Debug, Clone, Serialize, thiserror::Error)]

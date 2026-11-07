@@ -627,6 +627,18 @@
     },
     close_report: () => null,
     get_report_schema: ({ sessionId }) => reportSchema(sessions.get(sessionId)),
+    // Prompt 015: export, anchors and workspaces. The screenshots only open dialogs; nothing is written.
+    export_view: () => 1,
+    cancel_export: () => true,
+    line_anchors: ({ lines }) =>
+      lines.map((line) => ({ line, source: 0, offset: line * 100, len: 99, hash: '0000000000000000' })),
+    resolve_anchors: ({ anchors }) => anchors.map((a) => a.line),
+    read_workspace: () => {
+      throw { code: 'not_found', message: 'no files in the screenshot mock' };
+    },
+    write_workspace: () => null,
+    probe_paths: ({ paths }) => paths.map((path) => ({ path, exists: true })),
+    scripted_dialogs: () => false,
     run_report({ sessionId, sql }) {
       const heads = reportHeads(sessions.get(sessionId));
       const minute = (ts) => Math.floor(ts / 60000) * 60000;

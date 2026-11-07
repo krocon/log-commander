@@ -1,6 +1,13 @@
 import { emptyTree } from '../../features/sessions/filter-tree';
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_SETTINGS, MAX_RECENT_FILES, addRecent, mergeSettings } from './settings.models';
+import {
+  DEFAULT_SETTINGS,
+  MAX_RECENT_FILES,
+  addRecent,
+  mergeSettings,
+  MAX_LAYOUT_ENTRIES,
+  mergeColumnLayouts,
+} from './settings.models';
 
 describe('settings', () => {
   it('falls back to defaults for missing or broken values', () => {
@@ -248,5 +255,24 @@ describe('settings', () => {
       'log4j',
       'json',
     ]);
+  });
+});
+
+describe('column layouts from a workspace or a broken store (prompt 015)', () => {
+  it('caps lists, ids and profiles', () => {
+    const many = Array.from({ length: 1000 }, (_, i) => `c${i}`);
+    const widths = Object.fromEntries(many.map((id) => [id, 100]));
+    const layouts = mergeColumnLayouts({
+      log4j: { order: [...many, 'x'.repeat(500)], hidden: [42, 'ok', ''], widths },
+      ['p'.repeat(500)]: { order: ['a'] },
+    });
+    expect(Object.keys(layouts)).toEqual(['log4j']);
+    expect(layouts['log4j'].order).toHaveLength(MAX_LAYOUT_ENTRIES);
+    expect(layouts['log4j'].hidden).toEqual(['ok']);
+    expect(Object.keys(layouts['log4j'].widths)).toHaveLength(MAX_LAYOUT_ENTRIES);
+    const profiles = Object.fromEntries(
+      Array.from({ length: 400 }, (_, i) => [`p${i}`, { order: [] }]),
+    );
+    expect(Object.keys(mergeColumnLayouts(profiles)).length).toBe(256);
   });
 });

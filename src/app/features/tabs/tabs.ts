@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, inject, output } from '@angular/core';
 import { SessionMarksComponent } from '../../shared/session-marks';
 import { LogSessionService } from '../sessions/log-session.service';
+import { WorkspaceService } from '../workspace/workspace.service';
 
 @Component({
   selector: 'app-tabs',
@@ -60,6 +61,17 @@ import { LogSessionService } from '../sessions/log-session.service';
     >
       Zusammenführen …
     </button>
+    @if (sessions.sessions().length) {
+      <button
+        type="button"
+        class="open workspace-save"
+        title="Arbeitsstand speichern: Dateien, Filter-Tabs, Lesezeichen, Notizen, Layout (Datei → Save Workspace…)"
+        [disabled]="workspace.busy()"
+        (click)="workspace.save()"
+      >
+        ❖ Speichern …
+      </button>
+    }
   `,
   styles: `
     :host {
@@ -120,6 +132,7 @@ import { LogSessionService } from '../sessions/log-session.service';
 })
 export class TabsComponent {
   protected readonly sessions = inject(LogSessionService);
+  protected readonly workspace = inject(WorkspaceService);
   readonly openFile = output<void>();
   readonly openPath = output<void>();
   readonly merge = output<void>();

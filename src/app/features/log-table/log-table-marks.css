@@ -12,3 +12,16 @@
   left: auto;
   right: 2px;
 }
+
+/* A note (prompt 015): a pencil next to the flag; the gutter is wider while the file has notes. */
+.lt-host .lt-gutter.note::after {
+  content: '✎';
+  position: absolute;
+  left: calc(2px + 1.2ch);
+  color: var(--note);
+}
+
+.lt-host .lt-src.note::after {
+  left: auto;
+  right: calc(2px + 1.4ch);
+}

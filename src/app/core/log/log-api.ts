@@ -2,9 +2,13 @@ import { Injectable } from '@angular/core';
 import { Channel } from '@tauri-apps/api/core';
 import { call } from '../backend/call';
 import {
+  Anchor,
   ColumnSet,
   EntryDetail,
   EntryRange,
+  ExportFormat,
+  ExportProgress,
+  ExportRange,
   ExtractRule,
   FieldSuggestion,
   FieldPreview,
@@ -17,6 +21,7 @@ import {
   MergeCandidate,
   MergeSourceSpec,
   Overview,
+  PathProbe,
   Profile,
   ReportResult,
   ReportSchema,
@@ -273,5 +278,62 @@ export class LogApi {
 
   getReportSchema(sessionId: number): Promise<ReportSchema> {
     return call('get_report_schema', { sessionId });
+  }
+
+  // ---------------------------------------------------------------- prompt 015
+
+  /**
+   * Writes a view, the selection or all lines of the file into `targetPath` as a background job and returns its id.
+   * The target is checked first (absolute, extension of the format, not the open log itself).
+   */
+  exportView(
+    sessionId: number,
+    viewId: number,
+    range: ExportRange,
+    format: ExportFormat,
+    columns: readonly string[] | null,
+    targetPath: string,
+    onProgress: (progress: ExportProgress) => void,
+  ): Promise<number> {
+    const channel = new Channel<ExportProgress>();
+    channel.onmessage = onProgress;
+    return call('export_view', {
+      sessionId,
+      viewId,
+      range,
+      format,
+      columns,
+      targetPath,
+      onProgress: channel,
+    });
+  }
+
+  /** Stops an export; its temporary file is removed. False if it was over already. */
+  cancelExport(jobId: number): Promise<boolean> {
+    return call('cancel_export', { jobId });
+  }
+
+  /** Anchors of lines, null past the end. */
+  lineAnchors(sessionId: number, lines: readonly number[]): Promise<(Anchor | null)[]> {
+    return call('line_anchors', { sessionId, lines });
+  }
+
+  /** Lines of anchors in the file as it is now, null where none fits. */
+  resolveAnchors(sessionId: number, anchors: readonly Anchor[]): Promise<(number | null)[]> {
+    return call('resolve_anchors', { sessionId, anchors });
+  }
+
+  /** The text of a `.lcw` file (validated by the caller: it may come from someone else). */
+  readWorkspace(path: string): Promise<string> {
+    return call('read_workspace', { path });
+  }
+
+  writeWorkspace(path: string, content: string): Promise<void> {
+    return call('write_workspace', { path, content });
+  }
+
+  /** Which files exist (absolute paths only). */
+  probePaths(paths: readonly string[]): Promise<PathProbe[]> {
+    return call('probe_paths', { paths });
   }
 }

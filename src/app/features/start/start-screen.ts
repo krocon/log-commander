@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, inject, output } from '@angular/cor
 import { SettingsService } from '../../core/settings/settings.service';
 import { baseName } from '../../shared/format';
 import { LogSessionService } from '../sessions/log-session.service';
+import { isWorkspacePath } from '../workspace/workspace-model';
 
 @Component({
   selector: 'app-start-screen',
@@ -16,6 +17,9 @@ import { LogSessionService } from '../sessions/log-session.service';
         <button type="button" class="secondary" (click)="merge.emit()">
           Dateien zusammenführen …
         </button>
+        <button type="button" class="secondary" (click)="openWorkspace.emit()">
+          Arbeitsstand öffnen …
+        </button>
       </div>
       <p class="hint">
         oder Datei ins Fenster ziehen · ⌘/Strg+O · Pfad: ⌘/Strg+⇧+O · Zusammenführen: ⌘/Strg+⇧+M
@@ -26,7 +30,13 @@ import { LogSessionService } from '../sessions/log-session.service';
           @for (path of settings().recentFiles; track path) {
             <li>
               <button type="button" class="recent" [title]="path" (click)="sessions.open(path)">
-                <span class="name">{{ baseName(path) }}</span>
+                <span class="name">
+                  @if (isWorkspace(path)) {
+                    <span class="ws" aria-hidden="true">❖</span
+                    ><span class="sr-only">Arbeitsstand: </span>
+                  }
+                  {{ baseName(path) }}</span
+                >
                 <span class="dir">{{ path }}</span>
               </button>
               <button
@@ -123,6 +133,17 @@ import { LogSessionService } from '../sessions/log-session.service';
     .forget {
       color: var(--text-dim);
     }
+    .ws {
+      margin-right: 5px;
+      color: var(--accent);
+    }
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+    }
   `,
 })
 export class StartScreenComponent {
@@ -133,6 +154,8 @@ export class StartScreenComponent {
   readonly openFile = output<void>();
   readonly openPath = output<void>();
   readonly merge = output<void>();
+  readonly openWorkspace = output<void>();
+  protected readonly isWorkspace = isWorkspacePath;
 
   protected forget(path: string): void {
     this.settingsService.removeRecentFile(path);

@@ -16,9 +16,9 @@ use crate::indexer::{
 use crate::level::{Level, LevelDetector, PrevLine};
 use crate::merge::{MergeSource, MergeWorker};
 use crate::model::{
-    ColumnSet, EntryDetail, EntryRange, FilterInfo, FindHit, LogLine, Overview, OverviewMark,
-    ReportResult, ReportSchema, ReportStatus, SessionInfo, SessionUpdate, SourceInfo, SourceUpdate,
-    Status, TimeAnchor, TimeHit, TimeRange, Timeline, TimelineBucket, ViewInfo,
+    Anchor, ColumnSet, EntryDetail, EntryRange, FilterInfo, FindHit, LogLine, Overview,
+    OverviewMark, ReportResult, ReportSchema, ReportStatus, SessionInfo, SessionUpdate, SourceInfo,
+    SourceUpdate, Status, TimeAnchor, TimeHit, TimeRange, Timeline, TimelineBucket, ViewInfo,
 };
 use crate::overview::{level_bit, LevelSummary};
 use crate::platform::open_shared;
@@ -2284,5 +2284,339 @@ impl SessionManager {
         for session in self.sessions.read().values() {
             session.refresh_rules();
         }
+    }
+}
+
+// ---- Export and anchors (prompt 015) ----
+
+/// Lines handed to an export per step; the read lock is held only while they are copied.
+pub const EXPORT_BATCH: usize = 16 * 1024;
+/// Entries copied per step while anchors are searched.
+const ANCHOR_CHUNK: usize = 64 * 1024;
+
+/// Where an export stands in its view. The end is fixed when it starts, so a growing file does not
+/// keep it going; a new filter of the view on the way is followed by line number.
+#[derive(Debug, Clone)]
+pub struct ExportCursor {
+    view: Option<u32>,
+    epoch: u64,
+    view_generation: u64,
+    /// Next position in the view (the line number without a view).
+    position: usize,
+    /// First line number not handed out yet.
+    next_line: u32,
+    /// Line numbers from here on are not exported.
+    end_line: u32,
+    /// Lines in range when the export started.
+    pub total: u64,
+}
+
+/// Lines of one export step with what is needed to read and split them.
+pub struct ExportBatch {
+    pub lines: Vec<(u32, LineEntry)>,
+    pub segments: Vec<Arc<Segment>>,
+    pub format: Arc<FormatGuess>,
+}
+
+impl LogSession {
+    /// Starts an export of a view (`None`: all lines of the file), optionally only the line numbers
+    /// `first..=last`.
+    pub fn export_cursor(
+        &self,
+        view: Option<u32>,
+        lines: Option<(u32, u32)>,
+    ) -> AppResult<ExportCursor> {
+        let data = self.shared.data.read();
+        let total = data.index.len();
+        let (first, last) = match lines {
+            Some((a, b)) => (a.min(b), a.max(b)),
+            None => (0, u32::MAX),
+        };
+        let cursor = match view {
+            Some(id) => {
+                let state = data.view(id)?;
+                let filter = &state.filter;
+                let len = filter.len(total);
+                let start = filter.position_of(first, total);
+                let end_line = match lines {
+                    Some(_) => last.saturating_add(1),
+                    None => len
+                        .checked_sub(1)
+                        .and_then(|p| filter.line_at(p, total))
+                        .map_or(0, |l| l + 1),
+                };
+                let end = filter.position_of(end_line, total).min(len);
+                ExportCursor {
+                    view,
+                    epoch: data.epoch,
+                    view_generation: state.view_generation,
+                    position: start,
+                    next_line: first,
+                    end_line,
+                    total: end.saturating_sub(start) as u64,
+                }
+            }
+            None => {
+                let end_line = last.saturating_add(1).min(total as u32);
+                ExportCursor {
+                    view,
+                    epoch: data.epoch,
+                    view_generation: 0,
+                    position: first as usize,
+                    next_line: first,
+                    end_line,
+                    total: u64::from(end_line.saturating_sub(first)),
+                }
+            }
+        };
+        Ok(cursor)
+    }
+
+    /// The next lines of an export, at most `max`; `None` once it is through. Fails when the file
+    /// started over (line numbers are void) or the view closed.
+    pub fn export_batch(
+        &self,
+        cursor: &mut ExportCursor,
+        max: usize,
+    ) -> AppResult<Option<ExportBatch>> {
+        let data = self.shared.data.read();
+        if data.epoch != cursor.epoch {
+            return Err(AppError::new(
+                ErrorCode::FileChanged,
+                "the file started over during the export",
+            ));
+        }
+        let total = data.index.len();
+        let mut lines = Vec::with_capacity(max.min(EXPORT_BATCH));
+        match cursor.view {
+            Some(id) => {
+                let state = data.view(id)?;
+                let filter = &state.filter;
+                if state.view_generation != cursor.view_generation {
+                    // A new list: go on after the last line written.
+                    cursor.view_generation = state.view_generation;
+                    cursor.position = filter.position_of(cursor.next_line, total);
+                }
+                while lines.len() < max {
+                    let Some(line) = filter.line_at(cursor.position, total) else {
+                        break;
+                    };
+                    if line >= cursor.end_line {
+                        break;
+                    }
+                    lines.push((line, data.index.entries[line as usize]));
+                    cursor.position += 1;
+                    cursor.next_line = line + 1;
+                }
+            }
+            None => {
+                let end = (cursor.end_line as usize).min(total);
+                let to = end.min(cursor.position.saturating_add(max));
+                for line in cursor.position..to {
+                    lines.push((line as u32, data.index.entries[line]));
+                }
+                cursor.position = to.max(cursor.position);
+                cursor.next_line = cursor.position as u32;
+            }
+        }
+        if lines.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(ExportBatch {
+            lines,
+            segments: data.segments.clone(),
+            format: Arc::clone(&data.format),
+        }))
+    }
+
+    /// File names of the sources of a merge (empty for a single file).
+    pub fn source_names(&self) -> Vec<String> {
+        self.sources.iter().map(|s| s.file_name.clone()).collect()
+    }
+
+    /// Paths of the files this session reads (the file, or the sources of a merge).
+    pub fn paths(&self) -> Vec<PathBuf> {
+        if self.is_merge() {
+            self.sources
+                .iter()
+                .map(|s| PathBuf::from(&s.path))
+                .collect()
+        } else {
+            vec![self.path.clone()]
+        }
+    }
+
+    /// Identities of all files the session holds open, rotated ones included.
+    pub fn open_file_ids(&self) -> Vec<crate::platform::FileId> {
+        let segments = self.shared.data.read().segments.clone();
+        segments
+            .iter()
+            .filter_map(|s| crate::platform::open_file_id(&s.file).ok())
+            .collect()
+    }
+
+    /// Anchors of lines (`None` for a line the file does not have), to find them again later.
+    pub fn line_anchors(&self, lines: &[u32]) -> AppResult<Vec<Option<Anchor>>> {
+        if lines.len() > crate::anchor::MAX_ANCHORS {
+            return Err(AppError::new(ErrorCode::TooLarge, "too many anchors"));
+        }
+        let (entries, segments) = {
+            let data = self.shared.data.read();
+            let entries = lines
+                .iter()
+                .map(|&l| data.index.entries.get(l as usize).copied())
+                .collect::<Vec<_>>();
+            (entries, data.segments.clone())
+        };
+        let mut reader = LineReader::new(segments.clone(), VIEW_BLOCK);
+        let mut out = Vec::with_capacity(lines.len());
+        for (&line, entry) in lines.iter().zip(entries) {
+            let Some(entry) = entry else {
+                out.push(None);
+                continue;
+            };
+            let base = segment_of(&segments, entry.offset).map_or(0, |s| s.base);
+            let (raw, _) = reader
+                .raw(&entry, crate::anchor::ANCHOR_HASH_BYTES)
+                .map_err(|e| AppError::from_io(&e, &self.path))?;
+            out.push(Some(Anchor {
+                line,
+                source: entry.source() as u8,
+                offset: entry.offset - base,
+                len: entry.len,
+                hash: crate::anchor::hash_line(raw),
+            }));
+        }
+        Ok(out)
+    }
+
+    /// Finds anchored lines again: the same line number, else the nearest line with the same length
+    /// and hash within `ANCHOR_WINDOW` lines of the number or of the old byte offset. `None` where
+    /// nothing fits.
+    pub fn resolve_anchors(&self, anchors: &[Anchor]) -> AppResult<Vec<Option<u32>>> {
+        use crate::anchor::{hash_line, merge_ranges, ANCHOR_HASH_BYTES, ANCHOR_WINDOW};
+        if anchors.len() > crate::anchor::MAX_ANCHORS {
+            return Err(AppError::new(ErrorCode::TooLarge, "too many anchors"));
+        }
+        // Under the lock: the entry at each number and the line at each old offset.
+        let (epoch, total, segments, exact, at_offset) = {
+            let data = self.shared.data.read();
+            let entries = &data.index.entries;
+            let merge = data.is_merge();
+            let exact = anchors
+                .iter()
+                .map(|a| entries.get(a.line as usize).copied())
+                .collect::<Vec<_>>();
+            let at_offset = anchors
+                .iter()
+                .map(|a| {
+                    if merge {
+                        return None;
+                    }
+                    // A single file: offsets grow with the line number, segment by segment.
+                    data.segments.iter().find_map(|s| {
+                        let virt = s.base.checked_add(a.offset)?;
+                        let i = entries.partition_point(|e| e.offset < virt);
+                        (entries.get(i)?.offset == virt).then_some(i)
+                    })
+                })
+                .collect::<Vec<_>>();
+            (
+                data.epoch,
+                entries.len(),
+                data.segments.clone(),
+                exact,
+                at_offset,
+            )
+        };
+        let mut reader = LineReader::new(segments, VIEW_BLOCK);
+        let mut result = vec![None; anchors.len()];
+        let mut open = Vec::new();
+        for (i, anchor) in anchors.iter().enumerate() {
+            if let Some(entry) = exact[i] {
+                if entry.len == anchor.len && entry.source() == anchor.source as usize {
+                    let (raw, _) = reader
+                        .raw(&entry, ANCHOR_HASH_BYTES)
+                        .map_err(|e| AppError::from_io(&e, &self.path))?;
+                    if hash_line(raw) == anchor.hash {
+                        result[i] = Some(anchor.line);
+                        continue;
+                    }
+                }
+            }
+            open.push(i);
+        }
+        if open.is_empty() || total == 0 {
+            return Ok(result);
+        }
+        // Windows around the number and the old offset; lines are read only if length and source fit.
+        let window = |center: usize| {
+            center.saturating_sub(ANCHOR_WINDOW)..(center + ANCHOR_WINDOW + 1).min(total)
+        };
+        let mut ranges = Vec::new();
+        let mut wanted: HashMap<(u32, u8), Vec<usize>> = HashMap::new();
+        for &i in &open {
+            let anchor = &anchors[i];
+            ranges.push(window(anchor.line as usize));
+            if let Some(pos) = at_offset[i] {
+                ranges.push(window(pos));
+            }
+            wanted
+                .entry((anchor.len, anchor.source))
+                .or_default()
+                .push(i);
+        }
+        let near = |i: usize, line: usize| {
+            let a = (line as i64 - anchors[i].line as i64).unsigned_abs() as usize;
+            let b = at_offset[i].map_or(usize::MAX, |p| {
+                (line as i64 - p as i64).unsigned_abs() as usize
+            });
+            a.min(b)
+        };
+        let mut best: Vec<Option<(usize, u32)>> = vec![None; anchors.len()];
+        for range in merge_ranges(ranges) {
+            let mut from = range.start;
+            while from < range.end {
+                let to = (from + ANCHOR_CHUNK).min(range.end);
+                let chunk = {
+                    let data = self.shared.data.read();
+                    if data.epoch != epoch {
+                        return Err(AppError::new(
+                            ErrorCode::FileChanged,
+                            "the file started over while anchors were searched",
+                        ));
+                    }
+                    let end = to.min(data.index.len());
+                    data.index.entries[from.min(end)..end].to_vec()
+                };
+                for (k, entry) in chunk.iter().enumerate() {
+                    let Some(candidates) = wanted.get(&(entry.len, entry.source() as u8)) else {
+                        continue;
+                    };
+                    let line = from + k;
+                    let (raw, _) = reader
+                        .raw(entry, ANCHOR_HASH_BYTES)
+                        .map_err(|e| AppError::from_io(&e, &self.path))?;
+                    let hash = hash_line(raw);
+                    for &i in candidates {
+                        if anchors[i].hash != hash {
+                            continue;
+                        }
+                        let distance = near(i, line);
+                        if distance > ANCHOR_WINDOW {
+                            continue;
+                        }
+                        if best[i].is_none_or(|(d, _)| distance < d) {
+                            best[i] = Some((distance, line as u32));
+                        }
+                    }
+                }
+                from = to;
+            }
+        }
+        for &i in &open {
+            result[i] = best[i].map(|(_, line)| line);
+        }
+        Ok(result)
     }
 }

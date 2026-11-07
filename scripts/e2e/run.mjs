@@ -8,6 +8,7 @@ import {
   closeSync,
   mkdtempSync,
   openSync,
+  readdirSync,
   readFileSync,
   renameSync,
   rmSync,
@@ -226,6 +227,38 @@ function act(action) {
     case 'recreate':
       writeFileSync(log, `${text}\n`);
       break;
+    case 'expectfile': {
+      // Prompt 015: a file the app wrote (export, workspace) holds every given text: `name|text|text…`.
+      const [name, ...wanted] = text.split('|');
+      let content = '';
+      try {
+        content = readFileSync(join(dir, name), 'utf8');
+      } catch (e) {
+        console.error(`\nFAIL file ${name} not written: ${e.message}`);
+        finish(1);
+        break;
+      }
+      const missing = wanted.filter((w) => !content.includes(w));
+      if (missing.length) {
+        console.error(`\nFAIL file ${name} lacks ${JSON.stringify(missing)}`);
+        finish(1);
+      } else {
+        passed++;
+        console.log(`  ok  file ${name} holds ${wanted.length} expected texts`);
+      }
+      break;
+    }
+    case 'expectnofile': {
+      const leftovers = readdirSync(dir).filter((f) => f.includes(text));
+      if (leftovers.length) {
+        console.error(`\nFAIL files left behind: ${leftovers.join(', ')}`);
+        finish(1);
+      } else {
+        passed++;
+        console.log(`  ok  no file like ${text} left behind`);
+      }
+      break;
+    }
     default:
       break;
   }

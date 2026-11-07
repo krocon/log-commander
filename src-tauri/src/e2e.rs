@@ -13,6 +13,11 @@ pub fn scenario() -> Option<String> {
     std::fs::read_to_string(path).ok()
 }
 
+/// This run is an end-to-end test (the harness set the scenario).
+pub fn scenario_active() -> bool {
+    std::env::var_os(SCRIPT_ENV).is_some()
+}
+
 /// A line for the test harness, which reads the app's stdout.
 #[tauri::command]
 pub fn e2e_report(message: String) {

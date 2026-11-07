@@ -347,7 +347,7 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
         pos: session.scroll(),
         left: session.scrollLeft(),
         revision: session.cache.revision(),
-        marks: `${JSON.stringify(session.selection())}|${session.currentHitLine()}|${session.update().totalLines}|${session.bookmarks().size}`,
+        marks: `${JSON.stringify(session.selection())}|${session.currentHitLine()}|${session.update().totalLines}|${session.bookmarks().size}|${session.notes().size}`,
         follow: session.follow(),
       };
       void [this.viewportW(), this.bodyH(), this.redraw()];
@@ -615,7 +615,9 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
     // A merge: the short file name in front, plus the colour stripe.
     const names = session.isMerge ? labelWidth(session.sourceLabels) + (numbers ? 1 : 0) : 0;
     const stripe = session.isMerge ? 6 : 0;
-    return Math.ceil((digits + names) * this.fontSize() * CHAR_WIDTH_FACTOR + 12 + stripe);
+    // Prompt 015: room for the note symbol next to the bookmark flag.
+    const note = session.notes().size > 0 ? 1.2 : 0;
+    return Math.ceil((digits + names + note) * this.fontSize() * CHAR_WIDTH_FACTOR + 12 + stripe);
   }
 
   private measureText(area: LogAreaModel): void {
@@ -841,6 +843,7 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
       cell: cell ? { label: cellLabel, value: cell.value } : null,
       hasLine: !!line,
       tabLimit: this.sessions.filterTabLimit(session),
+      hasNote: !!line && session.notes().has(line.line),
     });
     if (!items.length) return;
     const host = this.host.nativeElement;
@@ -922,6 +925,27 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
           await this.sessions.selectEntry(session, menu.line, false);
         }
         this.sessions.filterSection(session, action === 'from-here' ? 'from' : 'to');
+        break;
+      }
+      // Prompt 015: the entry under the pointer (or the selection it lies in).
+      case 'note':
+      case 'share-markdown':
+      case 'share-jira': {
+        const selection = session.selection();
+        const inSelection =
+          selection &&
+          menu.line !== null &&
+          menu.line >= selection.first &&
+          menu.line <= selection.last;
+        if (!inSelection && menu.line !== null) {
+          await this.sessions.selectEntry(session, menu.line, false);
+        }
+        if (action === 'note') this.sessions.openNote(session);
+        else
+          await this.sessions.shareSelection(
+            session,
+            action === 'share-markdown' ? 'markdown' : 'jira',
+          );
         break;
       }
     }
@@ -1174,7 +1198,9 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
         break;
       case 'm':
       case 'M':
-        this.sessions.toggleBookmark(session);
+        // Prompt 015: Shift+M writes a note on the entry.
+        if (event.shiftKey) this.sessions.openNote(session);
+        else this.sessions.toggleBookmark(session);
         break;
       case 'g':
       case 'G':

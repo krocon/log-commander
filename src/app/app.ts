@@ -19,6 +19,10 @@ import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { DEFAULT_SETTINGS } from './core/settings/settings.models';
 import { SettingsService } from './core/settings/settings.service';
 import { DashboardComponent } from './features/dashboard/dashboard';
+import { ExportDialogComponent } from './features/export/export-dialog';
+import { NoteDialogComponent } from './features/notes/note-dialog';
+import { WorkspaceDialogComponent } from './features/workspace/workspace-dialog';
+import { WorkspaceService } from './features/workspace/workspace.service';
 import { DetailPanelComponent } from './features/detail/detail-panel';
 import { FieldsDialogComponent } from './features/fields/fields-dialog';
 import { PANEL_MIN, panelHeight, panelMax } from './features/detail/detail-logic';
@@ -44,7 +48,9 @@ import { SplitterComponent } from './shared/splitter';
   imports: [
     DashboardComponent,
     DetailPanelComponent,
+    ExportDialogComponent,
     FieldsDialogComponent,
+    NoteDialogComponent,
     LogTableViewComponent,
     MergeDialogComponent,
     OpenPathDialogComponent,
@@ -57,6 +63,7 @@ import { SplitterComponent } from './shared/splitter';
     TabsComponent,
     TimelineComponent,
     ToolbarComponent,
+    WorkspaceDialogComponent,
   ],
   template: `
     <app-tabs
@@ -132,6 +139,7 @@ import { SplitterComponent } from './shared/splitter';
     } @else {
       <app-start-screen
         class="main"
+        (openWorkspace)="workspaceService.open()"
         (openFile)="openFile()"
         (openPath)="pathDialogOpen.set(true)"
         (merge)="mergeDialogOpen.set(true)"
@@ -160,6 +168,34 @@ import { SplitterComponent } from './shared/splitter';
     }
     @if (sessions.fieldsDialog(); as request) {
       <app-fields-dialog [request]="request" (closed)="sessions.fieldsDialog.set(null)" />
+    }
+    <!-- Prompt 015: dialogs loaded on first use. -->
+    @if (sessions.noteRequest(); as note) {
+      @defer (on immediate) {
+        <app-note-dialog
+          [session]="note.session"
+          [line]="note.line"
+          (closed)="sessions.noteRequest.set(null)"
+        />
+      }
+    }
+    @if (sessions.exportRequest(); as target) {
+      @defer (on immediate) {
+        <app-export-dialog [session]="target" (closed)="sessions.exportRequest.set(null)" />
+      }
+    }
+    @if (workspaceService.confirm()) {
+      @defer (on immediate) {
+        <app-workspace-dialog kind="confirm" />
+      }
+    } @else if (workspaceService.missing()) {
+      @defer (on immediate) {
+        <app-workspace-dialog kind="missing" />
+      }
+    } @else if (workspaceService.report()) {
+      @defer (on immediate) {
+        <app-workspace-dialog kind="report" />
+      }
     }
   `,
   styles: `
@@ -251,6 +287,8 @@ export class App implements OnInit, OnDestroy {
   protected readonly sessions = inject(LogSessionService);
   protected readonly settings = inject(SettingsService);
   protected readonly sidebar = inject(SidebarState);
+  /** Prompt 015; created here so `.lcw` paths open as workspaces from everywhere. */
+  protected readonly workspaceService = inject(WorkspaceService);
 
   protected readonly active = computed(() => this.sessions.active());
   protected readonly settingsOpen = signal(false);
@@ -318,6 +356,13 @@ export class App implements OnInit, OnDestroy {
     this.cleanups.push(await listen('menu-open', () => this.openFile()));
     this.cleanups.push(await listen('menu-open-path', () => this.pathDialogOpen.set(true)));
     this.cleanups.push(await listen('menu-merge', () => this.mergeDialogOpen.set(true)));
+    this.cleanups.push(await listen('menu-export', () => this.openExport()));
+    this.cleanups.push(
+      await listen('menu-workspace-open', () => void this.workspaceService.open()),
+    );
+    this.cleanups.push(
+      await listen('menu-workspace-save', () => void this.workspaceService.save()),
+    );
     this.cleanups.push(
       await getCurrentWebview().onDragDropEvent((event) => {
         const payload = event.payload;
@@ -363,6 +408,12 @@ export class App implements OnInit, OnDestroy {
     }
   }
 
+  /** Prompt 015: the export dialog for the active tab. */
+  protected openExport(): void {
+    const session = this.sessions.active();
+    if (session) this.sessions.exportRequest.set(session);
+  }
+
   private async openFromCommandLine(): Promise<void> {
     try {
       const matches = await getMatches();
@@ -383,6 +434,10 @@ export class App implements OnInit, OnDestroy {
       event.preventDefault();
       if (event.shiftKey) this.pathDialogOpen.set(true);
       else void this.openFile();
+    } else if (key === 'e' && event.shiftKey && !event.altKey) {
+      // Prompt 015: export.
+      event.preventDefault();
+      this.openExport();
     } else if (key === 'm' && event.shiftKey) {
       event.preventDefault();
       this.mergeDialogOpen.set(true);

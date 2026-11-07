@@ -9,13 +9,16 @@
 //! - `filter`: filtered line list, text search
 //! - `merge`: several files as one session, in time order
 //! - `report_db`: the dashboard database (SQLite) and its guarded queries
+//! - `export`, `anchor`, `workspace`: export jobs, anchored lines, workspace files (prompt 015)
 //! - `commands`: the thin Tauri command layer; everything else is free of Tauri
 
+pub mod anchor;
 pub mod commands;
 #[cfg(debug_assertions)]
 pub mod e2e;
 pub mod encoding;
 pub mod error;
+pub mod export;
 pub mod extract;
 pub mod fields;
 pub mod filter;
@@ -33,6 +36,7 @@ pub mod tail;
 pub mod timeline;
 pub mod timestamp;
 pub mod views;
+pub mod workspace;
 
 use session::SessionManager;
 use tauri::menu::{Menu, MenuItem, SubmenuBuilder};
@@ -41,6 +45,9 @@ use tauri::{Emitter, Manager};
 const MENU_OPEN: &str = "open-log";
 const MENU_OPEN_PATH: &str = "open-log-path";
 const MENU_MERGE: &str = "merge-logs";
+const MENU_EXPORT: &str = "export-log";
+const MENU_WORKSPACE_OPEN: &str = "workspace-open";
+const MENU_WORKSPACE_SAVE: &str = "workspace-save";
 
 pub fn run() {
     #[allow(unused_mut)] // changed by end-to-end runs (debug builds) only
@@ -63,6 +70,7 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .manage(SessionManager::default())
+        .manage(export::ExportJobs::default())
         .setup(|app| {
             // Dashboard databases (prompt 012) live in this process's cache folder; what a crashed
             // process left behind is removed here.
@@ -87,6 +95,12 @@ pub fn run() {
                 let _ = app.emit("menu-open-path", ());
             } else if event.id() == MENU_MERGE {
                 let _ = app.emit("menu-merge", ());
+            } else if event.id() == MENU_EXPORT {
+                let _ = app.emit("menu-export", ());
+            } else if event.id() == MENU_WORKSPACE_OPEN {
+                let _ = app.emit("menu-workspace-open", ());
+            } else if event.id() == MENU_WORKSPACE_SAVE {
+                let _ = app.emit("menu-workspace-save", ());
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -125,14 +139,29 @@ pub fn run() {
             commands::close_report,
             commands::run_report,
             commands::get_report_schema,
+            commands::export_view,
+            commands::cancel_export,
+            commands::line_anchors,
+            commands::resolve_anchors,
+            commands::read_workspace,
+            commands::write_workspace,
+            commands::probe_paths,
+            commands::scripted_dialogs,
             #[cfg(debug_assertions)]
             e2e::e2e_report,
         ])
-        .run(context)
-        .expect("error while running Log Commander");
+        .build(context)
+        .expect("error while building Log Commander")
+        .run(|app, event| {
+            // Prompt 015: an export running while the app quits leaves no temporary file.
+            if let tauri::RunEvent::Exit = event {
+                app.state::<export::ExportJobs>().shutdown();
+            }
+        });
 }
 
-/// The platform's default menu plus File → Open…, Open Path… and Merge Files…
+/// The platform's default menu plus File → Open…, Open Path…, Merge Files…, Export…, Open Workspace…
+/// and Save Workspace…
 fn build_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<Menu<R>> {
     let menu = Menu::default(app)?;
     let open = MenuItem::with_id(app, MENU_OPEN, "Open…", true, Some("CmdOrCtrl+O"))?;
@@ -150,17 +179,48 @@ fn build_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<Men
         true,
         Some("CmdOrCtrl+Shift+M"),
     )?;
+    let export = MenuItem::with_id(app, MENU_EXPORT, "Export…", true, Some("CmdOrCtrl+Shift+E"))?;
+    let workspace_open = MenuItem::with_id(
+        app,
+        MENU_WORKSPACE_OPEN,
+        "Open Workspace…",
+        true,
+        None::<&str>,
+    )?;
+    let workspace_save = MenuItem::with_id(
+        app,
+        MENU_WORKSPACE_SAVE,
+        "Save Workspace…",
+        true,
+        None::<&str>,
+    )?;
+    let separator = tauri::menu::PredefinedMenuItem::separator(app)?;
     let file = menu.items()?.into_iter().find_map(|item| {
         let submenu = item.as_submenu()?;
         (submenu.text().ok()? == "File").then(|| submenu.clone())
     });
     match file {
-        Some(file) => file.insert_items(&[&open, &open_path, &merge], 0)?,
+        Some(file) => file.insert_items(
+            &[
+                &open,
+                &open_path,
+                &merge,
+                &export,
+                &separator,
+                &workspace_open,
+                &workspace_save,
+            ],
+            0,
+        )?,
         None => menu.append(
             &SubmenuBuilder::new(app, "File")
                 .item(&open)
                 .item(&open_path)
                 .item(&merge)
+                .item(&export)
+                .item(&separator)
+                .item(&workspace_open)
+                .item(&workspace_save)
                 .build()?,
         )?,
     }

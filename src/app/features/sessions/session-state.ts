@@ -1,6 +1,7 @@
 import { Signal, WritableSignal, computed, linkedSignal, signal } from '@angular/core';
 import { LogApi } from '../../core/log/log-api';
 import {
+  Anchor,
   ColumnSet,
   FieldSuggestion,
   Level,
@@ -40,6 +41,16 @@ export interface LineSelection {
 }
 
 const TRANSIENT_STATUS_MS = 4000;
+
+/**
+ * A bookmark or note of a workspace whose line was not found (prompt 015): kept so that saving again writes it
+ * back, in case the file fits again later.
+ */
+export interface LostMark {
+  kind: 'bookmark' | 'note';
+  anchor: Anchor;
+  text: string | null;
+}
 
 /** A filter tab (prompt 013): which view of the session it shows and below which tab. */
 export interface ViewOptions {
@@ -116,6 +127,13 @@ export class SessionState {
    * file (prompt 013): they are line numbers, and one finds them again down the chain.
    */
   readonly bookmarks: WritableSignal<ReadonlySet<number>>;
+  /**
+   * Notes per line (prompt 015): a short text at the head of an entry. They belong to the file like the
+   * bookmarks (shared by its tabs), in memory until a workspace takes them along; a new epoch clears them.
+   */
+  readonly notes: WritableSignal<ReadonlyMap<number, string>>;
+  /** Bookmarks and notes of a workspace not found in the file; they survive a new epoch. */
+  readonly lostMarks: WritableSignal<readonly LostMark[]>;
   /** The filter `revealInFullLog` lifted, for the way back; changing the filter by hand forgets it. */
   readonly keptFilter = signal<KeptFilter | null>(null);
   /** The view hides lines (levels, filtering search, sources of a merge). */
@@ -256,6 +274,8 @@ export class SessionState {
     this.viewId = view?.viewId ?? 0;
     this.id = view?.tabId ?? info.sessionId;
     this.bookmarks = view ? view.parent.bookmarks : signal<ReadonlySet<number>>(new Set());
+    this.notes = view ? view.parent.notes : signal<ReadonlyMap<number, string>>(new Map());
+    this.lostMarks = view ? view.parent.lostMarks : signal<readonly LostMark[]>([]);
     if (view) this.parent.set(view.parent);
     this.path = info.path;
     this.sources = info.sources ?? [];
@@ -282,6 +302,7 @@ export class SessionState {
       this.scroll.set({ top: 0, subPx: 0 });
       this.selection.set(null);
       this.bookmarks.set(new Set());
+      this.notes.set(new Map());
       this.currentHitLine.set(null);
       this.pausedAtCount.set(0);
       this.seenErrors = 0;

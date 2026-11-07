@@ -132,6 +132,16 @@ const SEARCH_DEBOUNCE_MS = 200;
       >
         ▥ Dashboard
       </button>
+      <button
+        type="button"
+        class="export-button"
+        aria-haspopup="dialog"
+        [disabled]="!s"
+        title="Exportieren: Auswahl, Ansicht oder ganze Datei als TXT, CSV oder JSON Lines (⌘/Strg+Shift+E)"
+        (click)="s && sessions.exportRequest.set(s)"
+      >
+        ⤓ Export
+      </button>
     </div>
     <div class="group chips" role="group" [hidden]="!s" aria-label="Log-Level">
       @for (level of visibleLevels(); track level) {
