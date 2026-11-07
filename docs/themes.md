@@ -39,7 +39,7 @@ Einstellung `theme`: `system` (Standard), `dark`, `light`. Der `SettingsService`
 | Level | `--lv-<level>-fg`, `--lv-<level>-bg` für `trace`, `debug`, `info`, `warn`, `error`, `fatal`, `unknown`; dazu `--lv-info-badge`, `--lv-error-edge` | Zeilenfarbe je Level, Markierung am Zeilenrand |
 | Splitter | `--splitter-bg`, `--splitter-grip`, `--splitter-hover-bg` | Leiste, Griff in der Mitte, Hover/Ziehen (`shared/splitter.ts`) |
 | Quellen (Merge) | `--src-1` … `--src-8`, Klasse `src-N` setzt `--src` | Streifen im Zeilenrand, Chips, Dialog, Baum und Statistik (Prompt 006); ab der neunten Quelle wiederholt, der Dateiname unterscheidet |
-| Overview Ruler | `--ruler-bg`, `--ruler-band`, `--ruler-band-edge`, `--ruler-fatal`, `--ruler-error`, `--ruler-warn`, `--ruler-bookmark`, `--ruler-selection` | Leiste rechts (Prompt 007): Fläche, Band des sichtbaren Bereichs und seine Kanten, Level-Marken, Lesezeichen (auch das Fähnchen `⚑` im Zeilenrand), Auswahl. Der Canvas liest sie per `getComputedStyle`, bei Themewechsel neu |
+| Overview Ruler | `--ruler-bg`, `--ruler-band`, `--ruler-band-edge`, `--ruler-fatal`, `--ruler-error`, `--ruler-warn`, `--ruler-bookmark`, `--ruler-selection` | Leiste rechts (Prompt 007): Fläche, Band des sichtbaren Bereichs und seine Kanten, Level-Balken (FATAL und ERROR in der linken Spur, WARN in der rechten, Länge = Dichte), Lesezeichen (auch das Fähnchen `⚑` im Zeilenrand), Auswahl. Der Canvas liest sie per `getComputedStyle`, bei Themewechsel neu |
 | Dashboard | `--chart-1` … `--chart-8`, `--chart-lv-<level>` (unknown, trace, debug, info, warn, error, fatal), `--chart-grid` | Reihen der Diagramme (Prompt 012), Reihen je Level in kräftigen Varianten der Level-Farben, Gitterlinien. Achsentext `--text-dim`, Fehler `--danger` auf `--bg-panel`. Der Canvas liest sie per `getComputedStyle`, bei Themewechsel neu |
 | Inline-Tokens | `--tok-time`, `--tok-number`, `--tok-string`, `--tok-id`, `--tok-url` | Hervorhebung in der Zeile (`highlight.ts`) |
 
@@ -70,7 +70,10 @@ läuft als erster Schritt in `npm run check`.
 - Overview Ruler (Prompt 007): alle Marken (`--ruler-fatal`, `-error`, `-warn`, `-bookmark`, `-selection`) stehen in
   `GRAPHIC_PAIRS` gegen `--ruler-bg` und `--ruler-band` (Marken liegen auch im Band), dazu die Kante des Bands gegen
   `--ruler-bg` und das Lesezeichen gegen `--bg-gutter` und `--row-selected`. Der Ruler hat keinen Text; welches Level eine
-  Marke ist, sagt der Tooltip.
+  Marke ist und wie dicht, sagt der Tooltip. Die Balken sind immer voll deckend (Dichte über die Länge, nicht über
+  Transparenz), damit die geprüften Kontraste auch für dünn besetzte Stellen gelten. `--ruler-fatal` hell ist ein
+  gedecktes Violett (`#7e3a8c`, vorher `#a21caf`): Es liegt in dichten Logs neben `--ruler-error` und soll dort nicht
+  schreien.
 - Dashboard (Prompt 012): `--chart-*` und `--chart-lv-*` stehen in `GRAPHIC_PAIRS` gegen `--bg-panel` (Panelfläche),
   `--danger` auf `--bg-panel` in `PAIRS`. Gitterlinien (`--chart-grid`) sind Zierde und werden nicht geprüft. Jede
   Reihe steht mit Namen und Wert in der Legende, Kreisstücke mit Name, Wert und Anteil daneben.

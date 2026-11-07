@@ -17,12 +17,16 @@ import { Overview } from '../../core/log/log.models';
 import { LogSessionService } from '../sessions/log-session.service';
 import { SessionState } from '../sessions/session-state';
 import {
+  RULER_LEVELS,
   RulerLevel,
+  RulerMark,
   RulerPin,
+  RulerRect,
   band,
   clickTarget,
   pinY,
   rulerMarks,
+  rulerRects,
   rulerTooltip,
 } from './ruler-logic';
 
@@ -47,8 +51,10 @@ interface Loaded extends Overview {
 
 /**
  * Overview ruler right of the log (prompt 007): where errors, warnings, bookmarks and the selection lie in
- * the current view, and the visible band. One canvas, drawn in an animation frame when something changed;
- * the data comes from `get_overview` (a running summary in the backend). A click jumps there, the selection
+ * the current view, and the visible band. FATAL and ERROR share the left lane, WARN has the right one; the
+ * length of a bar tells how dense its level is there (a single line still gets a short bar). One canvas,
+ * drawn in an animation frame when something changed; the data comes from `get_overview` (a running summary
+ * in the backend). A click jumps there, the selection
  * stays. The ruler itself is hidden from assistive technology: `E`, `W`, `N` and `G` do the same by keyboard.
  */
 @Component({
@@ -155,7 +161,7 @@ export class OverviewRulerComponent implements OnInit, OnDestroy {
   });
   private readonly marks = computed(() => {
     const current = this.current();
-    return current ? rulerMarks(current.buckets, this.height()) : [];
+    return current ? rulerMarks(current.density, this.height()) : [];
   });
   private readonly pins = computed<RulerPin[]>(() => {
     const current = this.current();
@@ -172,7 +178,11 @@ export class OverviewRulerComponent implements OnInit, OnDestroy {
   });
   protected readonly marksAttr = computed(() =>
     this.marks()
-      .map((m) => `${m.level}:${Math.round(m.y + m.h / 2)}`)
+      // `LEVEL:y:percent`, y the middle of the mark, percent its highest density.
+      .map(
+        (m) =>
+          `${m.level}:${Math.round(m.y + m.h / 2)}:${Math.round(Math.max(...m.density) * 100)}`,
+      )
       .join(','),
   );
   protected readonly pinsAttr = computed(() => {
@@ -196,6 +206,9 @@ export class OverviewRulerComponent implements OnInit, OnDestroy {
   private colors: RulerColors | null = null;
   private colorsFor = -1;
   private frame = 0;
+  /** Bars of the last drawing, kept while marks and size stay (scrolling only moves the band). */
+  private rects: { marks: RulerMark[]; width: number; height: number; rects: RulerRect[] } | null =
+    null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private lastLoad = -Infinity;
   private request = 0;
@@ -340,9 +353,17 @@ export class OverviewRulerComponent implements OnInit, OnDestroy {
       ctx.fillRect(0, visible.y + visible.h - 1, width, 1);
     }
 
-    for (const mark of this.marks()) {
-      ctx.fillStyle = colors.levels[mark.level];
-      ctx.fillRect(1, mark.y, width - 2, mark.h);
+    const marks = this.marks();
+    const buckets = (this.current()?.density.length ?? 0) / RULER_LEVELS.length;
+    const cached = this.rects;
+    const rects =
+      cached && cached.marks === marks && cached.width === width && cached.height === height
+        ? cached.rects
+        : rulerRects(marks, buckets, height, width);
+    this.rects = { marks, width, height, rects };
+    for (const rect of rects) {
+      ctx.fillStyle = colors.levels[rect.level];
+      ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
     }
 
     const current = this.current();
@@ -386,7 +407,7 @@ export class OverviewRulerComponent implements OnInit, OnDestroy {
       pins: this.pins(),
       count: current.count,
       height: this.height(),
-      buckets: current.buckets.length,
+      buckets: current.density.length / RULER_LEVELS.length,
     };
   }
 

@@ -15,7 +15,8 @@
 | Lint / Format | `npm run lint`, `npm run format`, `npm run format:check` |
 | Rust | `npm run rust:fmt`, `npm run rust:lint` (clippy `-D warnings`), `npm run rust:test` |
 | Alles außer E2E | `npm run check` |
-| E2E im echten WebView | `npm run e2e` (Debug-Build, echtes Backend, echte Datei; `-- --no-build` zum Wiederholen) |
+| E2E im echten WebView | `npm run e2e` (Debug-Build, echtes Backend, echte Datei; `-- --no-build` zum Wiederholen). Das Fenster öffnet ohne Fokus hinter den anderen |
+| Spike-Messung (Frames) | `node scripts/e2e/run.mjs --scenario scripts/e2e/spike-003.js --foreground` (`--foreground`: Fenster vorn und mit Fokus wie beim normalen Start, sonst misst es verdeckt) |
 | Messung 500 MB | `cd src-tauri && cargo test --release --test tail_integration -- --ignored --nocapture measure_` |
 | Messung Dashboard | `cd src-tauri && cargo test --release --test report_integration -- --ignored --nocapture measure_` |
 | Messung Feld-Regeln | `cd src-tauri && cargo test --release --test extract_integration -- --ignored --nocapture measure_` |
@@ -63,7 +64,7 @@ src-tauri/src/               Rust; alles außer commands.rs und lib.rs ist frei 
   merge.rs                   mehrere Dateien als eine Sitzung: Merger (rein), Worker (Folgen, Rotation, Haltepuffer)
   encoding.rs, platform.rs   Encodings, ANSI; Share-Flags und Datei-Identität je OS
   report_db.rs               Dashboard (012): SQLite je Sitzung, Builder-Thread, abgesicherte Abfragen, bucket()
-  e2e.rs                     nur Debug-Build: Szenario im WebView, siehe scripts/e2e/
+  e2e.rs                     nur Debug-Build: Szenario im WebView (Fenster im Hintergrund), siehe scripts/e2e/
 scripts/e2e/                 run.mjs (Harness), scenario.js (läuft im WebView), mock-ipc.js (nur für Screenshots)
 samples/                     Beispiel-Logs
 ```
@@ -124,7 +125,10 @@ samples/                     Beispiel-Logs
   Spalten kommen aus dem Format der ersten Datei. Der Tailer für Einzeldateien ist unverändert.
 - **Overview Ruler (007):** rechts neben der Tabelle (deren Scrollleiste bleibt), ein `<canvas>`, Daten aus
   `get_overview` (Level-Bits je Pixel aus `LevelSummary`, nie ein Index-Scan; die Identität nutzt die des `LineIndex`, ein
-  Filter seine eigene in `FilteredLines`). Positionen der **Ansicht**, höchstens 2 Abfragen/s, Antwort mit fremder
+  Filter seine eigene in `FilteredLines`). Gezeichnet wird **Dichte, nicht „schwerstes Level gewinnt“**: je Pixel und
+  FATAL/ERROR/WARN der Anteil der Zeilen in Abschnitten mit dem Level (0–255, `density`), als Balkenlänge in zwei Spuren
+  (FATAL+ERROR links, kürzerer Balken oben; WARN rechts), Mindestlänge für eine einzelne Zeile. Ab 64 K Zeilen sind
+  Abschnitte mehrere Zeilen lang, die Dichte wird dann überschätzt (bei 5 Mio. Zeilen und häufigen Fehlern wieder voll). Positionen der **Ansicht**, höchstens 2 Abfragen/s, Antwort mit fremder
   `epoch`/`viewGeneration` wird nicht gezeichnet. Ein ODER lässt sich nicht zurückrechnen: Rückzug der provisorischen Zeile
   kann ein Bit stehen lassen, Neu-Leveln baut eine neue Zusammenfassung und tauscht sie. `find_level` prüft nur Köpfe
   (`E`/`W`), Lesezeichen (`M`/`N`) nur im Speicher des Frontends, neue `epoch` leert sie. Navigation ändert nie die Auswahl.

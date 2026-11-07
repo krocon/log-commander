@@ -53,9 +53,10 @@ Like <code>tail -f</code> with a GUI: millions of lines, instant filters, no wai
   with `Cmd/Ctrl+Shift+M`, the button in the tab bar or the menu: tick open tabs or pick files, the profile of each
   file is suggested and can be changed, the dialog shows its first and last time.
 - **Overview ruler** – a narrow bar right of the log shows where errors (red), FATAL entries and warnings lie in the
-  current view, the visible part as a band, bookmarks as flags and the selected line as a triangle; a single error
-  among millions of lines is still a 3 px mark. Click a mark to go to its entry, anywhere else to go there; the
-  selection stays. The arrow at its foot goes to the end and follows. `E`/`W` jump to the next error or warning,
+  current view, the visible part as a band, bookmarks as flags and the selected line as a triangle. FATAL and ERROR
+  share the left lane, warnings have the right one; the longer a bar, the denser its level there (the tooltip gives
+  the share), so a busy log is not one solid colour and a single error among millions of lines is still a short
+  3 px mark. Click a mark to go to the next entry from that place, anywhere else to go there; the selection stays. The arrow at its foot goes to the end and follows. `E`/`W` jump to the next error or warning,
   `M` bookmarks the selected entry (flag in the gutter, kept until the file starts over), `N` goes to the next
   bookmark. Switch it off in the settings.
 - **From the filter to the whole log** – `G` (or „Im Gesamtlog“ in the toolbar and the detail panel) shows the
@@ -96,6 +97,7 @@ Like <code>tail -f</code> with a GUI: millions of lines, instant filters, no wai
 | ![Filter tree](docs/screenshots/filter-tree.png) | ![Narrow window](docs/screenshots/narrow.png) |
 | ![Fields dialog](docs/screenshots/fields.png) | ![Extracted columns](docs/screenshots/extracted.png) |
 | ![Dashboard](docs/screenshots/dashboard.png) | ![Dashboard with SQL and schema](docs/screenshots/dashboard-sql.png) |
+| ![Overview ruler on a busy log](docs/screenshots/ruler-dense.png) | ![The same in the light theme](docs/screenshots/ruler-dense-light.png) |
 
 ## Install
 
@@ -137,7 +139,7 @@ log-commander /var/log/app.log /var/log/other.log
 | `A`, `Shift+A` in the tree | Add a condition or a group (on a file, a group or next to a condition) |
 | `Space`, `N`, `Enter` on a condition | Switch on/off, negate, edit (on a group `Enter` toggles AND/OR); `Delete` removes |
 | `Alt+↑`, `Alt+↓` in the tree | Move a condition or group among its siblings |
-| Click on the overview ruler | Go to the mark's entry, a bookmark, the selection or that place |
+| Click on the overview ruler | Go to the next marked entry from there, a bookmark, the selection or that place |
 | `Cmd/Ctrl+F` | Search; `Enter` next match, `Shift+Enter` previous, `Esc` clear |
 | Click, `Shift`+click | Select an entry, or a range (an open detail panel follows) |
 | `Cmd/Ctrl+C` | Copy the selected lines |

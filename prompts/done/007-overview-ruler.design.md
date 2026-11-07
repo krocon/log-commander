@@ -82,3 +82,31 @@ Der Prompt stammt aus der Zeit des eigenen Viewports. Zuordnung:
 - [x] Phase 5: Doku, Screenshots
 - [x] Phase 6: `npm run check`, `npm run contrast`, `npm run e2e`
 - [ ] Sichttest mit `npm run demo:log` / `npm run demo:app` (5000 Zeilen/s), hell und dunkel: von Hand offen
+
+## Nachtrag 2026-11-07: Dichte statt „schwerstes Level gewinnt“ (Branch `fix/ruler-dichte-e2e-fenster`)
+
+**Befund (Marc, Screenshot, helles Theme, `npm run demo:log`):** Bei rund 286 000 Zeilen (6 692 FATAL, 26 593 ERROR,
+18 712 WARN) war der ganze Ruler violett. Jeder Pixel umfasst ~360 Zeilen, Abschnitte sind 8 Zeilen lang, fast jeder
+Pixel enthält ein FATAL, und gezeichnet wurde je Pixel nur das schwerste Level.
+
+| Frage | Optionen | Entscheidung | Grund |
+|---|---|---|---|
+| Was je Pixel | schwerstes Level / Dichte je Level | Dichte: Anteil der Positionen des Pixels, die in Abschnitten mit dem Level liegen, 0–255 je FATAL/ERROR/WARN (`Overview.density`, drei Werte je Pixel) | Die Zusammenfassung speichert nur Bits je Abschnitt, Zähler kosteten ×3–×7 Speicher. Abschnitte über einer Pixelgrenze zählen anteilig; bis 64 K Zeilen (Abschnitt = 1 Zeile) ist die Dichte exakt, darüber überschätzt (1 − (1 − p)^Abschnittsgröße) |
+| Darstellung | Transparenz / Balkenlänge | Länge, voll deckend: Mindestlänge für eine einzelne Zeile (3 px bzw. 2 px), voll ab 50 % Dichte | Die Kontrastprüfung gilt nur für deckende Farben; ein einzelner Fehler muss klar sichtbar bleiben (Hauptzweck) |
+| Spuren | eine / FATAL+ERROR und WARN / drei | zwei: FATAL+ERROR links (7 px), WARN rechts (4 px) | Fehler sind das Wichtigste und bekommen die breite Spur; in ihr liegt der kürzere Balken oben (Gleichstand: FATAL), so bleiben beide sichtbar. Drei Spuren gäben einem einzelnen Fehler nur 4 px |
+| Klick in einen langen Lauf | ab Anfang des Laufs / ab Pixel | ab dem Pixel unter dem Zeiger, gesucht werden alle Level der Marken dort (und schwerere) | In dichten Logs ist ein Lauf so lang wie der Ruler, der Sprung landete sonst am Anfang der Datei |
+| Tooltip | Level / Level mit Dichte | „Dichte FATAL 17 %, ERROR 54 % · Zeilen … der Ansicht“ für den Pixel | Zahlen statt Farbintensität, auch für den Bildschirmleser des Tooltips |
+| Token | `#a21caf` hell behalten / dämpfen | `--ruler-fatal` hell `#7e3a8c` | lag laut neben Rot; Kontrast bleibt ≥ 3:1 gegen Fläche und Band |
+
+e2e: `data-marks` ist jetzt `LEVEL:y:Prozent` (höchste Dichte der Marke); neu geprüft: WARN hat eigene Marken, jede Marke
+hat eine Dichte, nach `bulk 300` ist der Stacktrace 100 % dicht und die einzelne Fehlerzeile leichter, aber markiert.
+Screenshots `ruler-dense(-light).png` zeigen einen dichten Abschnitt, eine ruhige Strecke mit einem einzelnen ERROR und
+WARN und wieder einen dichten Abschnitt.
+
+**Grenze:** Ab etwa 1 Mio. Zeilen mit Fehlern in mehreren Prozent der Zeilen sind die Abschnitte (≥ 16 Zeilen) fast alle
+„mit Fehler“, die Balken werden wieder voll. Abhilfe wären Zähler je Abschnitt (Roadmap-Kandidat).
+
+**e2e-Fenster:** Unter `LC_E2E_SCRIPT` öffnet das Fenster ohne Fokus (`focus: false`), unter den anderen
+(`alwaysOnBottom`), und macOS aktiviert die App beim Start nicht (`activate_ignoring_other_apps(false)`). Es bleibt ein sichtbares
+Fenster (verborgene drosselt WebKit); das Szenario wartet mit MutationObserver/MessageChannel, nicht mit Animation Frames.
+`run.mjs --foreground` (`LC_E2E_FOREGROUND`) startet wie gewohnt, für die Frame-Messung in `spike-003.js`.

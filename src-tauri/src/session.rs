@@ -983,11 +983,13 @@ impl LogSession {
                 }
             })
             .collect();
+        let laid = summary.buckets(count as u64, buckets);
         Ok(Overview {
             view_generation: data.view_generation,
             epoch: data.epoch,
             count: count as u64,
-            buckets: summary.buckets(count as u64, buckets),
+            buckets: laid.bits,
+            density: laid.density,
             marks,
         })
     }

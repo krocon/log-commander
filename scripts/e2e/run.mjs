@@ -111,6 +111,9 @@ const app = spawn(join(root, 'src-tauri/target/debug', exe), [log, other, big], 
     XDG_CONFIG_HOME: dir,
     XDG_DATA_HOME: dir,
     LC_E2E_SCRIPT: join(root, scenarioArg() ?? 'scripts/e2e/scenario.js'),
+    // The window opens behind the others without focus; `--foreground` keeps the usual start (frame
+    // measurements of the spikes need a visible, unobscured window).
+    LC_E2E_FOREGROUND: process.argv.includes('--foreground') ? '1' : undefined,
   },
   stdio: ['ignore', 'pipe', 'inherit'],
 });

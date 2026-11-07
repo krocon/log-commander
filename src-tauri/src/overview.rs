@@ -3,7 +3,8 @@
 //!
 //! A [`LevelSummary`] ORs the level bits of consecutive positions into chunks. When there are too
 //! many chunks, neighbours are merged and the chunk size doubles, so the memory stays at
-//! `MAX_CHUNKS` bytes and the resolution is always finer than any ruler height.
+//! `MAX_CHUNKS` bytes and the resolution is always finer than any ruler height. Laid onto pixel
+//! buckets, the chunks give the levels per pixel and how dense they are (share of chunks with the level).
 
 use crate::level::Level;
 
@@ -11,6 +12,18 @@ use crate::level::Level;
 pub const MAX_CHUNKS: usize = 64 * 1024;
 /// Positions per chunk at the start: exact for small views, merging starts at 64 K positions.
 const FIRST_CHUNK: u32 = 1;
+
+/// Levels with a density per bucket (the ruler's levels), in this order per bucket.
+pub const DENSITY_LEVELS: [Level; 3] = [Level::Fatal, Level::Error, Level::Warn];
+
+/// The summary laid onto pixel buckets, see [`LevelSummary::buckets`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Buckets {
+    /// Level bits per bucket.
+    pub bits: Vec<u8>,
+    /// Per bucket one density 0–255 for each of [`DENSITY_LEVELS`].
+    pub density: Vec<u8>,
+}
 
 /// The bit of a level in a summary mask.
 pub fn level_bit(level: Level) -> u8 {
@@ -191,31 +204,60 @@ impl LevelSummary {
     /// The chunks laid onto `n` pixel buckets over the first `lines` positions, without touching a
     /// line. A chunk counts in every bucket it covers: with fewer lines than buckets a line fills
     /// all its pixels, so neighbouring lines of one level form one mark.
-    pub fn buckets(&self, lines: u64, n: usize) -> Vec<u8> {
-        let mut out = vec![0u8; n];
+    ///
+    /// Besides the bits, a density per bucket and level of [`DENSITY_LEVELS`]: the share of the
+    /// bucket's positions that lie in chunks containing the level, 0–255 (any share above 0 gives at
+    /// least 1). Chunks hold bits, no counts, so this is the fraction of chunks with the level,
+    /// weighted by how much of each chunk falls into the bucket; with 1-position chunks it is exact.
+    pub fn buckets(&self, lines: u64, n: usize) -> Buckets {
+        let mut bits = vec![0u8; n];
+        let mut covered = vec![0u64; n * DENSITY_LEVELS.len()];
         let lines = lines.min(self.len());
         if n == 0 || lines == 0 {
-            return out;
+            return Buckets {
+                bits,
+                density: vec![0; covered.len()],
+            };
         }
+        let density_mask = DENSITY_LEVELS.iter().fold(0, |m, &l| m | level_bit(l));
         let size = u64::from(self.chunk_size);
-        let total = u128::from(lines);
+        let wide = n as u64;
         for index in 0..self.chunk_count() {
             let start = index as u64 * size;
             if start >= lines {
                 break;
             }
-            let bits = self.chunk(index);
-            if bits == 0 {
+            let chunk_bits = self.chunk(index);
+            if chunk_bits == 0 {
                 continue;
             }
             let end = (start + size).min(lines);
-            let first = (u128::from(start) * n as u128 / total) as usize;
-            let last = (u128::from(end) * n as u128).div_ceil(total) as usize;
-            for bucket in &mut out[first.min(n - 1)..last.clamp(first + 1, n)] {
-                *bucket |= bits;
+            // Positions scaled by `n`: lines < 2^32 and n <= 8192 fit into u64 easily.
+            let first = (start * wide / lines) as usize;
+            let last = (end * wide).div_ceil(lines) as usize;
+            for bucket in first.min(n - 1)..last.clamp(first + 1, n) {
+                bits[bucket] |= chunk_bits;
+                if chunk_bits & density_mask == 0 {
+                    continue;
+                }
+                // Overlap of the chunk with the bucket `[b·lines/n, (b+1)·lines/n)`, in 1/n positions.
+                let b = bucket as u64;
+                let overlap = (end * wide)
+                    .min((b + 1) * lines)
+                    .saturating_sub((start * wide).max(b * lines));
+                for (k, &level) in DENSITY_LEVELS.iter().enumerate() {
+                    if chunk_bits & level_bit(level) != 0 {
+                        covered[bucket * DENSITY_LEVELS.len() + k] += overlap;
+                    }
+                }
             }
         }
-        out
+        // A bucket is `lines` units long.
+        let density = covered
+            .into_iter()
+            .map(|c| (c * 255).div_ceil(lines).min(255) as u8)
+            .collect();
+        Buckets { bits, density }
     }
 
     /// Next position with a hit, strictly after (`forward`) or before `from` (`None`: from the start
@@ -305,7 +347,7 @@ mod tests {
     #[test]
     fn empty_summary_gives_empty_buckets() {
         let summary = LevelSummary::new();
-        assert_eq!(summary.buckets(0, 4), vec![0; 4]);
+        assert_eq!(summary.buckets(0, 4).bits, vec![0; 4]);
         assert_eq!(summary.find(0, None, true, ERR, |_| true), None);
         assert!(summary.is_empty());
     }
@@ -316,7 +358,7 @@ mod tests {
         for level in [Level::Info, Level::Error, Level::Warn] {
             summary.push(level);
         }
-        let buckets = summary.buckets(3, 9);
+        let buckets = summary.buckets(3, 9).bits;
         assert_eq!(
             buckets,
             vec![INFO, INFO, INFO, ERR, ERR, ERR, WARN, WARN, WARN]
@@ -339,7 +381,7 @@ mod tests {
         assert!(summary.chunks.len() < MAX_CHUNKS);
         assert!(summary.chunk_size() >= 4);
         let n = 1000;
-        let buckets = summary.buckets(total, n);
+        let buckets = summary.buckets(total, n).bits;
         for line in errors {
             let bucket = (line * n as u64 / total) as usize;
             // The chunk may start in the bucket before.
@@ -366,7 +408,7 @@ mod tests {
             });
         }
         assert!(summary.chunks.len() <= MAX_CHUNKS);
-        let buckets = summary.buckets(total, 800);
+        let buckets = summary.buckets(total, 800).bits;
         let marked = buckets.iter().filter(|b| *b & ERR != 0).count();
         assert!((1..=2).contains(&marked));
         let mut looked = 0;
@@ -389,12 +431,125 @@ mod tests {
                 Level::Info
             });
         }
-        let buckets = summary.buckets(100, 10);
+        let buckets = summary.buckets(100, 10).bits;
         assert_eq!(buckets[0] & ERR, ERR);
         assert_eq!(buckets[9] & ERR, ERR);
         assert!(buckets[1..9].iter().all(|b| b & ERR == 0));
         // Fewer lines than the summary has: the rest is left out.
-        assert_eq!(summary.buckets(50, 10)[9] & ERR, 0);
+        assert_eq!(summary.buckets(50, 10).bits[9] & ERR, 0);
+    }
+
+    /// Density of `level` (index into `DENSITY_LEVELS`) per bucket.
+    fn density(buckets: &Buckets, level: usize) -> Vec<u8> {
+        buckets
+            .density
+            .chunks(DENSITY_LEVELS.len())
+            .map(|d| d[level])
+            .collect()
+    }
+    const D_FATAL: usize = 0;
+    const D_ERROR: usize = 1;
+    const D_WARN: usize = 2;
+
+    #[test]
+    fn density_is_the_share_of_lines_while_chunks_are_single_lines() {
+        let mut summary = LevelSummary::new();
+        for i in 0..100 {
+            summary.push(if i % 4 == 0 {
+                Level::Error
+            } else {
+                Level::Info
+            });
+        }
+        let buckets = summary.buckets(100, 10);
+        assert_eq!(buckets.density.len(), 30);
+        // Lines 0, 4, 8 of the first ten: 3/10 of 255, rounded up.
+        assert_eq!(density(&buckets, D_ERROR)[0], 77);
+        // Lines 12, 16 of 10..20.
+        assert_eq!(density(&buckets, D_ERROR)[1], 51);
+        assert!(density(&buckets, D_WARN).iter().all(|&d| d == 0));
+        assert!(density(&buckets, D_FATAL).iter().all(|&d| d == 0));
+        // A line that fills several pixels is dense in all of them.
+        let mut few = LevelSummary::new();
+        for level in [Level::Info, Level::Fatal, Level::Warn] {
+            few.push(level);
+        }
+        let buckets = few.buckets(3, 9);
+        assert_eq!(
+            density(&buckets, D_FATAL),
+            vec![0, 0, 0, 255, 255, 255, 0, 0, 0]
+        );
+        assert_eq!(density(&buckets, D_WARN)[6..], [255, 255, 255]);
+    }
+
+    #[test]
+    fn a_chunk_across_a_bucket_edge_counts_by_its_share() {
+        let mut summary = LevelSummary::new();
+        for i in 0..3 {
+            summary.push(if i == 1 { Level::Error } else { Level::Info });
+        }
+        // Three lines on two buckets: line 1 lies half in each.
+        let buckets = summary.buckets(3, 2);
+        assert_eq!(buckets.bits, vec![ERR | INFO, ERR | INFO]);
+        assert_eq!(density(&buckets, D_ERROR), vec![85, 85]);
+    }
+
+    /// Like the demo (5000 lines/s, about 286 000 lines): FATAL in 2.3 %, ERROR in 9.3 %, WARN in
+    /// 6.5 % of the lines. Nearly every pixel holds a FATAL, but the densities tell the levels apart.
+    #[test]
+    fn a_dense_log_does_not_saturate_every_level() {
+        let mut summary = LevelSummary::new();
+        let total = 286_000u64;
+        let mut state = 4711u64;
+        for _ in 0..total {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            let roll = (state >> 33) % 1000;
+            summary.push(match roll {
+                0..=22 => Level::Fatal,
+                23..=115 => Level::Error,
+                116..=180 => Level::Warn,
+                _ => Level::Info,
+            });
+        }
+        assert_eq!(summary.chunk_size(), 8);
+        let buckets = summary.buckets(total, 800);
+        let fatal_bit = 1 << Level::Fatal as u8;
+        let with_fatal = buckets.bits.iter().filter(|b| *b & fatal_bit != 0).count();
+        assert!(with_fatal > 790, "the old picture: FATAL nearly everywhere");
+        let mean = |level| {
+            density(&buckets, level)
+                .iter()
+                .map(|&d| f64::from(d) / 255.0)
+                .sum::<f64>()
+                / 800.0
+        };
+        let (fatal, error, warn) = (mean(D_FATAL), mean(D_ERROR), mean(D_WARN));
+        // Chunks of 8 lines: 1 − (1 − p)^8.
+        assert!((0.12..0.24).contains(&fatal), "fatal {fatal}");
+        assert!((0.45..0.62).contains(&error), "error {error}");
+        assert!((0.33..0.48).contains(&warn), "warn {warn}");
+        assert!(density(&buckets, D_FATAL).iter().all(|&d| d < 200));
+    }
+
+    #[test]
+    fn an_isolated_error_has_a_small_but_visible_density() {
+        let mut summary = LevelSummary::new();
+        let total = 1_000_000u64;
+        for i in 0..total {
+            summary.push(if i == 500_000 {
+                Level::Error
+            } else {
+                Level::Info
+            });
+        }
+        let buckets = summary.buckets(total, 800);
+        let errors = density(&buckets, D_ERROR);
+        let marked: Vec<_> = errors.iter().filter(|&&d| d > 0).collect();
+        assert!((1..=2).contains(&marked.len()));
+        // One chunk of 16 lines among 1250 per pixel: above zero, far below dense.
+        assert!(marked.iter().all(|&&d| (1..=10).contains(&d)));
     }
 
     #[test]
@@ -450,7 +605,7 @@ mod tests {
         assert_eq!(summary.len(), 3);
         summary.push_run(ERR | WARN, 5);
         assert_eq!(summary.len(), 8);
-        assert_eq!(summary.buckets(8, 8)[7], ERR | WARN);
+        assert_eq!(summary.buckets(8, 8).bits[7], ERR | WARN);
         summary.clear();
         assert_eq!(summary.len(), 0);
     }

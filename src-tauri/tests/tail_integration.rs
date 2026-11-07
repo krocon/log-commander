@@ -1367,6 +1367,11 @@ fn overview_of_the_identity_and_of_a_filter_with_a_hit_in_a_stack_trace() {
         overview.buckets,
         vec![INFO_BIT, ERR_BIT, ERR_BIT, ERR_BIT, ERR_BIT, WARN_BIT, ERR_BIT, INFO_BIT]
     );
+    // Densities FATAL, ERROR, WARN per bucket: one line per pixel, so all or nothing.
+    assert_eq!(overview.density.len(), 3 * 8);
+    let error: Vec<u8> = overview.density.chunks(3).map(|d| d[1]).collect();
+    assert_eq!(error, vec![0, 255, 255, 255, 255, 0, 255, 0]);
+    assert_eq!(overview.density[5 * 3 + 2], 255);
 
     set_filter_and_wait(&fx, &Level::ALL, "needle");
     let overview = fx.session.overview(4, &[0, 3]).unwrap();

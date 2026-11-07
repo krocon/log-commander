@@ -1,7 +1,10 @@
-import { LEVELS, Level } from '../../core/log/log.models';
+import { Level } from '../../core/log/log.models';
 import { formatCount } from '../../shared/format';
 
-/** Levels the overview ruler marks, most severe first (prompt 007). */
+/**
+ * Levels the overview ruler marks, most severe first (prompt 007); also the order of the three densities per
+ * bucket in `Overview.density`.
+ */
 export type RulerLevel = 'FATAL' | 'ERROR' | 'WARN';
 export const RULER_LEVELS: readonly RulerLevel[] = ['FATAL', 'ERROR', 'WARN'];
 
@@ -9,62 +12,134 @@ export const RULER_LEVELS: readonly RulerLevel[] = ['FATAL', 'ERROR', 'WARN'];
 export const MIN_MARK_PX = 3;
 /** How close the pointer must be to a bookmark or the selection to hit it. */
 export const PIN_SLOP_PX = 4;
+/** Density (share of a pixel's lines) at which a bar fills its lane; denser looks the same. */
+export const SATURATION = 0.5;
+/** Width of the WARN lane in px; FATAL and ERROR share the wider lane left of it. */
+const WARN_LANE_PX = 4;
 
-export function levelBit(level: Level): number {
-  return 1 << LEVELS.indexOf(level);
-}
-
-/** The most severe ruler level among the bits of a bucket, or null. */
-export function topLevel(bits: number): RulerLevel | null {
-  for (const level of RULER_LEVELS) if (bits & levelBit(level)) return level;
-  return null;
-}
-
-/** A run of buckets with the same most severe level, as drawn. */
+/**
+ * A run of neighbouring buckets in which one level occurs. Each level has its own runs, so levels never
+ * hide each other; how dense the level is per bucket decides the length of its bar.
+ */
 export interface RulerMark {
   level: RulerLevel;
-  /** Ruler levels that occur in the run, most severe first. */
-  levels: RulerLevel[];
   /** First bucket and the one after the last. */
   from: number;
   to: number;
   y: number;
   h: number;
+  /** Density 0–1 per bucket of the run. */
+  density: number[];
+}
+
+/** Density of a level per bucket (0–1) from the backend's 0–255, three per bucket. */
+function densityAt(density: readonly number[], bucket: number, level: number): number {
+  return (density[bucket * RULER_LEVELS.length + level] ?? 0) / 255;
 }
 
 /**
- * Buckets (one per pixel row of the ruler) to marks: neighbouring buckets with the same most severe level
- * form one mark; every mark is at least `MIN_MARK_PX` high and stays inside the ruler.
+ * Densities (three per pixel row of the ruler, `Overview.density`) to marks: per level, neighbouring
+ * buckets in which it occurs form one mark; every mark is at least `MIN_MARK_PX` high and stays inside.
  */
-export function rulerMarks(buckets: readonly number[], height: number): RulerMark[] {
-  const n = buckets.length;
+export function rulerMarks(density: readonly number[], height: number): RulerMark[] {
+  const n = Math.floor(density.length / RULER_LEVELS.length);
   const marks: RulerMark[] = [];
   if (n === 0 || height <= 0) return marks;
   const scale = height / n;
-  let i = 0;
-  while (i < n) {
-    const level = topLevel(buckets[i]);
-    if (!level) {
-      i++;
+  RULER_LEVELS.forEach((level, k) => {
+    let i = 0;
+    while (i < n) {
+      // `!(d > 0)` also skips anything that is not a number, so the run below always advances.
+      if (!(densityAt(density, i, k) > 0)) {
+        i++;
+        continue;
+      }
+      const run: number[] = [];
+      let j = i;
+      while (j < n && densityAt(density, j, k) > 0) run.push(densityAt(density, j++, k));
+      const span = (j - i) * scale;
+      const h = Math.max(MIN_MARK_PX, span);
+      const y = Math.max(0, Math.min(height - h, i * scale - (h - span) / 2));
+      marks.push({ level, from: i, to: j, y, h: Math.min(h, height), density: run });
+      i = j;
+    }
+  });
+  return marks;
+}
+
+/** Where the bars of a level go across the ruler: from `x`, at most `w` and at least `min` px long. */
+export interface RulerLane {
+  x: number;
+  w: number;
+  min: number;
+}
+
+/**
+ * Two lanes: FATAL and ERROR share the wide one on the left (the rare errors are what the ruler is for),
+ * WARN has a narrow one on the right.
+ */
+export function rulerLanes(width: number): Record<RulerLevel, RulerLane> {
+  const warn = Math.min(WARN_LANE_PX, Math.max(1, Math.floor(width / 3)));
+  const severeW = Math.max(1, width - warn - 2);
+  const severe = { x: 1, w: severeW, min: Math.min(3, severeW) };
+  return {
+    FATAL: severe,
+    ERROR: severe,
+    WARN: { x: width - warn, w: warn, min: Math.min(2, warn) },
+  };
+}
+
+/** Length of a bar: the lane's minimum for a single line, growing with the density up to `SATURATION`. */
+export function barWidth(density: number, lane: RulerLane): number {
+  if (density <= 0) return 0;
+  return Math.round(lane.min + (lane.w - lane.min) * Math.min(1, density / SATURATION));
+}
+
+/** A rectangle to fill, in the order of the list. */
+export interface RulerRect {
+  level: RulerLevel;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/**
+ * The bars of the marks. A mark lower than `MIN_MARK_PX` is one bar as long as its densest bucket,
+ * otherwise each bucket gets its own length (equal neighbours joined). In a shared lane the shorter bar is
+ * drawn last, so FATAL and ERROR both stay visible; at equal length FATAL is on top.
+ */
+export function rulerRects(
+  marks: readonly RulerMark[],
+  buckets: number,
+  height: number,
+  width: number,
+): RulerRect[] {
+  if (buckets <= 0 || height <= 0) return [];
+  const lanes = rulerLanes(width);
+  const scale = height / buckets;
+  const rects: RulerRect[] = [];
+  for (const mark of marks) {
+    const lane = lanes[mark.level];
+    if ((mark.to - mark.from) * scale < MIN_MARK_PX) {
+      const w = barWidth(Math.max(...mark.density), lane);
+      rects.push({ level: mark.level, x: lane.x, y: mark.y, w, h: mark.h });
       continue;
     }
-    let bits = 0;
-    let j = i;
-    while (j < n && topLevel(buckets[j]) === level) bits |= buckets[j++];
-    const span = (j - i) * scale;
-    const h = Math.max(MIN_MARK_PX, span);
-    const y = Math.max(0, Math.min(height - h, i * scale - (h - span) / 2));
-    marks.push({
-      level,
-      levels: RULER_LEVELS.filter((l) => bits & levelBit(l)),
-      from: i,
-      to: j,
-      y,
-      h: Math.min(h, height),
-    });
-    i = j;
+    let last: RulerRect | null = null;
+    for (let i = 0; i < mark.density.length; i++) {
+      const w = barWidth(mark.density[i], lane);
+      const y = (mark.from + i) * scale;
+      if (last && last.w === w) {
+        last.h = y + scale - last.y;
+      } else {
+        last = { level: mark.level, x: lane.x, y, w, h: scale };
+        rects.push(last);
+      }
+    }
   }
-  return marks;
+  const rank = (level: RulerLevel) => -RULER_LEVELS.indexOf(level);
+  return rects.sort((a, b) => b.w - a.w || rank(a.level) - rank(b.level));
 }
 
 /** Pixel of a position in the view. */
@@ -94,14 +169,17 @@ export function bucketPositions(
   };
 }
 
-/** The mark under the pointer; overlapping marks (minimum height) go by severity. */
-export function markAt(marks: readonly RulerMark[], y: number): RulerMark | null {
-  let best: RulerMark | null = null;
-  for (const mark of marks) {
-    if (y < mark.y - 0.5 || y > mark.y + mark.h + 0.5) continue;
-    if (!best || RULER_LEVELS.indexOf(mark.level) < RULER_LEVELS.indexOf(best.level)) best = mark;
-  }
-  return best;
+/** The marks under the pointer, most severe first (a mark is at least `MIN_MARK_PX` high). */
+export function marksAt(marks: readonly RulerMark[], y: number): RulerMark[] {
+  return marks
+    .filter((mark) => y >= mark.y - 0.5 && y <= mark.y + mark.h + 0.5)
+    .sort((a, b) => RULER_LEVELS.indexOf(a.level) - RULER_LEVELS.indexOf(b.level));
+}
+
+/** The bucket of a mark under the pointer: that of the pixel, or the nearest of a mark drawn higher. */
+function bucketIn(mark: RulerMark, y: number, buckets: number, height: number): number {
+  const bucket = Math.floor((y / height) * buckets);
+  return Math.min(mark.to - 1, Math.max(mark.from, bucket));
 }
 
 /** The visible part of the view as a band; at least `minPx` high. */
@@ -164,57 +242,73 @@ export type RulerTarget =
   /** Look for the first entry of `levels` after `from` (exclusive, null = from the start); else `fallback`. */
   | { kind: 'level'; from: number | null; levels: Level[]; fallback: number };
 
-/** Bookmarks and the selection first, then a mark, else the proportional position. */
-export function clickTarget(
+interface RulerView {
+  marks: readonly RulerMark[];
+  pins: readonly RulerPin[];
+  count: number;
+  height: number;
+  buckets: number;
+}
+
+/** The marks under the pointer and the buckets `[from, to)` they mean there. */
+function hereAt(
   y: number,
-  view: {
-    marks: readonly RulerMark[];
-    pins: readonly RulerPin[];
-    count: number;
-    height: number;
-    buckets: number;
-  },
-): RulerTarget {
+  view: RulerView,
+): { marks: RulerMark[]; from: number; to: number } | null {
+  const marks = marksAt(view.marks, y);
+  if (marks.length === 0) return null;
+  const buckets = marks.map((m) => bucketIn(m, y, view.buckets, view.height));
+  return { marks, from: Math.min(...buckets), to: Math.max(...buckets) + 1 };
+}
+
+/**
+ * Bookmarks and the selection first, then the marks: the first entry of their levels from the pixel on
+ * (in a long dense run that is near the pointer, not at the start of the run); else the proportional position.
+ */
+export function clickTarget(y: number, view: RulerView): RulerTarget {
   const pin = pinAt(view.pins, y, view.count, view.height);
   if (pin) return { kind: 'position', position: pin.position };
-  const mark = markAt(view.marks, y);
-  if (mark) {
-    const { start } = bucketPositions(mark.from, mark.to, view.buckets, view.count);
+  const here = hereAt(y, view);
+  if (here) {
+    const { start } = bucketPositions(here.from, here.from + 1, view.buckets, view.count);
+    const levels = new Set<Level>(here.marks.flatMap((m) => levelsFrom(m.level)));
     return {
       kind: 'level',
       from: start > 0 ? start - 1 : null,
-      levels: levelsFrom(mark.level),
+      levels: [...RULER_LEVELS].reverse().filter((l) => levels.has(l)),
       fallback: start,
     };
   }
   return { kind: 'position', position: yToPosition(y, view.count, view.height) };
 }
 
-/** Tooltip of the ruler at a pixel: the pin, the mark's levels and lines, or what a click does. */
-export function rulerTooltip(
-  y: number,
-  view: {
-    marks: readonly RulerMark[];
-    pins: readonly RulerPin[];
-    count: number;
-    height: number;
-    buckets: number;
-  },
-): string {
+/** A density in words: whole percent, `< 1 %` for a trace. */
+function percent(density: number): string {
+  return density < 0.01 ? '< 1 %' : `${Math.round(density * 100)} %`;
+}
+
+/** Tooltip of the ruler at a pixel: the pin, the marks' levels with their density and lines, or what a click does. */
+export function rulerTooltip(y: number, view: RulerView): string {
   const pin = pinAt(view.pins, y, view.count, view.height);
   if (pin) {
     const what = pin.kind === 'bookmark' ? 'Lesezeichen' : 'Gewählte Zeile';
     const hidden = pin.visible ? '' : ' (vom Filter ausgeblendet)';
     return `${what}: Zeile ${formatCount(pin.line + 1)}${hidden}`;
   }
-  const mark = markAt(view.marks, y);
-  if (mark) {
-    const { start, end } = bucketPositions(mark.from, mark.to, view.buckets, view.count);
+  const here = hereAt(y, view);
+  if (here) {
+    const levels = here.marks
+      .map((m) => {
+        const bucket = bucketIn(m, y, view.buckets, view.height);
+        return `${m.level} ${percent(m.density[bucket - m.from])}`;
+      })
+      .join(', ');
+    const { start, end } = bucketPositions(here.from, here.to, view.buckets, view.count);
     const range =
       end - start > 1
         ? `Zeilen ${formatCount(start + 1)}–${formatCount(end)} der Ansicht`
         : `Zeile ${formatCount(start + 1)} der Ansicht`;
-    return `${mark.levels.join(', ')} · ${range} · Klick springt zum ersten Eintrag`;
+    return `Dichte ${levels} · ${range} · Klick springt zum ersten Eintrag`;
   }
   return 'Klick springt an diese Stelle';
 }

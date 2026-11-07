@@ -444,16 +444,34 @@
       const session = sessions.get(sessionId);
       const shown = visible(session);
       const out = new Array(buckets).fill(0);
+      // Densities FATAL, ERROR, WARN per bucket like the backend with one line per chunk: the share of the
+      // bucket's lines, 0–255.
+      const covered = new Array(buckets * 3).fill(0);
+      const n = shown.length;
       shown.forEach((l, p) => {
-        const first = Math.floor((p * buckets) / shown.length);
-        const last = Math.max(first + 1, Math.ceil(((p + 1) * buckets) / shown.length));
-        for (let b = first; b < Math.min(last, buckets); b++) out[b] |= 1 << LEVELS.indexOf(l.level);
+        const first = Math.floor((p * buckets) / n);
+        const last = Math.max(first + 1, Math.ceil(((p + 1) * buckets) / n));
+        const k = ['FATAL', 'ERROR', 'WARN'].indexOf(l.level);
+        for (let b = first; b < Math.min(last, buckets); b++) {
+          out[b] |= 1 << LEVELS.indexOf(l.level);
+          if (k < 0) continue;
+          const overlap = Math.min((p + 1) * buckets, (b + 1) * n) - Math.max(p * buckets, b * n);
+          covered[b * 3 + k] += Math.max(0, overlap);
+        }
       });
+      const density = covered.map((c) => (n ? Math.min(255, Math.ceil((c * 255) / n)) : 0));
       const marks = lines.map((line) => {
         const position = Math.max(0, shown.findIndex((l) => l.line >= line));
         return { line, position, visible: shown[position]?.line === line };
       });
-      return { viewGeneration: session.generation, epoch: 0, count: shown.length, buckets: out, marks };
+      return {
+        viewGeneration: session.generation,
+        epoch: 0,
+        count: shown.length,
+        buckets: out,
+        density,
+        marks,
+      };
     },
     find_level({ sessionId, fromPosition, forward, levels }) {
       const shown = visible(sessions.get(sessionId));
