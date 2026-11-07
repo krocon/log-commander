@@ -223,10 +223,19 @@ pub fn create_private_file(path: &Path, append: bool) -> io::Result<File> {
     options.open(path)
 }
 
+/// What goes to the writer thread.
+#[derive(Debug, PartialEq, Eq)]
+pub enum SpoolItem {
+    Line(Vec<u8>),
+    /// Start a new spool file now (an SFTP source mirrors a remote truncation or rotation, prompt
+    /// 017: the session sees a rotation, `tail.rs` needs nothing new).
+    Rotate,
+}
+
 /// What sources hold: hands lines to the writer thread. Cheap to clone (one per receiving thread).
 #[derive(Clone)]
 pub struct SpoolWriter {
-    tx: SyncSender<Vec<u8>>,
+    tx: SyncSender<SpoolItem>,
     queued: Arc<AtomicUsize>,
     queue_bytes: usize,
     stats: Arc<SpoolStats>,
@@ -243,7 +252,7 @@ impl SpoolWriter {
             self.stats.dropped.fetch_add(1, Ordering::Relaxed);
             return false;
         }
-        match self.tx.try_send(line) {
+        match self.tx.try_send(SpoolItem::Line(line)) {
             Ok(()) => true,
             Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => {
                 self.queued.fetch_sub(len, Ordering::SeqCst);
@@ -261,10 +270,13 @@ impl SpoolWriter {
             let len = line.len();
             if self.queued.load(Ordering::SeqCst) + len <= self.queue_bytes {
                 self.queued.fetch_add(len, Ordering::SeqCst);
-                match self.tx.try_send(line) {
+                match self.tx.try_send(SpoolItem::Line(line)) {
                     Ok(()) => return true,
                     Err(TrySendError::Full(back)) => {
                         self.queued.fetch_sub(len, Ordering::SeqCst);
+                        let SpoolItem::Line(back) = back else {
+                            unreachable!("sent a line")
+                        };
                         line = back;
                     }
                     Err(TrySendError::Disconnected(_)) => {
@@ -272,6 +284,22 @@ impl SpoolWriter {
                         return false;
                     }
                 }
+            }
+            if stop.is_stopped() {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    /// Asks for a new spool file after the lines queued so far, waiting while the queue is full.
+    /// False if `stop` was set or the spool closed meanwhile.
+    pub fn rotate_blocking(&self, stop: &StopToken) -> bool {
+        loop {
+            match self.tx.try_send(SpoolItem::Rotate) {
+                Ok(()) => return true,
+                Err(TrySendError::Disconnected(_)) => return false,
+                Err(TrySendError::Full(_)) => {}
             }
             if stop.is_stopped() {
                 return false;
@@ -380,14 +408,28 @@ impl Drop for Spool {
 
 fn write_loop(
     mut files: SpoolFiles,
-    rx: Receiver<Vec<u8>>,
+    rx: Receiver<SpoolItem>,
     queued: &AtomicUsize,
     stats: &SpoolStats,
     stop: &StopToken,
 ) {
     let interval = files.config().flush_interval;
     let mut last_flush = Instant::now();
-    let write = |files: &mut SpoolFiles, line: Vec<u8>| {
+    let write = |files: &mut SpoolFiles, item: SpoolItem| {
+        let line = match item {
+            SpoolItem::Line(line) => line,
+            // An empty file needs no successor.
+            SpoolItem::Rotate if files.current_len == 0 => return,
+            SpoolItem::Rotate => {
+                match files.rotate() {
+                    Ok(()) => {
+                        stats.rotations.fetch_add(1, Ordering::Relaxed);
+                    }
+                    Err(e) => *stats.error.lock() = Some(e.to_string()),
+                }
+                return;
+            }
+        };
         queued.fetch_sub(line.len(), Ordering::SeqCst);
         let seq_before = files.seq;
         match files.append(&line) {
@@ -766,7 +808,7 @@ mod tests {
         // The channel is full: waits until stopped, drops nothing silently.
         assert!(!writer.line_blocking(b"b".to_vec(), &stop));
         t.join().unwrap();
-        assert_eq!(rx.try_recv().unwrap(), b"a");
+        assert_eq!(rx.try_recv().unwrap(), SpoolItem::Line(b"a".to_vec()));
         assert_eq!(writer.stats().dropped.load(Ordering::Relaxed), 0);
     }
 

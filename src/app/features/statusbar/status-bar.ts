@@ -9,6 +9,7 @@ import { hintText } from '../fields/fields-logic';
 import { ExportService } from '../export/export.service';
 import { progressText } from '../export/export-logic';
 import { COUNTER_TITLE, sourceCounters, sourcePill } from '../sources/source-logic';
+import { REMOTE_COUNTER_TITLE } from '../remote/remote-logic';
 
 @Component({
   selector: 'app-status-bar',
@@ -36,7 +37,7 @@ import { COUNTER_TITLE, sourceCounters, sourcePill } from '../sources/source-log
           ><bdi>{{ src.label }}</bdi></span
         >
         @if (counters(); as text) {
-          <span [title]="counterTitle">{{ text }}</span>
+          <span [title]="counterTitle()">{{ text }}</span>
         }
         @if (s.update().sourceStatus?.spoolError; as problem) {
           <span class="stale" role="alert">Spool: {{ problem }}</span>
@@ -55,7 +56,11 @@ import { COUNTER_TITLE, sourceCounters, sourcePill } from '../sources/source-log
         <button
           type="button"
           class="link"
-          title="Empfangenes als Datei speichern (Export)"
+          [title]="
+            src.kind === 'sftp'
+              ? 'Gelesenes als lokale Datei speichern (Export)'
+              : 'Empfangenes als Datei speichern (Export)'
+          "
           (click)="sessions.exportRequest.set(s)"
         >
           Speichern unter …
@@ -214,10 +219,13 @@ export class StatusBarComponent {
     return status ? sourcePill(status.state) : null;
   });
   protected readonly counters = computed(() => {
-    const status = this.session()?.update().sourceStatus;
-    return status ? sourceCounters(status) : '';
+    const session = this.session();
+    const status = session?.update().sourceStatus;
+    return status ? sourceCounters(status, session?.source?.kind ?? 'syslog') : '';
   });
-  protected readonly counterTitle = COUNTER_TITLE;
+  protected readonly counterTitle = computed(() =>
+    this.session()?.source?.kind === 'sftp' ? REMOTE_COUNTER_TITLE : COUNTER_TITLE,
+  );
 
   protected readonly partly = computed(() => partlyRecognised(this.session()?.columns() ?? null));
   protected readonly formatTitle = computed(

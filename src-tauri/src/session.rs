@@ -2260,6 +2260,8 @@ pub struct SessionManager {
     spool_root: RwLock<Option<Arc<SpoolRoot>>>,
     /// Total bytes per spool (settings).
     spool_limit: AtomicU64,
+    /// SSH connections, known hosts and keychain (prompt 017), set at start.
+    remote: RwLock<Option<Arc<crate::remote::Hub>>>,
 }
 
 impl Default for SessionManager {
@@ -2272,6 +2274,7 @@ impl Default for SessionManager {
             report_dir: RwLock::new(None),
             spool_root: RwLock::new(None),
             spool_limit: AtomicU64::new(crate::spool::DEFAULT_MAX_TOTAL),
+            remote: RwLock::new(None),
         }
     }
 }
@@ -2339,6 +2342,9 @@ impl SessionManager {
             session.stop_source();
         }
         drop(sessions);
+        if let Some(hub) = self.remote.read().as_ref() {
+            hub.close_all();
+        }
     }
 
     /// Where spools go (prompt 016), set at start.
@@ -2360,13 +2366,30 @@ impl SessionManager {
         &self,
         config: SourceConfig,
         keep: bool,
+        credentials: crate::remote::Credentials,
         options: OpenOptions,
         sink: UpdateSink,
     ) -> AppResult<SessionInfo> {
         let root = self.spool_root()?;
-        let source = crate::sources::prepare(config)?;
+        let ctx = crate::sources::PrepareContext {
+            remote: self.remote.read().clone(),
+            credentials,
+        };
+        let source = crate::sources::prepare(config, ctx)?;
         let spool = SpoolConfig::new(root.new_dir(), self.spool_limit.load(Ordering::SeqCst));
         self.open_prepared_source(source, spool, keep, options, sink)
+    }
+
+    /// The SSH hub (prompt 017).
+    pub fn set_remote(&self, hub: Arc<crate::remote::Hub>) {
+        *self.remote.write() = Some(hub);
+    }
+
+    pub fn remote(&self) -> AppResult<Arc<crate::remote::Hub>> {
+        self.remote
+            .read()
+            .clone()
+            .ok_or_else(|| AppError::new(ErrorCode::Unsupported, "no SSH support set up"))
     }
 
     /// The spool folders, once set.

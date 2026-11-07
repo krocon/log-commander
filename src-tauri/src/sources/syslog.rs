@@ -971,6 +971,18 @@ fn utf8_floor(bytes: &[u8], max: usize) -> usize {
 ///
 /// Nothing in a line can then move the cursor, reorder text or start a new line.
 pub fn escape_into(out: &mut Vec<u8>, bytes: &[u8]) {
+    escape_with(out, bytes, true);
+}
+
+/// `escape_into` for lines of a remote file (prompt 017): `\` and the FIX separator SOH stay as they
+/// are, so a JSON line with `\"` stays JSON and FIX stays FIX; everything that could move the
+/// cursor, reorder text or start a line is escaped as in `escape_into`.
+pub fn escape_controls_into(out: &mut Vec<u8>, bytes: &[u8]) {
+    escape_with(out, bytes, false);
+}
+
+/// `syslog`: `\` doubled and SOH escaped (unambiguous); for files both stay.
+fn escape_with(out: &mut Vec<u8>, bytes: &[u8], syslog: bool) {
     for chunk in bytes.utf8_chunks() {
         let valid = chunk.valid().as_bytes();
         let mut start = 0;
@@ -979,7 +991,8 @@ pub fn escape_into(out: &mut Vec<u8>, bytes: &[u8]) {
             let b = valid[i];
             // (bytes the escape replaces, what to write)
             let escape: Option<(usize, Escape)> = match b {
-                b'\\' => Some((1, Escape::Text(b"\\\\"))),
+                b'\\' if syslog => Some((1, Escape::Text(b"\\\\"))),
+                0x01 if !syslog => None,
                 b'\n' => Some((1, Escape::Text(b"\\n"))),
                 b'\r' => Some((1, Escape::Text(b"\\r"))),
                 b'\t' => None,

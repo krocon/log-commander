@@ -59,6 +59,7 @@ impl Fixture {
             .open_source(
                 SourceConfig::Syslog(config),
                 keep,
+                Default::default(),
                 OpenOptions::default(),
                 Box::new(|_| {}),
             )
@@ -295,6 +296,7 @@ fn a_port_in_use_is_reported_and_leaves_nothing_behind() {
                 ..SyslogConfig::default()
             }),
             false,
+            Default::default(),
             OpenOptions::default(),
             Box::new(|_| {}),
         )
@@ -322,6 +324,7 @@ fn remote_listening_needs_the_explicit_choice() {
                 ..SyslogConfig::default()
             }),
             false,
+            Default::default(),
             OpenOptions::default(),
             Box::new(|_| {}),
         )
@@ -777,6 +780,7 @@ fn at_most_eight_sources_at_a_time() {
         .open_source(
             SourceConfig::Syslog(udp_config(Protocol::Udp)),
             false,
+            Default::default(),
             OpenOptions::default(),
             Box::new(|_| {}),
         )

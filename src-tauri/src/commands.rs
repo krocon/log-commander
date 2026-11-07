@@ -70,6 +70,7 @@ pub async fn open_source(
     app: AppHandle,
     config: crate::sources::SourceConfig,
     keep: Option<bool>,
+    credentials: Option<crate::remote::Credentials>,
     on_update: Channel<SessionUpdate>,
 ) -> AppResult<SessionInfo> {
     blocking(move || {
@@ -77,9 +78,47 @@ pub async fn open_source(
         let sink = Box::new(move |update: SessionUpdate| {
             let _ = on_update.send(update);
         });
-        manager.open_source(config, keep.unwrap_or(false), OpenOptions::default(), sink)
+        manager.open_source(
+            config,
+            keep.unwrap_or(false),
+            credentials.unwrap_or_default(),
+            OpenOptions::default(),
+            sink,
+        )
     })
     .await
+}
+
+/// Hosts of `~/.ssh/config` for the remote dialog (prompt 017; aliases without wildcards).
+#[tauri::command]
+pub async fn remote_hosts(
+    state: State<'_, SessionManager>,
+) -> AppResult<Vec<crate::remote::ssh_config::HostConfig>> {
+    let hub = state.remote()?;
+    blocking(move || Ok(hub.hosts())).await
+}
+
+/// A folder on the server for the dialog's file browser; connects like `open_source` (same errors
+/// for host keys and secrets), the connection is shared with the files opened afterwards.
+#[tauri::command]
+pub async fn remote_list_dir(
+    state: State<'_, SessionManager>,
+    target: crate::remote::Target,
+    credentials: Option<crate::remote::Credentials>,
+    path: String,
+) -> AppResult<crate::remote::RemoteListing> {
+    let hub = state.remote()?;
+    blocking(move || hub.list(&target, &credentials.unwrap_or_default(), &path)).await
+}
+
+/// Removes the stored password and passphrase of a target from the keychain.
+#[tauri::command]
+pub async fn forget_remote_secret(
+    state: State<'_, SessionManager>,
+    target: crate::remote::Target,
+) -> AppResult<()> {
+    let hub = state.remote()?;
+    blocking(move || hub.forget(&target)).await
 }
 
 /// Keep the spool of a source when its tab closes (prompt 016).

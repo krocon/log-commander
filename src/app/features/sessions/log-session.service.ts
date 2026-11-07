@@ -13,6 +13,8 @@ import {
   SessionInfo,
   SessionUpdate,
   SourceConfig,
+  RemoteCredentials,
+  SftpConfig,
 } from '../../core/log/log.models';
 import { addSavedSource, sourceKey } from '../sources/source-logic';
 import { ALL_SOURCES, mergeKey, maskForBackend } from '../merge/merge-logic';
@@ -84,6 +86,13 @@ export class LogSessionService {
   readonly exportRequest = signal<SessionState | null>(null);
   /** The dialog „Quelle öffnen“ (prompt 016), maybe with a configuration to start from. */
   readonly sourceRequest = signal<{ config: SourceConfig | null } | null>(null);
+  /**
+   * Prompt 017: the dialog „Remote-Datei“, prefilled (a remembered connection, a workspace) and with the error that
+   * made it open (an unknown host key, a missing password), if any.
+   */
+  readonly remoteRequest = signal<{ config: SftpConfig | null; error?: AppError | null } | null>(
+    null,
+  );
   /**
    * Opens a workspace (`.lcw`) given as a path, wherever a path is opened (dialog, path field, drop, command line,
    * recent files). Set by the workspace service, which needs this service itself.
@@ -158,20 +167,25 @@ export class LogSessionService {
    * open already is activated. Remembered in the settings (configuration only). Hands a failure (port in use …)
    * to the caller.
    */
-  async openSource(config: SourceConfig, keep: boolean): Promise<AppError | null> {
+  async openSource(
+    config: SourceConfig,
+    keep: boolean,
+    credentials: RemoteCredentials | null = null,
+  ): Promise<AppError | null> {
     const key = sourceKey(config);
     const open = tabOfFile(
       this.sessions().filter((s) => s.source !== null && sourceKey(s.source.config) === key),
     );
-    if (open && config.port !== 0) {
+    // Port 0: chosen by the system (syslog), nothing to open again; for SFTP it means „from ~/.ssh/config“.
+    const lasting = config.kind === 'sftp' || config.port !== 0;
+    if (open && lasting) {
       this.activate(open.id);
       return null;
     }
     try {
       await this.api.setSpoolLimit(this.settings.settings().spoolLimitMb);
-      await this.start((onUpdate) => this.api.openSource(config, keep, onUpdate));
-      // Port 0 (chosen by the system) is nothing to open again.
-      if (config.port !== 0) {
+      await this.start((onUpdate) => this.api.openSource(config, keep, onUpdate, credentials));
+      if (lasting) {
         this.settings.update({
           savedSources: addSavedSource(this.settings.settings().savedSources, { config, keep }),
         });

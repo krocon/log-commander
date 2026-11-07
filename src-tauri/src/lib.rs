@@ -31,6 +31,7 @@ pub mod model;
 pub mod overview;
 pub mod platform;
 pub mod profile;
+pub mod remote;
 pub mod report_db;
 pub mod session;
 pub mod sources;
@@ -52,6 +53,7 @@ const MENU_EXPORT: &str = "export-log";
 const MENU_WORKSPACE_OPEN: &str = "workspace-open";
 const MENU_WORKSPACE_SAVE: &str = "workspace-save";
 const MENU_OPEN_SOURCE: &str = "open-source";
+const MENU_OPEN_REMOTE: &str = "open-remote";
 
 pub fn run() {
     #[allow(unused_mut)] // changed by end-to-end runs (debug builds) only
@@ -98,6 +100,13 @@ pub fn run() {
                     Err(e) => eprintln!("no folder for spools: {e}"),
                 }
             }
+            // SSH (prompt 017): host keys the user confirmed go into the app's own known_hosts,
+            // `~/.ssh/known_hosts` is only read. End-to-end runs use neither the user's files nor
+            // the real keychain.
+            let hub = remote_hub(app.path().app_config_dir().ok());
+            let hub = std::sync::Arc::new(hub);
+            remote::start_sweeper(std::sync::Arc::downgrade(&hub));
+            app.state::<SessionManager>().set_remote(hub);
             Ok(())
         })
         .menu(build_menu)
@@ -116,6 +125,8 @@ pub fn run() {
                 let _ = app.emit("menu-workspace-save", ());
             } else if event.id() == MENU_OPEN_SOURCE {
                 let _ = app.emit("menu-open-source", ());
+            } else if event.id() == MENU_OPEN_REMOTE {
+                let _ = app.emit("menu-open-remote", ());
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -167,8 +178,15 @@ pub fn run() {
             commands::write_workspace,
             commands::probe_paths,
             commands::scripted_dialogs,
+            commands::remote_hosts,
+            commands::remote_list_dir,
+            commands::forget_remote_secret,
             #[cfg(debug_assertions)]
             e2e::e2e_report,
+            #[cfg(debug_assertions)]
+            e2e::e2e_sftp_server,
+            #[cfg(debug_assertions)]
+            e2e::e2e_sftp_stop,
         ])
         .build(context)
         .expect("error while building Log Commander")
@@ -182,7 +200,60 @@ pub fn run() {
         });
 }
 
-/// The platform's default menu plus File → Open…, Open Path…, Open Source…, Merge Files…, Export…, Open Workspace…
+fn remote_hub(config_dir: Option<std::path::PathBuf>) -> remote::Hub {
+    #[cfg(debug_assertions)]
+    if e2e::scenario_active() {
+        let dir = std::env::temp_dir().join(format!("lc-e2e-ssh-{}", std::process::id()));
+        return remote::Hub::new(
+            remote::trust::KnownHosts {
+                user: None,
+                app: dir.join("known_hosts"),
+            },
+            None,
+            std::sync::Arc::new(remote::secrets::MemoryStore::default()),
+        );
+    }
+    let env = remote::ssh_config::Environment::current();
+    // Without a config folder nothing can be recorded (an unknown host key stays an error).
+    let app = config_dir
+        .map(|d| d.join("known_hosts"))
+        .unwrap_or_default();
+    remote::Hub::new(
+        remote::trust::KnownHosts {
+            user: env.as_ref().map(|e| e.ssh_dir().join("known_hosts")),
+            app,
+        },
+        env,
+        std::sync::Arc::new(SystemStore),
+    )
+}
+
+/// The OS keychain behind the hub's store trait (set up on first use, not at start).
+struct SystemStore;
+
+impl remote::secrets::SecretStore for SystemStore {
+    fn available(&self) -> bool {
+        remote::secrets::system_store().available()
+    }
+    fn get(
+        &self,
+        account: &str,
+    ) -> Result<Option<remote::secrets::Secret>, remote::secrets::StoreError> {
+        remote::secrets::system_store().get(account)
+    }
+    fn set(
+        &self,
+        account: &str,
+        secret: &remote::secrets::Secret,
+    ) -> Result<(), remote::secrets::StoreError> {
+        remote::secrets::system_store().set(account, secret)
+    }
+    fn delete(&self, account: &str) -> Result<(), remote::secrets::StoreError> {
+        remote::secrets::system_store().delete(account)
+    }
+}
+
+/// The platform's default menu plus File → Open…, Open Path…, Open Source…, Open Remote File…, Merge Files…, Export…, Open Workspace…
 /// and Save Workspace…
 fn build_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<Menu<R>> {
     let menu = Menu::default(app)?;
@@ -207,6 +278,13 @@ fn build_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<Men
         "Open Source…",
         true,
         Some("CmdOrCtrl+Shift+L"),
+    )?;
+    let open_remote = MenuItem::with_id(
+        app,
+        MENU_OPEN_REMOTE,
+        "Open Remote File…",
+        true,
+        Some("CmdOrCtrl+Shift+H"),
     )?;
     let export = MenuItem::with_id(app, MENU_EXPORT, "Export…", true, Some("CmdOrCtrl+Shift+E"))?;
     let workspace_open = MenuItem::with_id(
@@ -234,6 +312,7 @@ fn build_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<Men
                 &open,
                 &open_path,
                 &open_source,
+                &open_remote,
                 &merge,
                 &export,
                 &separator,
@@ -247,6 +326,7 @@ fn build_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<Men
                 .item(&open)
                 .item(&open_path)
                 .item(&open_source)
+                .item(&open_remote)
                 .item(&merge)
                 .item(&export)
                 .item(&separator)

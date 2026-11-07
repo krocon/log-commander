@@ -423,7 +423,7 @@ function parseFile(v: unknown, dropper: Dropper): WsFile | null {
 
 /** A source (prompt 016): its configuration checked field by field, its tabs; marks do not apply to a new spool. */
 function parseSourceFile(v: Obj, dropper: Dropper): WsFile | null {
-  const source = parseSourceConfig(v['source']);
+  const source = parseSourceConfig(v['source'], true);
   if (!source) return null;
   return {
     kind: 'source',

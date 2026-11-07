@@ -6,6 +6,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import {
   appendFileSync,
   closeSync,
+  mkdirSync,
   existsSync,
   mkdtempSync,
   openSync,
@@ -49,6 +50,14 @@ const other = join(dir, 'other.log');
 writeFileSync(other, 'ERROR:root:other file\nINFO:root:still here\n');
 // No structure at all: no columns (prompt 009), opened by the scenario through the path dialog.
 writeFileSync(join(dir, 'plain.log'), 'just some words\nand some more words\n');
+// Prompt 017: the folder the SFTP server in the app serves (debug builds only), with a log in it.
+const remoteDir = join(dir, 'remote');
+const remoteLog = join(remoteDir, 'app.log');
+mkdirSync(join(remoteDir, 'archive'), { recursive: true });
+writeFileSync(
+  remoteLog,
+  '2026-01-15 10:00:00,000 INFO  [main] app.Boot - remote start\n2026-01-15 10:00:01,000 ERROR [main] app.Db - remote größe 😀\n',
+);
 // Measurements in the message (prompt 011): Python format, `cpu=… mem=… took …`, the same on every run.
 {
   let state = 4711;
@@ -218,6 +227,14 @@ function act(action) {
       break;
     case 'truncate':
       truncateSync(log);
+      break;
+    case 'sftpappend':
+      // Prompt 017: a line written on the "server".
+      appendFileSync(remoteLog, `${text}\n`);
+      break;
+    case 'sftprotate':
+      renameSync(remoteLog, `${remoteLog}.1`);
+      writeFileSync(remoteLog, `${text}\n`);
       break;
     case 'rotate':
       renameSync(log, `${log}.1`);

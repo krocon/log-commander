@@ -20,6 +20,12 @@ export type ErrorCode =
   | 'invalid_workspace'
   | 'invalid_source'
   | 'port_in_use'
+  | 'host_key_unknown'
+  | 'host_key_changed'
+  | 'auth_failed'
+  | 'secret_required'
+  | 'connection_failed'
+  | 'unsupported'
   | 'backend_unavailable'
   | 'unknown';
 
@@ -29,6 +35,45 @@ export interface AppError {
   path?: string;
   /** The node of a filter expression (prompt 010) or the extraction rule (prompt 011) the error is about. */
   nodeId?: string;
+  /** SSH details (prompt 017); never a secret. */
+  remote?: RemoteDetail;
+}
+
+/** Mirrors `RemoteDetail` in error.rs. */
+export interface RemoteDetail {
+  keyType?: string;
+  /** `SHA256:…` */
+  fingerprint?: string;
+  /** Where the other key is recorded (changed host key). */
+  knownHosts?: string;
+  knownHostsLine?: number;
+  /** Which secret is needed. */
+  secret?: 'password' | 'passphrase';
+  /** The secret given was not accepted. */
+  wrong: boolean;
+  /** Why a host key is refused: other_key, revoked, unusable, cert_authority, unknown_marker, unreadable. */
+  reason?: string;
+}
+
+/** The refusal of a host key in words (security review 017 M1). */
+function hostKeyRefusal(error: AppError): string {
+  const r = error.remote;
+  const where = `${r?.knownHosts ?? 'known_hosts'}${r?.knownHostsLine ? `, Zeile ${r.knownHostsLine}` : ''}`;
+  const shown = r?.fingerprint ?? '?';
+  switch (r?.reason) {
+    case 'revoked':
+      return `Host-Schlüssel ist gesperrt (@revoked in ${where}), Verbindung abgebrochen (${shown})`;
+    case 'unusable':
+      return `Für diesen Server steht ein unlesbarer Eintrag in ${where}, Verbindung abgebrochen (${shown})`;
+    case 'cert_authority':
+      return `Für diesen Server gilt eine Zertifizierungsstelle (@cert-authority in ${where}); Host-Zertifikate werden nicht unterstützt, Verbindung abgebrochen`;
+    case 'unknown_marker':
+      return `Für diesen Server steht ein Eintrag mit unbekannter Markierung in ${where}, Verbindung abgebrochen`;
+    case 'unreadable':
+      return `${r?.knownHosts ?? 'known_hosts'} lässt sich nicht lesen, der Host-Schlüssel kann nicht geprüft werden`;
+    default:
+      return `Host-Schlüssel hat sich geändert (${shown}), Verbindung abgebrochen. Eingetragen ist ein anderer in ${where}`;
+  }
 }
 
 export function toAppError(e: unknown): AppError {
@@ -69,6 +114,22 @@ export function describeError(error: AppError): string {
       return `Quelle nicht möglich: ${error.message}`;
     case 'port_in_use':
       return `Port belegt: ${error.message}. Anderen Port wählen oder das andere Programm beenden`;
+    case 'host_key_unknown':
+      return `Unbekannter Host-Schlüssel: ${error.remote?.keyType ?? ''} ${error.remote?.fingerprint ?? ''}`;
+    case 'host_key_changed':
+      return hostKeyRefusal(error);
+    case 'auth_failed':
+      return `Anmeldung abgelehnt: ${error.message}`;
+    case 'secret_required':
+      if (error.remote?.secret === 'passphrase')
+        return error.remote.wrong
+          ? 'Falsche Passphrase'
+          : 'Die Schlüsseldatei braucht eine Passphrase';
+      return error.remote?.wrong ? 'Passwort nicht angenommen' : 'Passwort nötig';
+    case 'connection_failed':
+      return `Verbindung fehlgeschlagen: ${error.message}`;
+    case 'unsupported':
+      return `Nicht unterstützt: ${error.message}`;
     case 'backend_unavailable':
       return 'Desktop-Backend nicht verfügbar (läuft die App im Browser?)';
     default:

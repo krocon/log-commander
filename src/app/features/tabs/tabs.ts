@@ -28,8 +28,15 @@ import { WorkspaceService } from '../workspace/workspace.service';
               <span class="chain" aria-hidden="true">↳</span>
             }
             @if (session.isSource && session.viewId === 0) {
-              <!-- A source without a file (prompt 016): received, not read from a file. -->
-              <span class="src" role="img" aria-label="Quelle" title="Empfangen (Spool)">⇣</span>
+              @if (session.source?.kind === 'sftp') {
+                <!-- Prompt 017: a file on a server, pulled over SFTP into a spool. -->
+                <span class="src" role="img" aria-label="Remote-Datei" title="Über SSH/SFTP (Spool)"
+                  >⇅</span
+                >
+              } @else {
+                <!-- A source without a file (prompt 016): received, not read from a file. -->
+                <span class="src" role="img" aria-label="Quelle" title="Empfangen (Spool)">⇣</span>
+              }
             }
             <app-session-marks [session]="session" />
             {{ session.tabLabel() }}
@@ -72,6 +79,14 @@ import { WorkspaceService } from '../workspace/workspace.service';
       (click)="openSource.emit()"
     >
       Quelle …
+    </button>
+    <button
+      type="button"
+      class="open"
+      title="Logdatei auf einem Server über SSH/SFTP live verfolgen (⌘/Strg+⇧+H)"
+      (click)="openRemote.emit()"
+    >
+      Remote …
     </button>
     @if (sessions.sessions().length) {
       <button
@@ -152,4 +167,5 @@ export class TabsComponent {
   readonly openPath = output<void>();
   readonly merge = output<void>();
   readonly openSource = output<void>();
+  readonly openRemote = output<void>();
 }

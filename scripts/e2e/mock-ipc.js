@@ -414,8 +414,60 @@
         sources: infos,
       };
     },
-    open_source({ config, keep, onUpdate }) {
+    open_source({ config, keep, onUpdate, credentials }) {
       const id = sessions.size + 1;
+      if (config.kind === 'sftp') {
+        // Prompt 017: the first connect shows the host-key confirmation, the next one opens.
+        if (!credentials?.trustFingerprint && setupData.remoteTrust !== true) {
+          throw {
+            code: 'host_key_unknown',
+            message: 'unknown host key',
+            remote: {
+              keyType: 'ssh-ed25519',
+              fingerprint: 'SHA256:q3m8V0kD5mZ0x7Q2b9sYwq1n2Lr6s4cJ0g8hX2Yf3aE',
+              wrong: false,
+            },
+          };
+        }
+        const name = config.path.split('/').pop();
+        const text = setupData.remoteFiles?.[name] ?? setupData.files[name] ?? '';
+        const label = `${config.host}:${config.path}`;
+        const session = {
+          id,
+          columns: SPRING_COLUMNS,
+          lines: classify(text, SPRING_COLUMNS),
+          size: text.length,
+          generation: 0,
+          filter: { levels: LEVELS, search: '', mode: 'filter' },
+          channel: onUpdate.id,
+          sent: 0,
+          views: new Map(),
+          sourceStatus: {
+            state: { kind: 'connected' },
+            received: 48213,
+            dropped: 0,
+            truncated: 0,
+            rejected: 0,
+            connections: 0,
+            spooled: 48213,
+            spoolError: null,
+            bytes: 9_437_184,
+            latencyMs: 23,
+            pendingBytes: 0,
+          },
+        };
+        sessions.set(id, session);
+        const spoolPath = `/Users/me/Library/Caches/io.github.krocon.logcommander/spool/4711/source-${id}/spool.log`;
+        return {
+          sessionId: id,
+          path: spoolPath,
+          fileName: label,
+          suggestedProfileId: 'log4j',
+          update: update(session),
+          sources: [],
+          source: { kind: 'sftp', label, spoolPath, keep: !!keep, config },
+        };
+      }
       const text = setupData.spool ?? '';
       const lines = classify(text, RECEIVED_COLUMNS).map((line) => {
         const pri = line.text.match(/^\S+ \S+ <(\d+)>/);
@@ -449,6 +501,9 @@
           connections: 0,
           spooled: 12873,
           spoolError: null,
+          bytes: 0,
+          latencyMs: null,
+          pendingBytes: 0,
         },
       };
       sessions.set(id, session);
@@ -463,6 +518,21 @@
         source: { kind: 'syslog', label, spoolPath, keep: !!keep, config },
       };
     },
+    remote_hosts: () => [
+      { alias: 'web-prod', hostName: '10.20.0.5', user: 'deploy', port: 22, identityFiles: [], proxy: false },
+      { alias: 'db', hostName: 'db.internal', user: null, port: 2222, identityFiles: [], proxy: false },
+    ],
+    remote_list_dir: ({ path }) => ({
+      path: path || '/var/log',
+      entries: [
+        { name: 'nginx', dir: true, size: null, modifiedMs: null },
+        { name: 'app.log', dir: false, size: 9_437_184, modifiedMs: Date.UTC(2026, 0, 15, 10) },
+        { name: 'app.log.1', dir: false, size: 52_428_800, modifiedMs: Date.UTC(2026, 0, 14, 23) },
+        { name: 'syslog', dir: false, size: 1_048_576, modifiedMs: Date.UTC(2026, 0, 15, 10) },
+      ],
+      truncated: false,
+    }),
+    forget_remote_secret: () => null,
     set_spool_keep: () => null,
     set_spool_limit: () => null,
     kept_spools: () => ({ count: 1, bytes: 3_145_728 }),

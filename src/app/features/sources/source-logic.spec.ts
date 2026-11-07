@@ -100,9 +100,8 @@ describe('source logic', () => {
     expect(parseSourceConfig({ ...good, allow: 'x' })).toBeNull();
     // A remote address without the explicit choice is refused, with it kept (a workspace asks first).
     expect(parseSourceConfig({ ...good, address: '0.0.0.0' })).toBeNull();
-    expect(parseSourceConfig({ ...good, address: '0.0.0.0', allowRemote: true })?.allowRemote).toBe(
-      true,
-    );
+    const remote = parseSourceConfig({ ...good, address: '0.0.0.0', allowRemote: true });
+    expect(remote?.kind === 'syslog' && remote.allowRemote).toBe(true);
     expect(parseSourceConfig(null)).toBeNull();
     expect(parseSourceConfig('syslog')).toBeNull();
   });
@@ -146,6 +145,9 @@ describe('source logic', () => {
       connections: 0,
       spooled: 12345,
       spoolError: null,
+      bytes: 0,
+      latencyMs: null,
+      pendingBytes: 0,
     };
     expect(sourceCounters(status)).toBe('12.345 empfangen');
     expect(

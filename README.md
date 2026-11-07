@@ -124,6 +124,16 @@ Like <code>tail -f</code> with a GUI: millions of lines, instant filters, no wai
   (received, dropped, cut, refused), the spool's path in its tooltip, „Spool behalten“ and „Speichern unter …“.
   Freeze holds the view while receiving goes on. Sources are remembered (without secrets) and saved in workspaces.
   See [security](#receiving-syslog-safely) below.
+- **Remote files over SSH/SFTP** – „Remote …“ in the tab bar, the start screen, „Quelle öffnen“ → Remote-Datei, File →
+  Open Remote File… or `Cmd/Ctrl+Shift+H`: follow a log file on a Linux server live without downloading it by hand.
+  Host (hosts of `~/.ssh/config` are offered, their user and port taken over), user, port, login (SSH agent, key file
+  with passphrase, password), path with a folder browser, start („die letzten 50 MB“ by default or the whole file)
+  and how often to check (500 ms). The file is polled over SFTP into a spool like syslog, so everything a file has
+  works (filters, search, freeze, columns, timeline, dashboard, export, merge with local files by time). Rotation
+  (the old file is read to its end first) and truncation on the server are recognised; a broken connection is tried
+  again after 1, 2, 4 … 60 s and continues where it stopped, the lines stay. Several files of one server share one
+  connection. The tab shows „⇅ host:/var/log/app.log“, the status bar connection, lines, bytes and latency. See
+  [SSH logins and host keys](#ssh-logins-and-host-keys).
 - **Share** – right click „Als Markdown kopieren“ or „Als Jira kopieren“: file, lines, time span and filter as a head,
   the selected lines as a code block, the notes as a list, up to 64 KB (for more there is the export).
 - **Search** – filter or highlight, regular expressions, case sensitivity, jump between matches.
@@ -146,6 +156,7 @@ Like <code>tail -f</code> with a GUI: millions of lines, instant filters, no wai
 | ![Filter tabs: a chain of filters](docs/screenshots/drilldown.png) | |
 | ![Received syslog](docs/screenshots/syslog.png) | ![Opening a syslog source](docs/screenshots/source-dialog.png) |
 | ![Timeline with an outage and a marked window](docs/screenshots/timeline.png) | ![Timeline in the light theme](docs/screenshots/timeline-light.png) |
+| ![A remote file over SFTP](docs/screenshots/remote.png) | ![Remote dialog: browser and host key](docs/screenshots/remote-dialog.png) |
 
 ## Receiving syslog safely
 
@@ -176,6 +187,39 @@ Measured with `cargo test --release --test syslog_integration -- --ignored --noc
 messages per second over UDP without loss, a single sender pushing 120,000 per second without loss, about 0.1 s from
 receipt to the index.
 
+## SSH logins and host keys
+
+Remote files (SSH/SFTP) touch credentials and other people's servers. Log Commander keeps that strict:
+
+- **Host keys:** checked against `~/.ssh/known_hosts` (only read, never written) and the app's own list
+  (`known_hosts` in the app's config folder, readable by your user only). An **unknown** key is shown with its type and
+  SHA256 fingerprint (compare it, e.g. with `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on the server);
+  only „Vertrauen und verbinden“ records exactly that key. A **changed** key (or a key of another type than the one
+  recorded) ends the connection – there is no „connect anyway“. Check the server and remove the old line by hand.
+  A key marked `@revoked`, an `@cert-authority` line for the host (host certificates are not supported), an entry
+  whose key cannot be read or an unreadable known_hosts file also end the connection, with the reason. The app reads
+  known_hosts like OpenSSH (any whitespace, host lists, patterns with `*`/`?`/`!`, `[host]:port`, hashed hosts, host
+  names in any case). The host key is checked before you are asked for a password, and again on every reconnect.
+- **Logins:** the SSH agent first (`SSH_AUTH_SOCK`; on Windows the OpenSSH agent, then Pageant), a key file (asked
+  for its passphrase if it has one), or a password. Passwords and passphrases are asked for in the dialog and kept in
+  memory only while the connection lives (to reconnect). „Im Schlüsselbund merken“ puts them into the system keychain
+  (macOS Keychain, Windows Credential Manager, Secret Service on Linux) – only when ticked and only after the login
+  worked; „Gespeichertes vergessen“ removes them. They are never written to the settings, a workspace, a log or an
+  error message. A refused login is not retried by itself (no locked accounts). With the agent, the keys of the
+  host's `IdentityFile`s are offered first, at most six. (The SSH library keeps its own copy of a password while
+  logging in, which is not wiped; the app's copies are.)
+- **Only SFTP:** the app requests the SFTP subsystem and nothing else – no shell, no commands, no port forwarding, no
+  agent forwarding – and refuses every channel a server tries to open towards it.
+- **`~/.ssh/config`:** `Host` (with `*`, `?`, `!`), `HostName`, `User`, `Port`, `IdentityFile` and `Include` are read;
+  `Match` blocks are skipped, `ProxyCommand`, `ProxyJump`, `LocalCommand` and `KnownHostsCommand` are never run (a host
+  with a proxy is reported as not supported).
+- **Workspaces and saved connections** keep host, user, port, path, the kind of login and the start – never a secret
+  (a workspace not even the key file). Opening a workspace never connects by itself: a remote file is listed unticked
+  in the confirmation, and a host key or password it needs is asked for in the dialog.
+- **Remote content is foreign data:** each line is decoded (UTF-8, UTF-16, Latin-1), ANSI colours are removed and
+  control characters, bidi marks and line separators are escaped (`\xNN`, `\u{XXXX}`) before it reaches the spool;
+  lines over 1 MB are cut and marked.
+
 ## Install
 
 Packages for each platform are built by the [release workflow](.github/workflows/release.yml) (unsigned until the signing
@@ -193,6 +237,7 @@ log-commander /var/log/app.log /var/log/other.log
 | `Cmd/Ctrl+Shift+O` | Type or paste a path to open (`~` works) |
 | `Cmd/Ctrl+Shift+M` | Merge files into one tab, sorted by time |
 | `Cmd/Ctrl+Shift+L` | Open a source: receive syslog over UDP/TCP |
+| `Cmd/Ctrl+Shift+H` | Open a remote file over SSH/SFTP |
 | `End`, `F` | Go to the end and follow |
 | `Space` | Pause or resume following |
 | `P` | Freeze: hold or resume reading the file of this tab |

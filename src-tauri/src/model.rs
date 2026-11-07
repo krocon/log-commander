@@ -93,6 +93,8 @@ pub struct SessionUpdate {
 #[serde(rename_all = "camelCase")]
 pub enum SourceKind {
     Syslog,
+    /// A file on a server over SSH/SFTP (prompt 017).
+    Sftp,
 }
 
 /// What a tab of a source shows instead of the spool path.
@@ -125,7 +127,14 @@ pub enum SourceState {
     Connecting,
     Listening,
     Connected,
-    Error { message: String },
+    Error {
+        message: String,
+    },
+    /// The connection broke (prompt 017): the next attempt in `retry_in_s` seconds.
+    Reconnecting {
+        message: String,
+        retry_in_s: u32,
+    },
     Stopped,
 }
 
@@ -148,6 +157,12 @@ pub struct SourceStatus {
     pub spooled: u64,
     /// The last error writing the spool (disk full …), if it persists.
     pub spool_error: Option<String>,
+    /// Bytes fetched from the remote file (SFTP; 0 for receivers).
+    pub bytes: u64,
+    /// Round trip of the last check of the remote file in ms (SFTP).
+    pub latency_ms: Option<u32>,
+    /// Bytes of the remote file not fetched yet (first fetch, catching up; SFTP).
+    pub pending_bytes: u64,
 }
 
 /// Live state of one source of a merge.

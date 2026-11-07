@@ -22,6 +22,7 @@
 | Messung Dashboard | `cd src-tauri && cargo test --release --test report_integration -- --ignored --nocapture measure_` |
 | Messung Feld-Regeln | `cd src-tauri && cargo test --release --test extract_integration -- --ignored --nocapture measure_` |
 | Messung Syslog-Empfang | `cd src-tauri && cargo test --release --test syslog_integration -- --ignored --nocapture measure_` (Meldungen/s ohne Verlust, Verzögerung bis zum Index) |
+| SFTP gegen OpenSSH (Docker) | `src-tauri/tests/sshd/start.sh`, dann `cd src-tauri && LC_SSHD_TEST=127.0.0.1:2222 cargo test --test sftp_integration -- --ignored --nocapture`, danach `tests/sshd/stop.sh` (Wegwerf-Schlüssel); der normale Test läuft gegen einen SFTP-Server im Prozess |
 | Syslog von Hand senden | `logger -n 127.0.0.1 -P 5514 -d "Hallo"` (UDP; macOS: `logger` kann kein `-n`, dann `echo '<11>test' \| nc -u -w0 127.0.0.1 5514`) |
 | Messung Merge 2 × 500 MB | `cd src-tauri && cargo test --release --test merge_integration -- --ignored --nocapture measure_merge` |
 | Kontrast WCAG AA | `npm run contrast` (prüft `src/styles.css`) |
@@ -59,6 +60,8 @@ src/                         Angular 22 (zoneless, Signals, OnPush, Standalone)
   app/core/dialog/native-dialog.ts   nativer Öffnen/Speichern-Dialog; e2e legt Antworten in window.__lcDialogPaths
   app/features/sources/      Quellen ohne Datei (016): source-dialog „Quelle öffnen“, source-logic (Prüfen, Labels,
                              gespeicherte Quellen, Status-Texte; auch für Settings und Arbeitsstand)
+  app/features/remote/       Remote-Datei über SSH/SFTP (017): remote-dialog (lazy; Host-Schlüssel bestätigen, Passwort,
+                             Ordner-Browser), remote-logic (Prüfen, Labels, nächster Schritt nach einem Fehler)
 src-tauri/src/               Rust; alles außer commands.rs und lib.rs ist frei von Tauri
   session.rs                 LogSession, Ansichten (ViewState), Abfragen, Hintergrund-Jobs (Filter, Level neu), SessionManager
   views.rs                   Filter-Tabs (013): ViewFilter, Kette zu einem Filter zusammensetzen, MAX_VIEWS
@@ -80,6 +83,10 @@ src-tauri/src/               Rust; alles außer commands.rs und lib.rs ist frei 
   spool.rs                   Spool (016): SpoolWriter (begrenzte Warteschlange), Schreib-Thread, Rotation, Gesamtgrenze,
                              SpoolRoot (<cache>/spool/<pid>/source-N, behaltene unter spool/kept)
   sources/mod.rs             Source-Trait, SourceConfig, prepare, SourceMonitor (Zustand, Zähler), RunningSource
+  sources/sftp.rs            SFTP-Quelle (017): Polling (fstat/stat), Rotation/Truncation → Spool rotiert, Wiederverbinden
+  remote/                    SSH (017, russh): Hub (Pool je user@host:port, Ordner listen), trust.rs (known_hosts),
+                             secrets.rs (Secret, Schlüsselbund), ssh_config.rs (Teilmenge), watch.rs (rein: Rotation aus
+                             stat-Folgen), testserver.rs (nur Debug: SFTP-Server im Prozess für Tests und e2e)
   sources/syslog.rs          Syslog UDP/TCP: Binden (nur Loopback ohne allowRemote), Absender-Filter, TCP-Framing
                              (RFC 6587), Spool-Zeile (Empfangszeit, Absender, Meldung escaped)
   e2e.rs                     nur Debug-Build: Szenario im WebView (Fenster im Hintergrund), siehe scripts/e2e/
@@ -191,6 +198,23 @@ samples/                     Beispiel-Logs
   Spitze ≈ Grenze + eine Datei, im Freeze höchstens das Doppelte. Syslog-Zeile: `ISO-Empfangszeit Absender Meldung`;
   das eigene Profil `syslog-received` liest die Priorität hinter dem Präfix (`level.rs`: `skip_received_prefix`) und
   zerlegt 3164/5424 (Spalten `sender`, `sent`, `pri`, …). Das Profil `syslog` bleibt für Dateien unverändert.
+- **Remote über SSH/SFTP (Prompt 017):** `russh` + `russh-sftp` (Spike in `prompts/done/017-remote-sftp.design.md`),
+  Polling in den Spool aus 016. Nur das Subsystem `sftp`, nie exec/shell/PTY/Forwarding. SFTP v3 hat keinen Inode: der
+  Handle bleibt offen, `fstat(handle)` gegen `stat(path)` (zweites `fstat` gegen Schreiben dazwischen, Abweichung zweimal
+  hintereinander = Rotation, `remote/watch.rs`); danach wird die alte Datei über den Handle zu Ende gelesen. Truncation
+  und Rotation → `SpoolWriter::rotate_blocking` (die Sitzung sieht eine Rotation, `tail.rs` unverändert). Teilzeile nach
+  2 s ohne Wachstum geschrieben. Spool-Zeile: dekodiert, ANSI weg, `escape_controls_into` (wie 016, aber `\` und SOH
+  bleiben, damit JSON und FIX erkannt werden), über 1 MiB gekürzt. Host-Schlüssel: `~/.ssh/known_hosts` nur lesen, eigene
+  Datei im Konfig-Ordner; unbekannt → `host_key_unknown` mit SHA256, eingetragen nur mit genau diesem Fingerabdruck
+  (`Credentials.trustFingerprint`); geändert/anderer Typ, `@revoked`, `@cert-authority`, unlesbare Zeile oder Datei →
+  `host_key_changed` mit `remote.reason`, kein Weg vorbei. Eigener known_hosts-Parser (`trust.rs`, nicht der von russh:
+  Leerraum, Muster, Hashes, Groß-/Kleinschreibung). Vom Server geöffnete Kanäle werden abgelehnt. Ohne Passwort wird erst
+  der Host-Schlüssel geprüft. Geheimnisse: `Secret` (Zeroizing, kein `Serialize`), nur im Speicher der Verbindung und auf
+  Häkchen im Schlüsselbund (`keyring-core`, Konto = Hash von `user@host:port` bzw. Schlüsselpfad), nie in Settings,
+  Arbeitsstand, Fehlern, Status. Verbindungen teilen sich je `user@host:port` (`remote::Hub`), ohne Nutzer 60 s, dann zu.
+  Wiederverbinden 1, 2, 4 … 60 s; abgelehnte Anmeldung, Host-Schlüssel-Fehler: kein neuer Versuch. Ein Arbeitsstand
+  verbindet nie selbst (Eintrag ungehakt, Fragen im Dialog), speichert keine Schlüsseldatei. e2e-Läufe: Schlüsselbund im
+  Speicher, known_hosts im Temp-Ordner.
 - **Datei-Identität unter Windows** über `GetFileInformationByHandle`, nicht Erstellzeit (File Tunneling).
 - **CSP:** `dangerousDisableAssetCspModification: ["style-src"]` ist nötig. Sonst ergänzt Tauri Nonces, `'unsafe-inline'`
   gilt nicht mehr und Angulars Komponenten-Styles fehlen.
@@ -228,6 +252,11 @@ samples/                     Beispiel-Logs
   Rotationen im Freeze: Zwischenstände fehlen in der Ansicht (der Spool hat sie, bis er sie löscht). Ein Merge mit einem Spool
   hält von ihm höchstens so viele Dateien wie der Spool (`MergeWorker::limit_segments` über die Datei-Identität), dann
   mischt er neu. Schließt der Tab der Quelle, fehlt dem Merge die Datei (Status „Datei fehlt“). Kein TLS.
+- **Grenzen SFTP (017):** je Runde höchstens 8 MB, Zeile 1 MiB, Intervall 200 ms bis 60 s, Erstabruf 1–10 000 MB oder
+  ganz, Aufruf-Zeitgrenze 20 s, Keepalive 15 s × 3, Ordnerliste 10 000 Einträge. Kein ProxyJump, keine Zertifikate
+  (`@cert-authority`), kein Kerberos; nur die erste vorhandene Schlüsseldatei. Rotation während einer Unterbrechung
+  wird nur über die Größe erkannt (größer: ab dem Offset weiter). Fortsetzung einer nach 2 s geschriebenen Teilzeile wird
+  eine eigene Zeile.
 - **Grenzen Merge:** höchstens 16 Quellen, verspätete Zeilen stehen am Ende, bis „Neu sortieren“; keine Zeilennummer der
   Quelldatei (nur Byte-Offset); ohne Zeitzone gilt die lokale Zone; ohne Zeitstempel in den ersten 200 Zeilen
   `no_timestamps`. Truncation einer Quelle, Rotation ohne Behalten oder mehr als 32 Segmente einer Quelle mischen alles neu.

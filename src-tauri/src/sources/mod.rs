@@ -12,6 +12,7 @@
 //! `RunningSource` owns the thread and the spool: stopping the source flushes the spool, dropping it
 //! deletes the spool unless it is kept.
 
+pub mod sftp;
 pub mod syslog;
 
 use crate::error::{AppError, AppResult, ErrorCode};
@@ -38,6 +39,16 @@ const NOTIFY_INTERVAL: Duration = Duration::from_millis(200);
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum SourceConfig {
     Syslog(syslog::SyslogConfig),
+    /// A file on a server over SSH/SFTP (prompt 017).
+    Sftp(sftp::SftpConfig),
+}
+
+/// What preparing may need besides the configuration (prompt 017): the SSH hub and what the dialog
+/// sent for this connect (a secret, the confirmed host key). Never stored.
+#[derive(Default)]
+pub struct PrepareContext {
+    pub remote: Option<Arc<crate::remote::Hub>>,
+    pub credentials: crate::remote::Credentials,
 }
 
 /// A source that writes lines into a spool.
@@ -62,10 +73,20 @@ pub struct SourceContext {
     pub monitor: Arc<SourceMonitor>,
 }
 
-/// Checks a configuration and prepares the source (ports are bound here).
-pub fn prepare(config: SourceConfig) -> AppResult<Box<dyn Source>> {
+/// Checks a configuration and prepares the source (ports are bound, servers connected here).
+pub fn prepare(config: SourceConfig, ctx: PrepareContext) -> AppResult<Box<dyn Source>> {
     match config {
         SourceConfig::Syslog(config) => Ok(Box::new(syslog::SyslogSource::bind(config)?)),
+        SourceConfig::Sftp(config) => {
+            let hub = ctx
+                .remote
+                .ok_or_else(|| AppError::new(ErrorCode::Unsupported, "no SSH support set up"))?;
+            Ok(Box::new(sftp::SftpSource::connect(
+                config,
+                &hub,
+                &ctx.credentials,
+            )?))
+        }
     }
 }
 
@@ -78,6 +99,12 @@ pub struct SourceMonitor {
     pub truncated: AtomicU64,
     pub rejected: AtomicU64,
     pub connections: AtomicU32,
+    /// Bytes pulled (SFTP).
+    pub bytes: AtomicU64,
+    /// Last round trip in ms, `u32::MAX` = none yet.
+    pub latency_ms: AtomicU32,
+    /// Remote bytes not fetched yet.
+    pub pending_bytes: AtomicU64,
     spool: Arc<SpoolStats>,
     notify: Mutex<Option<Notify>>,
     /// Milliseconds since `created` of the last notification by a counter.
@@ -104,6 +131,9 @@ impl SourceMonitor {
             truncated: AtomicU64::new(0),
             rejected: AtomicU64::new(0),
             connections: AtomicU32::new(0),
+            bytes: AtomicU64::new(0),
+            latency_ms: AtomicU32::new(u32::MAX),
+            pending_bytes: AtomicU64::new(0),
             spool,
             notify: Mutex::new(None),
             last_notify: AtomicU64::new(0),
@@ -187,6 +217,9 @@ impl SourceMonitor {
             connections: self.connections.load(Ordering::Relaxed),
             spooled: self.spool.lines.load(Ordering::Relaxed),
             spool_error: self.spool.error.lock().clone(),
+            bytes: self.bytes.load(Ordering::Relaxed),
+            latency_ms: Some(self.latency_ms.load(Ordering::Relaxed)).filter(|&l| l != u32::MAX),
+            pending_bytes: self.pending_bytes.load(Ordering::Relaxed),
         }
     }
 }

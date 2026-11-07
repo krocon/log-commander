@@ -6,6 +6,7 @@ import {
   SyslogProtocol,
 } from '../../core/log/log.models';
 import { formatCount } from '../../shared/format';
+import { parseSftpConfig, remoteCounters, sftpKey, sftpLabel } from '../remote/remote-logic';
 
 /**
  * Sources without a file (prompt 016): defaults, checks of the dialog and of stored or shared configurations
@@ -163,7 +164,9 @@ const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !
  * A configuration from the settings or from a workspace (which may come from someone else): every field checked,
  * null if anything does not fit. Port 0 (chosen by the system) is not kept.
  */
-export function parseSourceConfig(v: unknown): SourceConfig | null {
+export function parseSourceConfig(v: unknown, fromWorkspace = false): SourceConfig | null {
+  // Prompt 017: a workspace keeps no key file (a path of someone else's machine).
+  if (isObj(v) && v['kind'] === 'sftp') return parseSftpConfig(v, !fromWorkspace);
   if (!isObj(v) || v['kind'] !== 'syslog') return null;
   const protocol = v['protocol'];
   const address = v['address'];
@@ -190,16 +193,18 @@ export function parseSourceConfig(v: unknown): SourceConfig | null {
 
 /** Listens beyond this computer: a workspace never starts such a source without asking. */
 export function isRemoteSource(config: SourceConfig): boolean {
-  return !isLoopbackAddress(config.address);
+  return config.kind === 'syslog' && !isLoopbackAddress(config.address);
 }
 
-/** Same kind, protocol, address and port: the same listener. */
+/** Same kind, protocol, address and port: the same listener; for SFTP the same server, user and file. */
 export function sourceKey(config: SourceConfig): string {
+  if (config.kind === 'sftp') return sftpKey(config);
   return `${config.kind}|${config.protocol}|${stripBrackets(config.address).toLowerCase()}|${config.port}`;
 }
 
-/** Like the backend's label: „Syslog :5514“, „Syslog TCP 0.0.0.0:514“. */
+/** Like the backend's label: „Syslog :5514“, „Syslog TCP 0.0.0.0:514“, `host:/var/log/app.log`. */
 export function sourceLabel(config: SourceConfig): string {
+  if (config.kind === 'sftp') return sftpLabel(config);
   const proto = config.protocol === 'tcp' ? ' TCP' : config.protocol === 'both' ? ' UDP+TCP' : '';
   if (isLoopbackAddress(config.address)) return `Syslog${proto} :${config.port}`;
   const addr = stripBrackets(config.address);
@@ -247,13 +252,19 @@ export function sourcePill(state: SourceState): SourcePill {
       return { label: 'Verbunden', cls: 'live' };
     case 'error':
       return { label: `Quelle: ${state.message}`, cls: 'bad' };
+    case 'reconnecting':
+      return { label: `Getrennt, neuer Versuch in ${state.retryInS} s`, cls: 'warn' };
     case 'stopped':
       return { label: 'Gestoppt', cls: 'warn' };
   }
 }
 
 /** „1.234 empfangen · 3 verworfen“, the other counters only when they are not 0. */
-export function sourceCounters(status: SourceStatus): string {
+export function sourceCounters(
+  status: SourceStatus,
+  kind: SourceConfig['kind'] = 'syslog',
+): string {
+  if (kind === 'sftp') return remoteCounters(status);
   const parts = [`${formatCount(status.received)} empfangen`];
   if (status.dropped) parts.push(`${formatCount(status.dropped)} verworfen`);
   if (status.truncated) parts.push(`${formatCount(status.truncated)} gekürzt`);

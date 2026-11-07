@@ -31,6 +31,10 @@ import {
   SessionInfo,
   SessionUpdate,
   SourceConfig,
+  RemoteCredentials,
+  RemoteHost,
+  RemoteListing,
+  RemoteTarget,
   TimeHit,
   Timeline,
   ViewFilterSpec,
@@ -68,10 +72,30 @@ export class LogApi {
     config: SourceConfig,
     keep: boolean,
     onUpdate: (update: SessionUpdate) => void,
+    credentials: RemoteCredentials | null = null,
   ): Promise<SessionInfo> {
     const channel = new Channel<SessionUpdate>();
     channel.onmessage = onUpdate;
-    return call('open_source', { config, keep, onUpdate: channel });
+    return call('open_source', { config, keep, credentials, onUpdate: channel });
+  }
+
+  /** Prompt 017: hosts of `~/.ssh/config` for the remote dialog. */
+  remoteHosts(): Promise<RemoteHost[]> {
+    return call('remote_hosts');
+  }
+
+  /** Prompt 017: a folder on the server (empty path: the home folder); connects like `openSource`. */
+  remoteListDir(
+    target: RemoteTarget,
+    credentials: RemoteCredentials | null,
+    path: string,
+  ): Promise<RemoteListing> {
+    return call('remote_list_dir', { target, credentials, path });
+  }
+
+  /** Prompt 017: removes the stored password and passphrase of a target from the keychain. */
+  forgetRemoteSecret(target: RemoteTarget): Promise<void> {
+    return call('forget_remote_secret', { target });
   }
 
   /** Keep the spool of a source when its tab closes. */
