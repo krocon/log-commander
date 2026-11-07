@@ -178,7 +178,7 @@ const REASONS: Record<string, string> = {
         @for (panel of dashboard()?.panels ?? []; track panel.id) {
           <app-dashboard-panel
             [panel]="panel"
-            [sessionId]="session().id"
+            [sessionId]="session().sessionId"
             [refresh]="tick()"
             (changed)="updatePanel($event)"
             (remove)="removePanel(panel.id)"
@@ -378,7 +378,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
     this.profileId = session.columns()?.profileId ?? session.update().profileId;
     const saved = this.store.get(this.profileId);
     try {
-      const schema = await this.api.openReport(session.id, saved?.fields ?? null);
+      const schema = await this.api.openReport(session.sessionId, saved?.fields ?? null);
       this.schema.set(schema);
       this.opened = true;
       this.lastGeneration = schema.status?.generation ?? null;
@@ -395,7 +395,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
   ngOnDestroy(): void {
     if (this.timer) clearInterval(this.timer);
     // Hidden: the backend stops catching up; the file stays for the next time.
-    void this.api.closeReport(this.session().id).catch(() => undefined);
+    void this.api.closeReport(this.session().sessionId).catch(() => undefined);
   }
 
   /**
@@ -418,7 +418,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
   private async loadSchema(): Promise<void> {
     try {
-      this.schema.set(await this.api.getReportSchema(this.session().id));
+      this.schema.set(await this.api.getReportSchema(this.session().sessionId));
     } catch {
       // The next status asks again.
     }
@@ -473,7 +473,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
     const fields = toggleField(schema, d.fields, column, on);
     this.save((x) => ({ ...x, fields }));
     try {
-      this.schema.set(await this.api.openReport(this.session().id, fields));
+      this.schema.set(await this.api.openReport(this.session().sessionId, fields));
     } catch (e) {
       this.failure.set(describeQueryError(toAppError(e).message));
     }
@@ -495,7 +495,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
         data.splitColumn?.toLowerCase() === 'level' ? (pick.series?.level ?? null) : null;
       try {
         const result = await this.api.runReport(
-          session.id,
+          session.sessionId,
           firstLineQuery(range, level),
           `${event.panel.id}:jump`,
         );

@@ -276,7 +276,7 @@ export class OverviewRulerComponent implements OnInit, OnDestroy {
     }
     const request = ++this.request;
     this.api
-      .getOverview(session.id, height, [...lines])
+      .getOverview(session.sessionId, height, [...lines], session.viewId)
       .then((overview) => {
         // A newer request overtook this one; a foreign epoch or view is filtered by `current`.
         if (request !== this.request) return;

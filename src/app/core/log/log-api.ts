@@ -25,6 +25,8 @@ import {
   SearchQuery,
   SessionInfo,
   SessionUpdate,
+  ViewFilterSpec,
+  ViewInfo,
 } from './log.models';
 
 @Injectable({ providedIn: 'root' })
@@ -64,8 +66,45 @@ export class LogApi {
     return call('close_log', { sessionId });
   }
 
-  getLines(sessionId: number, view: LogViewKind, start: number, count: number): Promise<LogLine[]> {
-    return call('get_lines', { sessionId, view, start, count });
+  /**
+   * A filter as a tab of its own (prompt 013): a view below `parentViewId` showing its result, filtered further
+   * by `filter`. Its updates come through their own channel.
+   */
+  openView(
+    sessionId: number,
+    parentViewId: number,
+    filter: ViewFilterSpec,
+    onUpdate: (update: SessionUpdate) => void,
+  ): Promise<ViewInfo> {
+    const channel = new Channel<SessionUpdate>();
+    channel.onmessage = onUpdate;
+    return call('open_view', {
+      sessionId,
+      parentViewId,
+      levels: filter.levels,
+      search: filter.query.text,
+      isRegex: filter.query.isRegex,
+      caseSensitive: filter.query.caseSensitive,
+      mode: filter.mode,
+      sources: filter.sources,
+      expr: filter.expr,
+      onUpdate: channel,
+    });
+  }
+
+  /** Closes one view of a session; the views below keep their filter. The last tab uses `close`. */
+  closeView(sessionId: number, viewId: number): Promise<void> {
+    return call('close_view', { sessionId, viewId });
+  }
+
+  getLines(
+    sessionId: number,
+    view: LogViewKind,
+    start: number,
+    count: number,
+    viewId = 0,
+  ): Promise<LogLine[]> {
+    return call('get_lines', { sessionId, view, start, count, viewId });
   }
 
   setFilter(
@@ -75,6 +114,7 @@ export class LogApi {
     mode: SearchMode,
     sources: number | null = null,
     expr: FilterExpr | null = null,
+    viewId = 0,
   ): Promise<FilterInfo> {
     return call('set_filter', {
       sessionId,
@@ -85,6 +125,7 @@ export class LogApi {
       mode,
       sources,
       expr,
+      viewId,
     });
   }
 
@@ -106,17 +147,23 @@ export class LogApi {
     fromLine: number | null,
     query: SearchQuery,
     forward: boolean,
+    viewId = 0,
   ): Promise<FindHit | null> {
-    return call(forward ? 'find_next' : 'find_prev', { sessionId, fromLine, query });
+    return call(forward ? 'find_next' : 'find_prev', { sessionId, fromLine, query, viewId });
   }
 
-  getPosition(sessionId: number, line: number): Promise<number> {
-    return call('get_position', { sessionId, line });
+  getPosition(sessionId: number, line: number, viewId = 0): Promise<number> {
+    return call('get_position', { sessionId, line, viewId });
   }
 
   /** Level bits per pixel bucket of the view and where `lines` are in it (overview ruler). */
-  getOverview(sessionId: number, buckets: number, lines: readonly number[]): Promise<Overview> {
-    return call('get_overview', { sessionId, buckets, lines });
+  getOverview(
+    sessionId: number,
+    buckets: number,
+    lines: readonly number[],
+    viewId = 0,
+  ): Promise<Overview> {
+    return call('get_overview', { sessionId, buckets, lines, viewId });
   }
 
   /** Next or previous entry of one of `levels`, strictly after / before `fromPosition` (null: start / end). */
@@ -125,8 +172,9 @@ export class LogApi {
     fromPosition: number | null,
     forward: boolean,
     levels: readonly Level[],
+    viewId = 0,
   ): Promise<FindHit | null> {
-    return call('find_level', { sessionId, fromPosition, forward, levels });
+    return call('find_level', { sessionId, fromPosition, forward, levels, viewId });
   }
 
   getEntryRange(sessionId: number, line: number): Promise<EntryRange> {
@@ -144,8 +192,9 @@ export class LogApi {
     first: number,
     last: number,
     view: LogViewKind = 'filtered',
+    viewId = 0,
   ): Promise<string> {
-    return call('copy_lines', { sessionId, first, last, view });
+    return call('copy_lines', { sessionId, first, last, view, viewId });
   }
 
   setKeepOnRotate(sessionId: number, keep: boolean): Promise<void> {

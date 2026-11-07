@@ -374,8 +374,9 @@ export class SettingsDialogComponent implements OnInit {
   protected setKeep(event: Event): void {
     const keep = (event.target as HTMLInputElement).checked;
     this.settingsService.update({ keepOnRotate: keep });
-    for (const session of this.sessions.sessions()) {
-      void this.api.setKeepOnRotate(session.id, keep);
+    // One call per file, also when its tab closed and only filter tabs are left (prompt 013).
+    for (const id of new Set(this.sessions.sessions().map((s) => s.sessionId))) {
+      void this.api.setKeepOnRotate(id, keep);
     }
   }
 

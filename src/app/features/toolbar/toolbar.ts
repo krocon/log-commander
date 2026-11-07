@@ -172,6 +172,18 @@ const SEARCH_DEBOUNCE_MS = 200;
       >
         ERROR+
       </button>
+      <button
+        type="button"
+        class="filter-tab"
+        [disabled]="!s || !!filterTabLimit()"
+        [title]="
+          filterTabLimit() ??
+          'Als Tab öffnen: das Ergebnis dieses Tabs in einem neuen Tab weiter filtern (⌘/Strg+Shift+T)'
+        "
+        (click)="openFilterTab()"
+      >
+        ⧉ Als Tab
+      </button>
     </div>
     @if (s?.keptFilter()) {
       <div class="group">
@@ -509,6 +521,18 @@ export class ToolbarComponent implements OnInit, OnDestroy {
     if (session) {
       void this.sessions.setLevels(session, level ? levelAndSevere(level) : ALL_LEVELS);
     }
+  }
+
+  /** Why no further filter tab can open for the active file (prompt 013), or null. */
+  protected readonly filterTabLimit = computed(() => {
+    const session = this.session();
+    return session ? this.sessions.filterTabLimit(session) : null;
+  });
+
+  /** The result of this tab as a new tab, to filter further there (prompt 013). */
+  protected openFilterTab(): void {
+    const session = this.session();
+    if (session) void this.sessions.openFilterTab(session);
   }
 
   protected toggleFullLog(): void {

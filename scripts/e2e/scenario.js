@@ -1301,6 +1301,69 @@
       !$('app-dashboard') && rows().some((c) => Number(c.dataset.line) === 0),
     );
 
+    // Filter tabs (prompt 013): ERROR+ of dash.log as a tab of its own, filtered further there; the parent changes
+    // and the child follows; the tail feeds both; closing the child leaves the parent running.
+    const dashStats = (viewId) => invoke('get_stats', { sessionId: dashId, viewId });
+    click(button('ERROR+'));
+    for (let i = 0; i < 100 && (await dashStats(0)).filteredLines === (await dashStats(0)).totalLines; i++) await sleep(50);
+    press('t', { metaKey: true, shiftKey: true });
+    await waitFor('⌘⇧T opens a filter tab right of its parent', () => {
+      const active = $('.tab.active');
+      const prev = active?.previousElementSibling;
+      return active?.classList.contains('view') && prev?.textContent.includes('dash.log') &&
+        active.querySelector('.title').title.includes('dash.log › ERROR, FATAL');
+    });
+    let childView = 0;
+    for (let v = 1; v <= 8 && !childView; v++) if (await dashStats(v).catch(() => null)) childView = v;
+    if (!childView) throw new Error('no view of the filter tab in the backend');
+    search('dashboard live');
+    await waitFor('the filter tab filters the parent further', () =>
+      rows().length === 1 && rowTexts()[0].includes('dashboard live') &&
+      $('.tab.active .title').textContent.includes('dashboard live'));
+    const parentBefore = await dashStats(0);
+    await act('appenddash 2026-01-15T10:00:11.000+01:00 ERROR 4711 --- [main] c.a.X : dashboard live two');
+    await waitFor('the tail runs in the filter tab', () =>
+      rows().length === 2 && rowTexts()[1].includes('dashboard live two'));
+    for (let i = 0; ; i++) {
+      const s = await dashStats(0);
+      if (s.filteredLines === parentBefore.filteredLines + 1) break;
+      if (i > 200) throw new Error(`parent did not follow the tail: ${JSON.stringify(s)}`);
+      await sleep(50);
+    }
+    await report('PASS the tail runs in the parent, too');
+    // The parent hides ERROR: the child follows (its result is a part of the parent's).
+    click(tabOf('dash.log'));
+    await waitFor('back on the parent tab', () => !$('.tab.active').classList.contains('view'));
+    click(chip('ERROR'));
+    for (let i = 0; ; i++) {
+      const s = await dashStats(childView);
+      if (!s.filterPending && s.filteredLines === 0) break;
+      if (i > 200) throw new Error(`child did not follow its parent: ${JSON.stringify(s)}`);
+      await sleep(50);
+    }
+    await report('PASS the filter tab follows a change of its parent');
+    click(chip('ERROR'));
+    for (let i = 0; ; i++) {
+      const s = await dashStats(childView);
+      if (!s.filterPending && s.filteredLines === 2) break;
+      if (i > 200) throw new Error(`child did not come back: ${JSON.stringify(s)}`);
+      await sleep(50);
+    }
+    await report('PASS and back');
+    click($('.tab.view .close'));
+    await waitFor('the filter tab closes', () => !$('.tab.view') && $('.tab.active')?.textContent.includes('dash.log'));
+    if (await dashStats(childView).then(() => true, () => false)) throw new Error('the view is still open');
+    const afterClose = await dashStats(0);
+    await act('appenddash 2026-01-15T10:00:12.000+01:00 ERROR 4711 --- [main] c.a.X : after the filter tab');
+    for (let i = 0; ; i++) {
+      const s = await dashStats(0);
+      if (s.totalLines === afterClose.totalLines + 1) break;
+      if (i > 200) throw new Error('the parent stopped after closing its filter tab');
+      await sleep(50);
+    }
+    await report('PASS closing the filter tab leaves the parent live, without error');
+    if ($('[role=alert]')?.textContent.trim()) throw new Error(`error shown: ${$('[role=alert]').textContent}`);
+
     await report('DONE');
   } catch (e) {
     await report(`FAIL ${e.message}`);

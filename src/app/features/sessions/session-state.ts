@@ -1,4 +1,4 @@
-import { Signal, computed, linkedSignal, signal } from '@angular/core';
+import { Signal, WritableSignal, computed, linkedSignal, signal } from '@angular/core';
 import { LogApi } from '../../core/log/log-api';
 import {
   ColumnSet,
@@ -18,6 +18,7 @@ import { isNewerColumns } from './format-logic';
 import { KeptFilter, filterActive, jumpScroll } from './navigation-logic';
 import { FilterGroupNode, emptyTree, hasFieldConditions } from './filter-tree';
 import { PageCache } from './page-cache';
+import { chainParts, fullChain, ownLabel, shortChain } from './view-chain';
 
 export interface ScrollPos {
   top: number;
@@ -40,9 +41,29 @@ export interface LineSelection {
 
 const TRANSIENT_STATUS_MS = 4000;
 
+/** A filter tab (prompt 013): which view of the session it shows and below which tab. */
+export interface ViewOptions {
+  /** Unique among the tabs; view 0 uses the session id. */
+  tabId: number;
+  viewId: number;
+  parent: SessionState;
+  update: SessionUpdate;
+}
+
 /** Everything one tab knows; a single viewport component renders the active one. */
 export class SessionState {
+  /** The tab: the session id for the tab of the file (view 0), a number of its own for a filter tab. */
   readonly id: number;
+  /** The backend session (file or merge); shared by all tabs of the file. */
+  readonly sessionId: number;
+  /** The view of the session this tab shows (prompt 013); 0 is the tab of the file. */
+  readonly viewId: number;
+  /** The tab this one filters further; null for the file's tab and once the parents closed. */
+  readonly parent = signal<SessionState | null>(null);
+  /** Steps of closed parent tabs, kept in the name: the backend keeps their filter, too. */
+  readonly inherited = signal<readonly string[]>([]);
+  /** The info the session was opened with, for filter tabs of it. */
+  readonly info: SessionInfo;
   /** Empty for a merge. */
   readonly path: string;
   readonly fileName: string;
@@ -90,8 +111,11 @@ export class SessionState {
   readonly pausedAtCount = signal(0);
 
   readonly selection = signal<LineSelection | null>(null);
-  /** Bookmarks of this tab (line numbers, prompt 007), kept in memory only; a new epoch clears them. */
-  readonly bookmarks = signal<ReadonlySet<number>>(new Set());
+  /**
+   * Bookmarks (line numbers, prompt 007), kept in memory only; a new epoch clears them. Shared by all tabs of the
+   * file (prompt 013): they are line numbers, and one finds them again down the chain.
+   */
+  readonly bookmarks: WritableSignal<ReadonlySet<number>>;
   /** The filter `revealInFullLog` lifted, for the way back; changing the filter by hand forgets it. */
   readonly keptFilter = signal<KeptFilter | null>(null);
   /** The view hides lines (levels, filtering search, sources of a merge). */
@@ -189,11 +213,50 @@ export class SessionState {
     },
   });
 
+  /** What this tab filters by itself, short. */
+  readonly ownLabel = computed(() =>
+    ownLabel(
+      {
+        levels: this.levels(),
+        query: this.query(),
+        mode: this.searchMode(),
+        sourceMask: this.sourceMask(),
+        tree: this.filterTree(),
+      },
+      this.sourceLabels,
+    ),
+  );
+  /** The steps of the chain down to this tab (without the file); the file's tab has none. */
+  readonly steps: Signal<readonly string[]> = computed(() => {
+    const parent = this.parent();
+    if (this.viewId === 0) return [];
+    const above = parent
+      ? [...parent.steps(), ...(parent.viewId === 0 ? [parent.ownLabel()] : [])]
+      : [];
+    return [...above, ...this.inherited(), this.ownLabel() || 'Alle'];
+  });
+  /** The name of the tab: the file, or the chain „app.log › ERROR › 4711“ (shortened). */
+  readonly tabLabel = computed(() =>
+    this.viewId === 0 ? this.fileName : shortChain(chainParts(this.fileName, this.steps())),
+  );
+  /** Tooltip of the tab: the path, for a filter tab the whole chain above it. */
+  readonly tabTitle = computed(() =>
+    this.viewId === 0
+      ? this.title
+      : `${fullChain(chainParts(this.fileName, this.steps()))}\n${this.title}`,
+  );
+
   constructor(
     info: SessionInfo,
     private readonly api: LogApi,
+    view: ViewOptions | null = null,
   ) {
-    this.id = info.sessionId;
+    this.info = info;
+    this.sessionId = info.sessionId;
+    this.viewId = view?.viewId ?? 0;
+    this.id = view?.tabId ?? info.sessionId;
+    this.bookmarks = view ? view.parent.bookmarks : signal<ReadonlySet<number>>(new Set());
+    if (view) this.parent.set(view.parent);
     this.path = info.path;
     this.sources = info.sources ?? [];
     this.isMerge = this.sources.length > 0;
@@ -203,11 +266,12 @@ export class SessionState {
     this.title = this.isMerge ? this.sources.map((s) => s.path).join('\n') : info.path;
     this.suggestedProfileId = info.suggestedProfileId;
     this.cache = new PageCache((start, count) =>
-      this.api.getLines(this.id, 'filtered', start, count),
+      this.api.getLines(this.sessionId, 'filtered', start, count, this.viewId),
     );
-    this.update.set(info.update);
-    this.seenErrors = errorCount(info.update);
-    this.loadColumns(info.update.columnsRevision);
+    const update = view?.update ?? info.update;
+    this.update.set(update);
+    this.seenErrors = this.errorCount(update);
+    this.loadColumns(update.columnsRevision);
   }
 
   applyUpdate(next: SessionUpdate): void {
@@ -232,7 +296,7 @@ export class SessionState {
     } else if (next.filteredLines !== prev.filteredLines || next.fileSize !== prev.fileSize) {
       this.cache.invalidateTail(prev.filteredLines);
     }
-    const errors = errorCount(next);
+    const errors = this.errorCount(next);
     if (this.active) {
       this.seenErrors = errors;
     } else if (errors > this.seenErrors) {
@@ -265,7 +329,7 @@ export class SessionState {
 
   /** The tab comes to the front: what happened is seen now. */
   markSeen(): void {
-    this.seenErrors = errorCount(this.update());
+    this.seenErrors = this.errorCount(this.update());
     this.hasNewErrors.set(false);
   }
 
@@ -297,7 +361,7 @@ export class SessionState {
       // If the user scrolled in the meantime, that wins.
       const requestedAt = this.scroll();
       void this.api
-        .getPosition(this.id, anchor)
+        .getPosition(this.sessionId, anchor, this.viewId)
         .catch(() => 0)
         .then((top) => {
           if (this.scroll() === requestedAt) this.scroll.set({ top, subPx: 0 });
@@ -315,7 +379,7 @@ export class SessionState {
     this.pendingReveal = null;
     const requestedAt = this.scroll();
     void this.api
-      .getPosition(this.id, line)
+      .getPosition(this.sessionId, line, this.viewId)
       .catch(() => null)
       .then((position) => {
         if (position === null || this.scroll() !== requestedAt) return;
@@ -323,11 +387,15 @@ export class SessionState {
       });
   }
 
+  private errorCount(update: SessionUpdate): number {
+    return errors(update, this.viewId !== 0);
+  }
+
   private loadColumns(revision: number): void {
     if (revision <= this.columnsRequested) return;
     this.columnsRequested = revision;
     this.api
-      .getColumns(this.id)
+      .getColumns(this.sessionId)
       .then((set) => {
         if (isNewerColumns(this.columns(), set)) this.columns.set(set);
       })
@@ -344,6 +412,8 @@ export class SessionState {
   }
 }
 
-function errorCount(update: SessionUpdate): number {
-  return update.counts.ERROR + update.counts.FATAL;
+/** Errors that mark a tab in the background: of the file for its tab, of the view for a filter tab. */
+function errors(update: SessionUpdate, ofView: boolean): number {
+  const counts = ofView ? update.viewCounts : update.counts;
+  return counts.ERROR + counts.FATAL;
 }

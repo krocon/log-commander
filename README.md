@@ -71,6 +71,13 @@ Like <code>tail -f</code> with a GUI: millions of lines, instant filters, no wai
   „Abschnitt ab hier“/„bis hier“ (`>`/`<`) for the selection. Errors (a broken regex, an unknown time) show at
   their condition. The level chips and the search stay on top as an AND; saved filters keep the tree. At most 64
   conditions.
+- **Filter tabs (drill-down)** – a filter opened as a tab of its own shows the result of its tab and filters further,
+  step by step: „app.log › ERROR › OrderService › 4711“. Each step stays open as a tab right of its parent, so you can
+  go back and work next to it; changing a filter above updates every tab below it live. Open one with „⧉ Als Tab“ in
+  the toolbar, `Cmd/Ctrl+Shift+T`, „⧉ Tab“ (or `T`) at a filter in the sidebar tree, right click „In neuem Tab
+  filtern …“ on a line or a cell, or a bar of the dashboard without time axis. Closing a tab keeps the tabs below it
+  as they are. All tabs of a file share one index, one tail and the freeze; bookmarks belong to the file. The tree
+  shows the tabs below their file, the tab title the whole chain. At most 8 tabs per file.
 - **Dashboard** – charts over time from SQL: errors per minute, the error rate, a measurement such as `took` per
   minute (mean and maximum), entries per file of a merge. `Cmd/Ctrl+Shift+D` or „▥ Dashboard“ lays it over the tab,
   the log keeps running below. On first use a small SQLite database is built in the background from the index, one
@@ -79,7 +86,7 @@ Like <code>tail -f</code> with a GUI: millions of lines, instant filters, no wai
   start from templates and show their SQL to change: line, area, bars, stacked bars, pie, table, single value, in a
   grid. `bucket(ts, '1m')` groups by minute (`'30s'`, `'1h'`, `'1d'` …). Click a point or bar (or pick it with
   `←`/`→` and `Enter`) to jump to the first line of that minute, a table row with a `line` column to that line, a bar
-  without time axis (`GROUP BY logger`) to filter on it. Queries only read: one statement, no `ATTACH`, no
+  without time axis (`GROUP BY logger`) to a filter tab on it. Queries only read: one statement, no `ATTACH`, no
   `PRAGMA`, no extensions, at most 10,000 rows and 10 s. Dashboards are stored per format.
 - **Search** – filter or highlight, regular expressions, case sensitivity, jump between matches.
 - **Follow** – stays at the end while you are there; scroll up and it pauses and counts the new lines.
@@ -98,6 +105,7 @@ Like <code>tail -f</code> with a GUI: millions of lines, instant filters, no wai
 | ![Fields dialog](docs/screenshots/fields.png) | ![Extracted columns](docs/screenshots/extracted.png) |
 | ![Dashboard](docs/screenshots/dashboard.png) | ![Dashboard with SQL and schema](docs/screenshots/dashboard-sql.png) |
 | ![Overview ruler on a busy log](docs/screenshots/ruler-dense.png) | ![The same in the light theme](docs/screenshots/ruler-dense-light.png) |
+| ![Filter tabs: a chain of filters](docs/screenshots/drilldown.png) | |
 
 ## Install
 
@@ -123,6 +131,7 @@ log-commander /var/log/app.log /var/log/other.log
 | `↑`, `↓` on the panel's bar | Panel height (`Shift`: bigger steps, `Home`/`End`, double click: default) |
 | `Cmd/Ctrl+B` | Show or hide the sidebar |
 | `Cmd/Ctrl+Shift+D` | Dashboard of the tab, or back to the log |
+| `Cmd/Ctrl+Shift+T` | The result of the tab as a new filter tab, to filter further there (`T` on a filter in the tree) |
 | `Cmd/Ctrl+Enter` in a panel's SQL | Run the query |
 | `←`, `→`, `Home`, `End`, `Enter` on a chart | Pick a point (values in the legend), jump to its first line |
 | `↑`, `↓`, `←`, `→`, `Home`, `End` in the tree | Move, open and close nodes; `Enter`/`Space` activates, `Enter` on „Aktiver Filter“ saves it, `Delete` removes a filter |
@@ -190,6 +199,7 @@ Measured on an Apple Silicon Mac, release build, with
 | `find_level`, no FATAL in 5.1 million lines | 0.13 ms |
 | `get_lines`, 5000 lines with 0 / 4 / 16 extracted fields (`extract_integration`) | 7.8 / 11.8 / 12.8 ms |
 | Dashboard database: build / size (numbers only) / errors per minute (`report_integration`) | 12.8 s / 226 MB / 1.0 s |
+| Read and filter with 1 / 4 / 8 filter tabs open (`views_integration`) | 2.2 / 3.6 / 4.6 s |
 
 At 10,000 lines per second the UI's event loop was never blocked for more than 8 ms (debug build, `npm run e2e`).
 

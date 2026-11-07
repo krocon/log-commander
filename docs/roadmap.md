@@ -30,7 +30,10 @@ Architektur verbaut nichts davon.
   Feld-Bedingungen vergleichen in Basiseinheit (`took > 500 ms`)
 - Dashboard und SQL-Timeline (Prompt 012): SQLite je Tab (erst beim ersten Öffnen), eine Zeile je Eintrag mit Zeit,
   Level, Quelle und Zahlenfeldern; Panels mit SQL (Linie, Fläche, Säulen, gestapelt, Kreis, Tabelle, Einzelwert),
-  Vorlagen, `bucket()`, Klick springt zur Zeile oder setzt einen Filter, live alle 5 s, abgesicherte Abfragen
+  Vorlagen, `bucket()`, Klick springt zur Zeile oder öffnet einen Filter-Tab (013), live alle 5 s, abgesicherte Abfragen
+- Filter als eigener Tab (Prompt 013): Drill-down „app.log › ERROR › 4711“, mehrere Ansichten in einer Sitzung, Kind =
+  Eltern UND eigener Filter, live; Einstieg über Toolbar, `Cmd/Ctrl+Shift+T`, Baum, Kontextmenü, Dashboard-Säule; Kette
+  im Baum und im Tab-Titel; höchstens 8 Tabs je Datei
 - Overview Ruler und Navigation (Prompt 007): Leiste rechts mit Fehlern, Warnungen, Lesezeichen, Auswahl und
   sichtbarem Bereich, Klick springt; `E`/`W` nächster Fehler bzw. Warnung, `M`/`N` Lesezeichen (nur im Speicher), `G`
   aus dem Filter ins Gesamtlog und zurück
@@ -68,8 +71,13 @@ Notizen. Nachfragen zu 010: Zeit-Bedingung je Quelle beim Merge, Zeilenbedingung
 **Dashboard (Nachfragen zu 012):** Teilen und Export (auch PDF), Alarme aus Abfragen, nur die gefilterte Ansicht
 auswerten (würde die Filterliste in die Datenbank kopieren), Nachricht als durchsuchbare Spalte (FTS), Abfragen über
 mehrere Tabs (dafür gibt es Merge), Panels frei ziehen statt Größenstufen, Zoom/Zeitauswahl im Diagramm als Filter
-(014), Säule ohne Zeitachse als Filter-Tab (013), Tabellen-Panel auf der GuiExpert Table, gruppierte `GROUP BY`-Abfragen
+(014), Tabellen-Panel auf der GuiExpert Table, gruppierte `GROUP BY`-Abfragen
 schneller (vorberechnete Minuten, ~1 s je 5 Mio. Einträge heute).
+
+**Filter-Tabs (Nachfragen zu 013):** Tabs verschieben und die Kette dabei behalten, Ketten speichern und wieder öffnen,
+eigener Ruler-/Statistikvergleich Eltern gegen Kind, ein Dashboard je Ansicht statt je Datei (heute pausiert das
+Schließen des Dashboards in einem Tab den Aufbau auch für die anderen Tabs der Datei), Merge-Ansichten ohne Textlesen
+unter der Sperre (heute lesen weitere Ansichten eines Merges den Text beim Schreiben).
 
 **Alarme:** Schwellenwert-, Muster- und Heartbeat-Trigger; Desktop-Benachrichtigung, E-Mail, Webhooks, Incident-Tools.
 

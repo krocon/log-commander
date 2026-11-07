@@ -31,6 +31,7 @@ pub mod report_db;
 pub mod session;
 pub mod tail;
 pub mod timestamp;
+pub mod views;
 
 use session::SessionManager;
 use tauri::menu::{Menu, MenuItem, SubmenuBuilder};
@@ -95,6 +96,8 @@ pub fn run() {
             commands::close_log,
             commands::get_lines,
             commands::set_filter,
+            commands::open_view,
+            commands::close_view,
             commands::set_profile,
             commands::get_columns,
             commands::preview_fields,

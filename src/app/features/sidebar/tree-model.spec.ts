@@ -206,4 +206,40 @@ describe('tree model with a filter tree (prompt 010)', () => {
     expect(sameFilter(entry, ALL_LEVELS, noQuery, 'filter', emptyTree())).toBe(false);
     expect(suggestName(ALL_LEVELS, noQuery, tree)).toBe('„req-42“');
   });
+
+  it('hangs filter tabs below the tab they filter, the chain as sub nodes (prompt 013)', () => {
+    const levels = new Set<Level>(['ERROR']);
+    const nodes = buildTree(
+      [
+        session(1, { levels }),
+        session(1 << 30, { parentId: 1, viewId: 1, label: 'f1.log › ERROR › Alle', levels }),
+        session((1 << 30) + 1, { parentId: 1 << 30, viewId: 2, label: '…› „x“' }),
+        session(2),
+      ],
+      (1 << 30) + 1,
+      [],
+      new Set(),
+    );
+    expect(nodes.map((n) => [n.id, n.level, n.parentId])).toEqual([
+      ['file:1', 1, null],
+      ['filter:1', 2, 'file:1'],
+      ['levels:1', 3, 'filter:1'],
+      [`view:${1 << 30}`, 2, 'file:1'],
+      [`filter:${1 << 30}`, 3, `view:${1 << 30}`],
+      [`levels:${1 << 30}`, 4, `filter:${1 << 30}`],
+      [`view:${(1 << 30) + 1}`, 3, `view:${1 << 30}`],
+      ['file:2', 1, null],
+    ]);
+    expect(nodes[3]).toMatchObject({ kind: 'view', posInSet: 2, setSize: 2, expandable: true });
+    expect(nodes[6]).toMatchObject({ current: true, label: '…› „x“' });
+    expect(nodes[7]).toMatchObject({ posInSet: 2, setSize: 2 });
+    // A filter tab whose parents closed stands on its own.
+    const alone = buildTree(
+      [session(5, { parentId: null, viewId: 3, label: 'f5.log › ERROR' })],
+      null,
+      [],
+      new Set(),
+    );
+    expect(alone.map((n) => [n.id, n.label])).toEqual([['file:5', 'f5.log › ERROR']]);
+  });
 });

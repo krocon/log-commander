@@ -13,7 +13,9 @@ import {
   SessionInfo,
   SessionUpdate,
 } from '../../core/log/log.models';
-import { mergeKey, maskForBackend } from '../merge/merge-logic';
+import { ALL_SOURCES, mergeKey, maskForBackend } from '../merge/merge-logic';
+import { ALL_LEVELS } from './filter-logic';
+import { inheritOnClose, insertIndex, viewLimitReason } from './view-chain';
 import { AppError, describeError, toAppError } from '../../core/errors/app-error';
 import { SettingsService } from '../../core/settings/settings.service';
 import { SessionState } from './session-state';
@@ -90,7 +92,7 @@ export class LogSessionService {
 
   /** Opens or activates a file and hands a failure to the caller instead of showing it. */
   async tryOpen(path: string): Promise<AppError | null> {
-    const open = this.sessions().find((s) => s.path === path);
+    const open = tabOfFile(this.sessions().filter((s) => s.path === path));
     if (open) {
       this.activate(open.id);
       return null;
@@ -114,7 +116,7 @@ export class LogSessionService {
    */
   async openMerged(sources: readonly MergeSourceSpec[]): Promise<AppError | null> {
     const key = mergeKey(sources.map((s) => s.path));
-    const open = this.sessions().find((s) => s.mergeKey === key);
+    const open = tabOfFile(this.sessions().filter((s) => s.mergeKey === key));
     if (open) {
       this.activate(open.id);
       return null;
@@ -154,7 +156,7 @@ export class LogSessionService {
   async resort(session: SessionState): Promise<void> {
     if (!session.isMerge) return;
     try {
-      await this.api.resort(session.id);
+      await this.api.resort(session.sessionId);
     } catch (e) {
       this.showError(toAppError(e));
     }
@@ -166,21 +168,110 @@ export class LogSessionService {
     await this.applyFilter(session);
   }
 
+  /**
+   * Closes a tab. A filter tab closes only its view (prompt 013): the tabs below it keep their result, the backend
+   * hands its filter down. The last tab of a file closes the session.
+   */
   async close(id: number): Promise<void> {
     const all = this.sessions();
     const index = all.findIndex((s) => s.id === id);
     if (index < 0) return;
+    const closing = all[index];
     const rest = all.filter((s) => s.id !== id);
+    const others = rest.filter((s) => s.sessionId === closing.sessionId);
+    for (const child of others.filter((s) => s.parent() === closing)) {
+      const next = inheritOnClose(
+        {
+          parentId: closing.parent()?.id ?? null,
+          inherited: closing.inherited(),
+          own: closing.ownLabel(),
+        },
+        { inherited: child.inherited() },
+      );
+      child.parent.set(closing.parent());
+      child.inherited.set(next.inherited);
+    }
+    this.cancelTreeTimer(closing);
     this.sessions.set(rest);
     if (this.activeId() === id) {
       const next = rest[Math.min(index, rest.length - 1)];
       this.activate(next ? next.id : null);
     }
     try {
-      await this.api.close(id);
+      if (others.length) await this.api.closeView(closing.sessionId, closing.viewId);
+      else await this.api.close(closing.sessionId);
     } catch (e) {
       this.showError(toAppError(e));
     }
+  }
+
+  /** Why no further filter tab can open for the file of this tab, or null (prompt 013). */
+  filterTabLimit(session: SessionState): string | null {
+    return viewLimitReason(this.sessions(), session.sessionId);
+  }
+
+  /**
+   * Opens a filter as a new tab right of `parent` (prompt 013): it shows the result of `parent` and filters further
+   * with its own filter, empty or the given start (a condition, levels, sources). Changes above follow live.
+   */
+  async openFilterTab(
+    parent: SessionState,
+    start: { cond?: FilterCond; levels?: ReadonlySet<Level>; sourceMask?: number } = {},
+  ): Promise<SessionState | null> {
+    const limit = this.filterTabLimit(parent);
+    if (limit) {
+      this.showError(limit);
+      return null;
+    }
+    const tree = start.cond ? addNode(emptyTree(), ROOT_ID, condNode(start.cond)) : emptyTree();
+    const levels = start.levels ?? ALL_LEVELS;
+    const sourceMask = start.sourceMask ?? ALL_SOURCES;
+    let state: SessionState | null = null;
+    const early: SessionUpdate[] = [];
+    try {
+      const view = await this.api.openView(
+        parent.sessionId,
+        parent.viewId,
+        {
+          levels: [...levels],
+          query: { text: '', isRegex: false, caseSensitive: false },
+          mode: 'filter',
+          sources: maskForBackend(sourceMask, parent.sources.length),
+          expr: compileTree(tree),
+        },
+        (update) => {
+          if (state) state.applyUpdate(update);
+          else early.push(update);
+        },
+      );
+      state = new SessionState(parent.info, this.api, {
+        tabId: nextTabId(),
+        viewId: view.viewId,
+        parent,
+        update: view.update,
+      });
+    } catch (e) {
+      this.showError(toAppError(e));
+      return null;
+    }
+    const created = state;
+    created.levels.set(levels);
+    created.sourceMask.set(sourceMask);
+    created.filterTree.set(tree);
+    created.onColumnsChanged = () => void this.applyFilter(created, true);
+    for (const update of early) created.applyUpdate(update);
+    if (!this.sessions().includes(parent)) {
+      // The parent closed while the view opened: nothing to show it under.
+      void this.api.closeView(created.sessionId, created.viewId).catch(() => undefined);
+      return null;
+    }
+    this.sessions.update((all) => {
+      const next = [...all];
+      next.splice(insertIndex(all, parent.id), 0, created);
+      return next;
+    });
+    this.activate(created.id);
+    return created;
   }
 
   activate(id: number | null): void {
@@ -253,12 +344,13 @@ export class LogSessionService {
     const expr = compileTree(session.filterTree());
     try {
       const info = await this.api.setFilter(
-        session.id,
+        session.sessionId,
         [...session.levels()],
         session.query(),
         session.searchMode(),
         maskForBackend(session.sourceMask(), session.sources.length),
         expr,
+        session.viewId,
       );
       session.searchError.set(null);
       session.treeError.set(null);
@@ -405,8 +497,14 @@ export class LogSessionService {
    */
   async showLine(session: SessionState, line: number): Promise<void> {
     try {
-      const position = await this.api.getPosition(session.id, line);
-      const [there] = await this.api.getLines(session.id, 'filtered', position, 1);
+      const position = await this.api.getPosition(session.sessionId, line, session.viewId);
+      const [there] = await this.api.getLines(
+        session.sessionId,
+        'filtered',
+        position,
+        1,
+        session.viewId,
+      );
       this.setMode(session, 'log');
       session.jumpTo(position, line);
       if (there?.line !== line) {
@@ -428,8 +526,9 @@ export class LogSessionService {
   }
 
   /**
-   * A bar without a time axis (`GROUP BY logger`) as a filter (prompt 010): level → level chips, source →
-   * source chips of a merge, a field of the log → field condition. Back to the log.
+   * A bar without a time axis (`GROUP BY logger`) as a filter tab (prompt 013, drill-down): level → levels,
+   * source → that file of a merge, a field of the log → field condition, below the tab of the dashboard. The
+   * dashboard stays as it is; the new tab shows the log.
    */
   async filterFromDashboard(
     session: SessionState,
@@ -437,27 +536,29 @@ export class LogSessionService {
     value: string,
   ): Promise<boolean> {
     const name = column.sql.toLowerCase();
+    let start: Parameters<LogSessionService['openFilterTab']>[1] | null = null;
     if (name === 'level' && (LEVELS as readonly string[]).includes(value)) {
-      this.setMode(session, 'log');
-      await this.setLevels(session, new Set([value as Level]));
-      return true;
-    }
-    if (session.isMerge && (name === 'source' || name === 'quelle')) {
+      start = { levels: new Set([value as Level]) };
+    } else if (session.isMerge && (name === 'source' || name === 'quelle')) {
       const index = session.sources.findIndex(
         (s) => String(s.index) === value || s.fileName === value,
       );
-      if (index >= 0) {
-        this.setMode(session, 'log');
-        await this.setSources(session, 1 << session.sources[index].index);
-        return true;
-      }
+      if (index >= 0) start = { sourceMask: 1 << session.sources[index].index };
     }
-    if (column.log) {
-      this.setMode(session, 'log');
-      this.filterByValue(session, column.log, value);
-      return true;
+    if (!start && column.log) {
+      start = {
+        cond: {
+          type: 'field',
+          column: column.log,
+          op: 'eq',
+          value: value.trim().slice(0, 4096),
+          value2: null,
+          caseSensitive: false,
+        },
+      };
     }
-    return false;
+    if (!start) return false;
+    return (await this.openFilterTab(session, start)) !== null;
   }
 
   /** Back to the filter `revealInFullLog` kept, showing the selected line if the filter has it. */
@@ -517,10 +618,11 @@ export class LogSessionService {
     else from = scroll.top;
     try {
       const hit = await this.api.findLevel(
-        session.id,
+        session.sessionId,
         from,
         forward,
         kind === 'error' ? ERROR_LEVELS : WARN_LEVELS,
+        session.viewId,
       );
       if (!hit) {
         this.showFindMessage(
@@ -544,7 +646,7 @@ export class LogSessionService {
     fallback: number,
   ): Promise<void> {
     try {
-      const hit = await this.api.findLevel(session.id, from, true, levels);
+      const hit = await this.api.findLevel(session.sessionId, from, true, levels, session.viewId);
       if (hit) session.jumpTo(hit.position, hit.line);
       else session.jumpTo(fallback, null);
     } catch (e) {
@@ -576,7 +678,7 @@ export class LogSessionService {
       return;
     }
     try {
-      const position = await this.api.getPosition(session.id, next.line);
+      const position = await this.api.getPosition(session.sessionId, next.line, session.viewId);
       session.jumpTo(position, next.line);
       this.showFindMessage(session, next.wrapped ? wrappedText(forward) : null);
     } catch (e) {
@@ -586,7 +688,7 @@ export class LogSessionService {
 
   async setProfile(session: SessionState, profileId: string): Promise<void> {
     try {
-      await this.api.setProfile(session.id, profileId);
+      await this.api.setProfile(session.sessionId, profileId);
     } catch (e) {
       this.showError(toAppError(e));
     }
@@ -596,7 +698,7 @@ export class LogSessionService {
   async toggleFreeze(session: SessionState): Promise<void> {
     if (!session.canFreeze()) return;
     try {
-      await this.api.setFrozen(session.id, !session.frozen());
+      await this.api.setFrozen(session.sessionId, !session.frozen());
     } catch (e) {
       this.showError(toAppError(e));
     }
@@ -608,7 +710,7 @@ export class LogSessionService {
     if (!query.text) return;
     const from = session.currentHitLine() ?? session.selection()?.first ?? null;
     try {
-      const hit = await this.api.find(session.id, from, query, forward);
+      const hit = await this.api.find(session.sessionId, from, query, forward, session.viewId);
       if (!hit) {
         this.showFindMessage(session, 'Keine Treffer');
         return;
@@ -636,7 +738,7 @@ export class LogSessionService {
 
   async selectEntry(session: SessionState, line: number, extend: boolean): Promise<void> {
     try {
-      const range = await this.api.getEntryRange(session.id, line);
+      const range = await this.api.getEntryRange(session.sessionId, line);
       const current = session.selection();
       if (extend && current) {
         const anchorStart = Math.min(current.anchor, range.first);
@@ -655,7 +757,13 @@ export class LogSessionService {
     const selection = session.selection();
     if (!selection) return;
     try {
-      const text = await this.api.copyLines(session.id, selection.first, selection.last);
+      const text = await this.api.copyLines(
+        session.sessionId,
+        selection.first,
+        selection.last,
+        'filtered',
+        session.viewId,
+      );
       await writeClipboard(text);
     } catch (e) {
       this.showError(toAppError(e));
@@ -665,7 +773,7 @@ export class LogSessionService {
   /** The lines of an entry whatever the filter hides (detail panel), complete also beyond its display cut. */
   async copyEntry(session: SessionState, first: number, last: number): Promise<void> {
     try {
-      await writeClipboard(await this.api.copyLines(session.id, first, last, 'all'));
+      await writeClipboard(await this.api.copyLines(session.sessionId, first, last, 'all'));
     } catch (e) {
       this.showError(toAppError(e));
     }
@@ -689,11 +797,11 @@ export class LogSessionService {
    */
   private async suggestOnOpen(session: SessionState): Promise<void> {
     try {
-      const set = await this.api.getColumns(session.id);
+      const set = await this.api.getColumns(session.sessionId);
       const { extractRules, fieldHints } = this.settings.settings();
       if (extractRules[set.profileId]?.length || fieldHints.includes(set.profileId)) return;
       if (session.update().totalLines === 0) return;
-      const found = await this.api.suggestFields(session.id);
+      const found = await this.api.suggestFields(session.sessionId);
       if (!found.length || !this.sessions().includes(session)) return;
       session.fieldHint.set(found);
       this.settings.update({ fieldHints: [...this.settings.settings().fieldHints, set.profileId] });
@@ -711,8 +819,9 @@ export class LogSessionService {
     rules: readonly ExtractRule[],
   ): Promise<AppError | null> {
     try {
-      const set = await this.api.setExtractRules(session.id, rules);
-      session.acceptColumns(set);
+      const set = await this.api.setExtractRules(session.sessionId, rules);
+      for (const tab of this.sessions())
+        if (tab.sessionId === session.sessionId) tab.acceptColumns(set);
       const all = { ...this.settings.settings().extractRules };
       if (rules.length) all[set.profileId] = rules.map((r) => ({ ...r }));
       else delete all[set.profileId];
@@ -728,6 +837,17 @@ export class LogSessionService {
     if (this.errorTimer) clearTimeout(this.errorTimer);
     this.errorTimer = setTimeout(() => this.error.set(null), ERROR_VISIBLE_MS);
   }
+}
+
+/** Tab ids of filter tabs: far above the session ids the backend counts up. */
+let tabIds = 1 << 30;
+function nextTabId(): number {
+  return ++tabIds;
+}
+
+/** The tab a file opens to again: its own tab (view 0), else its first filter tab. */
+function tabOfFile(tabs: readonly SessionState[]): SessionState | undefined {
+  return tabs.find((t) => t.viewId === 0) ?? tabs[0];
 }
 
 function wrappedText(forward: boolean): string {

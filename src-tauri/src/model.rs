@@ -188,6 +188,15 @@ pub struct FilterInfo {
 
 pub type Stats = SessionUpdate;
 
+/// A view opened as a tab of its own (prompt 013); its updates come through its own channel.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ViewInfo {
+    pub view_id: u32,
+    pub parent_view_id: Option<u32>,
+    pub update: SessionUpdate,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FindHit {

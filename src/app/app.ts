@@ -295,7 +295,8 @@ export class App implements OnInit, OnDestroy {
     });
     if (isTauri()) {
       effect(() => {
-        const name = this.active()?.fileName;
+        // A filter tab (prompt 013) shows its chain.
+        const name = this.active()?.tabLabel();
         void getCurrentWindow()
           .setTitle(name ? `${name} – Log Commander` : 'Log Commander')
           .catch(() => undefined);
@@ -394,6 +395,11 @@ export class App implements OnInit, OnDestroy {
       event.preventDefault();
       const session = this.sessions.active();
       if (session) this.sessions.toggleDashboard(session);
+    } else if (key === 't' && event.shiftKey && !event.altKey) {
+      // Prompt 013: the result of the active tab as a new tab, to filter further there.
+      event.preventDefault();
+      const session = this.sessions.active();
+      if (session) void this.sessions.openFilterTab(session);
     } else if (key === ',') {
       event.preventDefault();
       this.settingsOpen.set(true);

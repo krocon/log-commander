@@ -119,6 +119,22 @@ await shot(dark, 'search');
 
 await dark.fill('input[type=search]', '');
 await dark.waitForTimeout(350);
+await dark.selectOption('select[aria-label=Suchmodus]', 'filter');
+
+// Filter tabs (prompt 013): ERROR+ as a tab of its own, in it only the orders, the chain in tab and tree.
+await dark.click('button:text-is("ERROR+")');
+await dark.waitForTimeout(150);
+await dark.click('button.filter-tab');
+await dark.waitForSelector('.tab.view.active');
+await dark.fill('input[type=search]', 'order');
+await dark.waitForTimeout(400);
+await dark.evaluate(() => document.activeElement?.blur());
+await shot(dark, 'drilldown');
+await dark.click('.tab.view .close');
+await dark.waitForTimeout(150);
+await dark.click('.tab .title >> text=app.log');
+await dark.click('button:text-is("Alle")');
+await dark.waitForTimeout(150);
 await dark.click('button[title=Einstellungen]');
 await dark.waitForTimeout(150);
 await shot(dark, 'settings');

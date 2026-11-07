@@ -840,6 +840,7 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
       selectedText: text,
       cell: cell ? { label: cellLabel, value: cell.value } : null,
       hasLine: !!line,
+      tabLimit: this.sessions.filterTabLimit(session),
     });
     if (!items.length) return;
     const host = this.host.nativeElement;
@@ -879,6 +880,31 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
         break;
       case 'filter-value':
         if (menu.cell) this.sessions.filterByValue(session, menu.cell.column, menu.cell.value);
+        break;
+      case 'filter-text-tab': {
+        // Prompt 013: like `I`, but as a tab below this one.
+        const first = menu.text.split(/\r?\n/).find((l) => l.trim()) ?? '';
+        const text = first.trim().slice(0, 4096);
+        if (text) {
+          void this.sessions.openFilterTab(session, {
+            cond: { type: 'text', text, isRegex: false, caseSensitive: false },
+          });
+        }
+        break;
+      }
+      case 'filter-value-tab':
+        if (menu.cell) {
+          void this.sessions.openFilterTab(session, {
+            cond: {
+              type: 'field',
+              column: menu.cell.column,
+              op: 'eq',
+              value: menu.cell.value.trim().slice(0, 4096),
+              value2: null,
+              caseSensitive: false,
+            },
+          });
+        }
         break;
       case 'column-from-selection':
         if (menu.logLine) this.columnFromSelection(menu.logLine, menu.text, menu.columnId);

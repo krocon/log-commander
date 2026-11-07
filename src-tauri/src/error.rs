@@ -25,6 +25,10 @@ pub enum ErrorCode {
     InvalidRule,
     /// A dashboard query (prompt 012) that is not allowed or fails; the message is the engine's.
     InvalidQuery,
+    /// A view (filter tab, prompt 013) that is not open.
+    UnknownView,
+    /// More than `MAX_VIEWS` views of one file (prompt 013).
+    TooManyViews,
 }
 
 #[derive(Debug, Clone, Serialize, thiserror::Error)]

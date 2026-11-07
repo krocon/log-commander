@@ -18,13 +18,14 @@ use crate::merge::{MergeSource, MergeWorker};
 use crate::model::{
     ColumnSet, EntryDetail, EntryRange, FilterInfo, FindHit, LogLine, Overview, OverviewMark,
     ReportResult, ReportSchema, ReportStatus, SessionInfo, SessionUpdate, SourceInfo, SourceUpdate,
-    Status,
+    Status, ViewInfo,
 };
 use crate::overview::{level_bit, LevelSummary};
 use crate::platform::open_shared;
 use crate::profile::{Profile, ProfileRegistry};
 use crate::report_db::{ReportDb, ReportLimits};
 use crate::tail::Tailer;
+use crate::views::{compose, ViewFilter, MAX_VIEWS};
 use memchr::memchr;
 use parking_lot::{Mutex, RwLock};
 use std::borrow::Cow;
@@ -34,6 +35,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
+use std::time::Instant;
 
 const SCAN_BLOCK: usize = 1024 * 1024;
 const VIEW_BLOCK: usize = 64 * 1024;
@@ -75,18 +77,90 @@ impl Default for OpenOptions {
     }
 }
 
-/// The provisional last line (a line without an end shown after a pause) and how to undo it.
+/// The provisional last line (a line without an end shown after a pause) and how to undo it; the
+/// filter of every view keeps its own checkpoint (`ViewState::provisional`).
 #[derive(Debug, Clone, Copy)]
 pub struct Provisional {
-    pub checkpoint: FilterCheckpoint,
     pub prev: PrevLine,
+}
+
+/// Where updates of a view go (a Tauri channel per view).
+pub type ViewSink = Arc<dyn Fn(SessionUpdate) + Send + Sync>;
+
+/// An unchanged view (only the line count of the file grew) hears of it at most this often.
+const QUIET_VIEW_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// One view of the session (prompt 013): its filter and its list. View 0 always exists and behaves
+/// as the single view did before.
+pub struct ViewState {
+    pub id: u32,
+    /// The view this one filters further; `None` for view 0 and for views whose ancestors closed.
+    pub parent: Option<u32>,
+    /// What the user set for this view.
+    pub own: ViewFilter,
+    /// Filters of closed ancestors, outermost first: the chain stays as it was.
+    pub inherited: Vec<ViewFilter>,
+    pub filter: FilteredLines,
+    /// What the running or last job works towards (`filter` swaps to it when done).
+    pub requested_spec: FilterSpec,
+    pub view_generation: u64,
+    pub filter_pending: bool,
+    pub filter_progress: f32,
+    /// The newest filter job of this view; an older one sees the difference and stops.
+    job: Arc<AtomicU64>,
+    /// A relevel runs: the filter job starts after it and finishes with this view generation.
+    awaiting_relevel: Option<u64>,
+    /// Filter state before the provisional last line, to withdraw it.
+    pub provisional: Option<FilterCheckpoint>,
+    /// Something of this view changed that its tab has not heard of.
+    pub dirty: bool,
+    /// Skipped while only the file grew: sent once `QUIET_VIEW_INTERVAL` is over.
+    behind: bool,
+    /// View 0 after its tab closed while others stay: an identity without listener.
+    pub hidden: bool,
+    sink: Option<ViewSink>,
+    last_sent: Option<(SessionUpdate, Instant)>,
+}
+
+impl ViewState {
+    fn new(id: u32, parent: Option<u32>, sink: Option<ViewSink>) -> Self {
+        let spec = FilterSpec::default();
+        Self {
+            id,
+            parent,
+            own: ViewFilter::default(),
+            inherited: Vec::new(),
+            filter: FilteredLines::new(spec.clone()),
+            requested_spec: spec,
+            view_generation: 0,
+            filter_pending: false,
+            filter_progress: 0.0,
+            job: Arc::new(AtomicU64::new(0)),
+            awaiting_relevel: None,
+            provisional: None,
+            dirty: true,
+            behind: false,
+            hidden: false,
+            sink,
+            last_sent: None,
+        }
+    }
+
+    /// Bytes of its list (4 per line it shows; the identity has none).
+    pub fn list_bytes(&self, total: usize) -> usize {
+        if self.filter.is_identity() {
+            0
+        } else {
+            self.filter.len(total) * std::mem::size_of::<u32>()
+        }
+    }
 }
 
 pub struct SessionData {
     pub index: LineIndex,
-    pub filter: FilteredLines,
-    /// What the running or last job works towards (`filter` swaps to it when done).
-    pub requested_spec: FilterSpec,
+    /// View 0 first, always there; at most `MAX_VIEWS` visible ones.
+    pub views: Vec<ViewState>,
+    next_view_id: u32,
     pub segments: Vec<Arc<Segment>>,
     pub encoding: Encoding,
     pub detector: Arc<LevelDetector>,
@@ -99,7 +173,7 @@ pub struct SessionData {
     pub relevel_needed: bool,
     /// How lines split into fields, and how well the sample fits.
     pub format: Arc<FormatGuess>,
-    /// Waits for the running job: the spans change together with the view generation.
+    /// Waits for the running relevel: the spans change together with the view generations.
     pub requested_format: Option<Arc<FormatGuess>>,
     /// Changes with the columns; then the view generation changes too.
     pub columns_revision: u64,
@@ -108,9 +182,6 @@ pub struct SessionData {
     pub prev: PrevLine,
     pub provisional: Option<Provisional>,
     pub epoch: u64,
-    pub view_generation: u64,
-    pub filter_pending: bool,
-    pub filter_progress: f32,
     pub status: Status,
     pub file_size: u64,
     pub keep_on_rotate: bool,
@@ -118,7 +189,7 @@ pub struct SessionData {
     pub frozen: bool,
     pub pending_bytes: u64,
     pub frozen_stale: bool,
-    /// Something changed that the frontend has not heard of.
+    /// Something of the file changed that the frontend has not heard of (all views).
     pub dirty: bool,
     /// The sources of a merge (empty for a single file).
     pub sources: Vec<SourceUpdate>,
@@ -138,11 +209,10 @@ impl SessionData {
         options: &OpenOptions,
     ) -> Self {
         let keep = options.keep_on_rotate;
-        let spec = FilterSpec::default();
         Self {
             index: LineIndex::default(),
-            filter: FilteredLines::new(spec.clone()),
-            requested_spec: spec,
+            views: vec![ViewState::new(0, None, None)],
+            next_view_id: 1,
             segments: Vec::new(),
             encoding: Encoding::Utf8,
             detector,
@@ -158,9 +228,6 @@ impl SessionData {
             prev: PrevLine::default(),
             provisional: None,
             epoch: 0,
-            view_generation: 0,
-            filter_pending: false,
-            filter_progress: 0.0,
             status: Status::Loading { progress: 0.0 },
             file_size,
             keep_on_rotate: keep,
@@ -184,56 +251,107 @@ impl SessionData {
         !self.sources.is_empty()
     }
 
+    /// The view with this id.
+    pub fn view(&self, id: u32) -> AppResult<&ViewState> {
+        self.views
+            .iter()
+            .find(|v| v.id == id && !v.hidden)
+            .ok_or_else(|| unknown_view(id))
+    }
+
+    pub fn view_mut(&mut self, id: u32) -> AppResult<&mut ViewState> {
+        self.views
+            .iter_mut()
+            .find(|v| v.id == id && !v.hidden)
+            .ok_or_else(|| unknown_view(id))
+    }
+
+    /// The text tests of all views, for reading lines before the write lock (tail, merge).
+    pub fn text_tests(&self) -> (Vec<u32>, Vec<TextTest>) {
+        self.views
+            .iter()
+            .map(|v| (v.id, v.filter.spec.text_test()))
+            .unzip()
+    }
+
+    /// Appends one line to the index and to the list of every view. `probe(i)` reads the text for
+    /// view `i` of `views`; it is only called when that view's answer depends on it.
+    pub fn push_line(&mut self, entry: LineEntry, mut probe: impl FnMut(usize) -> Probe) {
+        for (i, view) in self.views.iter_mut().enumerate() {
+            view.filter.append_from(
+                entry.source(),
+                entry.level(),
+                entry.is_continuation(),
+                || probe(i),
+            );
+        }
+        self.index.push(entry);
+    }
+
     /// Removes the provisional last line, if there is one.
     pub fn retract_provisional(&mut self) {
         if let Some(provisional) = self.provisional.take() {
             self.index.pop();
-            self.filter.restore(provisional.checkpoint);
+            for view in &mut self.views {
+                if let Some(checkpoint) = view.provisional.take() {
+                    view.filter.restore(checkpoint);
+                }
+            }
             self.prev = provisional.prev;
         }
+    }
+
+    /// Notes where every view stands before a provisional line is appended.
+    pub fn mark_provisional(&mut self, prev: PrevLine) {
+        for view in &mut self.views {
+            view.provisional = Some(view.filter.checkpoint());
+        }
+        self.provisional = Some(Provisional { prev });
     }
 
     /// Uses a new format right away, with a new view generation so cached spans are void.
     pub fn set_format(&mut self, format: FormatGuess, view_generation: u64) {
         self.format = Arc::new(self.with_rules(&format));
         self.columns_revision += 1;
-        self.view_generation = view_generation;
-        self.dirty = true;
-    }
-
-    /// The view is recomputed: a format waiting for it takes over now.
-    fn finish_view(&mut self, view_generation: u64) {
-        self.view_generation = view_generation;
-        if let Some(format) = self.requested_format.take() {
-            self.format = format;
-            self.columns_revision += 1;
+        for view in &mut self.views {
+            view.view_generation = view_generation;
+            view.dirty = true;
         }
+        self.dirty = true;
     }
 
     /// Forgets all lines (truncation, rotation without keeping the old lines).
     pub fn reset_index(&mut self) {
         self.index.clear();
-        self.filter.clear();
+        for view in &mut self.views {
+            view.filter.clear();
+            view.provisional = None;
+        }
         self.prev = PrevLine::default();
         self.provisional = None;
         self.epoch += 1;
         self.dirty = true;
     }
 
+    /// The update of view 0.
     pub fn update(&self) -> SessionUpdate {
+        self.update_of(&self.views[0])
+    }
+
+    pub fn update_of(&self, view: &ViewState) -> SessionUpdate {
         SessionUpdate {
             total_lines: self.index.len() as u64,
-            filtered_lines: self.filter.len(self.index.len()) as u64,
-            retracted_from: self.filter.retracted(),
+            filtered_lines: view.filter.len(self.index.len()) as u64,
+            retracted_from: view.filter.retracted(),
             counts: self.index.counts.into(),
-            view_counts: self.filter.counts(&self.index.counts).into(),
+            view_counts: view.filter.counts(&self.index.counts).into(),
             status: self.status.clone(),
             file_size: self.file_size,
             epoch: self.epoch,
-            view_generation: self.view_generation,
+            view_generation: view.view_generation,
             columns_revision: self.columns_revision,
-            filter_pending: self.filter_pending,
-            filter_progress: self.filter_progress,
+            filter_pending: view.filter_pending,
+            filter_progress: view.filter_progress,
             profile_id: self.profile_id.clone(),
             encoding: self.encoding,
             frozen: self.frozen,
@@ -243,22 +361,157 @@ impl SessionData {
             report: self.report.clone(),
         }
     }
+
+    /// Something is waiting to be sent.
+    pub fn has_due_updates(&self) -> bool {
+        self.dirty || self.views.iter().any(|v| v.dirty || v.behind)
+    }
+
+    /// The updates due now, with where they go. Views whose own state did not change hear of a
+    /// grown file at most once per `QUIET_VIEW_INTERVAL` (view 0 always, as before). Clears what it
+    /// reports, including the retraction of each list.
+    pub fn take_updates(&mut self, now: Instant) -> Vec<(ViewSink, SessionUpdate)> {
+        let file_dirty = std::mem::take(&mut self.dirty);
+        let mut out = Vec::new();
+        for i in 0..self.views.len() {
+            let view = &self.views[i];
+            if view.hidden || !(view.dirty || view.behind || file_dirty) {
+                continue;
+            }
+            let Some(sink) = view.sink.clone() else {
+                continue;
+            };
+            let update = self.update_of(view);
+            let quiet = view.id != 0
+                && !view.dirty
+                && view.last_sent.as_ref().is_some_and(|(sent, at)| {
+                    now.duration_since(*at) < QUIET_VIEW_INTERVAL && !differs(sent, &update)
+                });
+            let view = &mut self.views[i];
+            if quiet {
+                view.behind = true;
+                continue;
+            }
+            view.dirty = false;
+            view.behind = false;
+            view.filter.take_retracted();
+            view.last_sent = Some((update.clone(), now));
+            out.push((sink, update));
+        }
+        out
+    }
+}
+
+/// Under the write lock: which views still have the text test their probes were prepared with
+/// (before the lock), and how the others read the text again (a filter changed meanwhile, or a view
+/// is new). The text of a line is read and decoded at most once for all of them.
+pub struct Fresh {
+    /// Per view of `SessionData::views`: index into the prepared probes, if they still hold.
+    map: Vec<Option<usize>>,
+    tests: Vec<TextTest>,
+    segments: Vec<Arc<Segment>>,
+    reader: Option<LineReader>,
+}
+
+impl Fresh {
+    pub fn new(data: &SessionData, ids: &[u32], prepared: &[TextTest]) -> Self {
+        let tests: Vec<TextTest> = data
+            .views
+            .iter()
+            .map(|v| v.filter.spec.text_test())
+            .collect();
+        let map: Vec<Option<usize>> = data
+            .views
+            .iter()
+            .zip(&tests)
+            .map(|(v, now)| {
+                ids.iter()
+                    .position(|id| *id == v.id)
+                    .filter(|&j| prepared[j].same(now))
+            })
+            .collect();
+        Self {
+            map,
+            tests,
+            segments: data.segments.clone(),
+            reader: None,
+        }
+    }
+
+    /// The probes of one line.
+    pub fn line(&mut self, entry: LineEntry) -> FreshLine<'_> {
+        FreshLine {
+            fresh: self,
+            entry,
+            text: None,
+        }
+    }
+}
+
+pub struct FreshLine<'a> {
+    fresh: &'a mut Fresh,
+    entry: LineEntry,
+    text: Option<String>,
+}
+
+impl FreshLine<'_> {
+    /// The probe of view `view`; `prepared` has the probes made before the lock (empty: none hold).
+    pub fn probe(&mut self, view: usize, prepared: &[Probe]) -> Probe {
+        if let Some(j) = self.fresh.map[view].filter(|&j| j < prepared.len()) {
+            return prepared[j];
+        }
+        if self.fresh.tests[view].is_empty() {
+            return Probe::default();
+        }
+        if self.text.is_none() {
+            let fresh = &mut *self.fresh;
+            let reader = fresh.reader.get_or_insert_with(|| {
+                LineReader::new(fresh.segments.clone(), crate::tail::BLOCK_SIZE)
+            });
+            self.text = Some(reader.raw(&self.entry, MAX_SEARCH_BYTES).map_or_else(
+                |_| String::new(),
+                |(raw, enc)| display_text(raw, enc).into_owned(),
+            ));
+        }
+        self.fresh.tests[view].probe_text(
+            self.text.as_deref().unwrap_or(""),
+            !self.entry.is_continuation(),
+        )
+    }
+}
+
+/// Whether an update says more than that the file grew (lines, counts, sizes, sources, dashboard).
+fn differs(sent: &SessionUpdate, next: &SessionUpdate) -> bool {
+    let quiet = |u: &SessionUpdate| SessionUpdate {
+        total_lines: 0,
+        counts: Default::default(),
+        file_size: 0,
+        pending_bytes: 0,
+        sources: Vec::new(),
+        report: None,
+        ..u.clone()
+    };
+    quiet(sent) != quiet(next)
+}
+
+fn unknown_view(id: u32) -> AppError {
+    AppError::new(ErrorCode::UnknownView, format!("no open view {id}"))
 }
 
 pub struct Shared {
     pub data: RwLock<SessionData>,
-    /// The newest job; an older one sees the difference and stops.
+    /// The newest relevel; an older one sees the difference and stops. Filter jobs have one per view.
     job_generation: AtomicU64,
     /// Source of view generations, separate from the jobs so a format change cancels none.
     view_counter: AtomicU64,
     find_generation: AtomicU64,
     pub shutdown: AtomicBool,
     pub wake: Sender<()>,
-    pub sink: UpdateSink,
 }
 
 impl Shared {
-    fn new(data: SessionData, wake: Sender<()>, sink: UpdateSink) -> Self {
+    fn new(mut data: SessionData, wake: Sender<()>, sink: UpdateSink) -> Self {
+        data.views[0].sink = Some(Arc::from(sink));
         Self {
             data: RwLock::new(data),
             job_generation: AtomicU64::new(0),
@@ -266,7 +519,6 @@ impl Shared {
             find_generation: AtomicU64::new(0),
             shutdown: AtomicBool::new(false),
             wake,
-            sink,
         }
     }
 
@@ -277,6 +529,24 @@ impl Shared {
     pub fn wake(&self) {
         // The receiver is only gone while the session shuts down.
         let _ = self.wake.send(());
+    }
+
+    /// Sends what is due (tail and merge workers call this at most every `EMIT_INTERVAL`). `after`
+    /// runs under the lock once the updates are taken (one-shot states). Returns whether it sent.
+    pub fn emit(&self, after: impl FnOnce(&mut SessionData)) -> bool {
+        let updates = {
+            let mut data = self.data.write();
+            if !data.has_due_updates() {
+                return false;
+            }
+            let updates = data.take_updates(Instant::now());
+            after(&mut data);
+            updates
+        };
+        for (sink, update) in updates {
+            sink(update);
+        }
+        true
     }
 }
 
@@ -512,6 +782,12 @@ impl LogSession {
         self.shared.data.read().update()
     }
 
+    /// The current update of a view (`get_stats`).
+    pub fn stats_of(&self, view: u32) -> AppResult<SessionUpdate> {
+        let data = self.shared.data.read();
+        Ok(data.update_of(data.view(view)?))
+    }
+
     pub fn set_keep_on_rotate(&self, keep: bool) {
         self.shared.data.write().keep_on_rotate = keep;
     }
@@ -531,16 +807,28 @@ impl LogSession {
         self.shared.wake();
     }
 
-    /// Lines of a view. `filtered = false` addresses all lines of the file.
+    /// Lines of view 0. `filtered = false` addresses all lines of the file.
     pub fn get_lines(&self, filtered: bool, start: usize, count: usize) -> AppResult<Vec<LogLine>> {
+        self.get_lines_of(0, filtered, start, count)
+    }
+
+    /// Lines of a view. `filtered = false` addresses all lines of the file (marked as in the view).
+    pub fn get_lines_of(
+        &self,
+        view: u32,
+        filtered: bool,
+        start: usize,
+        count: usize,
+    ) -> AppResult<Vec<LogLine>> {
         let count = count.min(MAX_GET_LINES);
         let (lines, segments, matcher, expr, format) = {
             let data = self.shared.data.read();
+            let filter = &data.view(view)?.filter;
             let total = data.index.len();
             let mut lines = Vec::with_capacity(count);
             for position in start..start.saturating_add(count) {
                 let line = if filtered {
-                    data.filter.line_at(position, total)
+                    filter.line_at(position, total)
                 } else {
                     (position < total).then_some(position as u32)
                 };
@@ -550,8 +838,8 @@ impl LogSession {
             (
                 lines,
                 data.segments.clone(),
-                data.filter.spec.matcher.clone(),
-                data.filter.spec.expr.clone().filter(|e| e.highlights()),
+                filter.spec.matcher.clone(),
+                filter.spec.expr.clone().filter(|e| e.highlights()),
                 Arc::clone(&data.format),
             )
         };
@@ -593,7 +881,7 @@ impl LogSession {
         Ok(out)
     }
 
-    /// Applies a new filter. An unrestricted one is immediate, anything else runs in the
+    /// Applies a new filter to view 0. An unrestricted one is immediate, anything else runs in the
     /// background and a newer call cancels it.
     pub fn set_filter(
         &self,
@@ -615,8 +903,8 @@ impl LogSession {
         self.set_filter_expr(levels, query, mode, sources, None)
     }
 
-    /// The whole filter in one call: levels, search, sources and the tree of the sidebar (prompt 010).
-    /// An invalid expression changes nothing and names its node in the error.
+    /// The whole filter of view 0 in one call: levels, search, sources and the tree of the sidebar
+    /// (prompt 010). An invalid expression changes nothing and names its node in the error.
     pub fn set_filter_expr(
         &self,
         levels: &[Level],
@@ -625,40 +913,23 @@ impl LogSession {
         sources: Option<u16>,
         expr: Option<&FilterExpr>,
     ) -> AppResult<FilterInfo> {
-        let expr = match expr {
-            None => None,
-            Some(expr) => {
-                let (format, sample, reference) = {
-                    let data = self.shared.data.read();
-                    let reference = data
-                        .segments
-                        .first()
-                        .and_then(|s| s.file.metadata().ok()?.modified().ok())
-                        .unwrap_or_else(std::time::SystemTime::now);
-                    (
-                        Arc::clone(&data.format),
-                        Arc::clone(&data.sample),
-                        reference,
-                    )
-                };
-                let ctx = ExprContext {
-                    format,
-                    sample: &sample,
-                    reference,
-                };
-                Some(Arc::new(CompiledExpr::compile(expr, &ctx)?))
-            }
-        };
-        let matcher = if query.text.is_empty() {
-            None
-        } else {
-            Some(Arc::new(TextMatcher::new(query)?))
-        };
-        let spec = FilterSpec {
+        self.set_view_filter(0, self.view_filter(levels, query, mode, sources, expr))
+    }
+
+    /// A view's own filter as the commands send it; sources beyond those of the merge mean nothing.
+    pub fn view_filter(
+        &self,
+        levels: &[Level],
+        query: &SearchQuery,
+        mode: SearchMode,
+        sources: Option<u16>,
+        expr: Option<&FilterExpr>,
+    ) -> ViewFilter {
+        ViewFilter {
             levels: LevelMask::from_levels(levels),
-            matcher,
+            query: query.clone(),
             mode,
-            // Bits beyond the sources of the merge mean nothing: all of them set is no filter.
+            // All sources of the merge set is no filter.
             sources: match sources {
                 Some(mask) if self.is_merge() => {
                     let all = (1u32 << self.sources.len()) - 1;
@@ -670,10 +941,236 @@ impl LogSession {
                 }
                 _ => SourceMask::ALL,
             },
-            expr,
+            expr: expr.cloned(),
+        }
+    }
+
+    /// A new own filter for a view (prompt 013): the views below it follow, each with a job of its
+    /// own. Everything is compiled first, so an invalid filter (also one that only fails in the chain
+    /// below) changes nothing.
+    pub fn set_view_filter(&self, view: u32, own: ViewFilter) -> AppResult<FilterInfo> {
+        let (specs, gens) = {
+            let data = self.shared.data.read();
+            data.view(view)?;
+            let affected = subtree(&data, view);
+            let mut specs = Vec::with_capacity(affected.len());
+            for id in &affected {
+                let spec = if *id == view {
+                    self.compile_chain(&data, *id, Some(&own))?
+                } else {
+                    // The new filter of `view` is not stored yet: the chain is built with it.
+                    self.compile_chain_with(&data, *id, view, &own)?
+                };
+                specs.push((*id, spec));
+            }
+            let gens: Vec<u64> = specs
+                .iter()
+                .map(|_| self.shared.next_view_generation())
+                .collect();
+            (specs, gens)
         };
-        self.shared.data.write().requested_spec = spec;
-        Ok(self.start_job())
+        let mut info = None;
+        {
+            let mut data = self.shared.data.write();
+            data.view_mut(view)?.own = own;
+            for ((id, spec), generation) in specs.into_iter().zip(gens) {
+                // A view closed meanwhile is simply gone.
+                if let Ok(v) = data.view_mut(id) {
+                    v.requested_spec = spec;
+                    let started = start_view_job(&self.shared, &mut data, id, generation);
+                    if id == view {
+                        info = started;
+                    }
+                }
+            }
+        }
+        self.shared.wake();
+        info.ok_or_else(|| unknown_view(view))
+    }
+
+    /// The parts of the chain above a view, outermost first (closed ancestors included).
+    fn chain_of(data: &SessionData, view: u32) -> Vec<&ViewFilter> {
+        let mut stack: Vec<&ViewState> = Vec::new();
+        let mut at = data.views.iter().find(|v| v.id == view);
+        while let Some(v) = at {
+            stack.push(v);
+            at = v
+                .parent
+                .and_then(|p| data.views.iter().find(|w| w.id == p && !w.hidden));
+        }
+        let mut chain = Vec::new();
+        for (i, v) in stack.iter().rev().enumerate() {
+            chain.extend(v.inherited.iter());
+            if i + 1 < stack.len() {
+                chain.push(&v.own);
+            }
+        }
+        chain
+    }
+
+    /// The compiled effective filter of a view, with `own` instead of its stored own filter if given.
+    fn compile_chain(
+        &self,
+        data: &SessionData,
+        view: u32,
+        own: Option<&ViewFilter>,
+    ) -> AppResult<FilterSpec> {
+        let chain = Self::chain_of(data, view);
+        let own = match own {
+            Some(own) => own,
+            None => &data.view(view)?.own,
+        };
+        self.compile(data, &compose(&chain, own))
+    }
+
+    /// Like `compile_chain`, with `changed` (an ancestor) having the filter `own`.
+    fn compile_chain_with(
+        &self,
+        data: &SessionData,
+        view: u32,
+        changed: u32,
+        own: &ViewFilter,
+    ) -> AppResult<FilterSpec> {
+        let changed_own = &data.view(changed)?.own;
+        let chain: Vec<&ViewFilter> = Self::chain_of(data, view)
+            .into_iter()
+            .map(|part| {
+                if std::ptr::eq(part, changed_own) {
+                    own
+                } else {
+                    part
+                }
+            })
+            .collect();
+        self.compile(data, &compose(&chain, &data.view(view)?.own))
+    }
+
+    fn compile(
+        &self,
+        data: &SessionData,
+        composed: &crate::views::Composed,
+    ) -> AppResult<FilterSpec> {
+        let expr = match &composed.expr {
+            None => None,
+            Some(expr) => {
+                let reference = data
+                    .segments
+                    .first()
+                    .and_then(|s| s.file.metadata().ok()?.modified().ok())
+                    .unwrap_or_else(std::time::SystemTime::now);
+                let ctx = ExprContext {
+                    format: Arc::clone(&data.format),
+                    sample: &data.sample,
+                    reference,
+                };
+                Some(Arc::new(CompiledExpr::compile(expr, &ctx)?))
+            }
+        };
+        let matcher = if composed.query.text.is_empty() {
+            None
+        } else {
+            Some(Arc::new(TextMatcher::new(&composed.query)?))
+        };
+        Ok(FilterSpec {
+            levels: composed.levels,
+            matcher,
+            mode: composed.mode,
+            sources: composed.sources,
+            expr,
+        })
+    }
+
+    /// Opens a view below `parent` (prompt 013): the result of the parent, filtered further by `own`.
+    /// Its updates go to `sink`. At most `MAX_VIEWS` visible views per session.
+    pub fn open_view(&self, parent: u32, own: ViewFilter, sink: UpdateSink) -> AppResult<ViewInfo> {
+        let spec = {
+            let data = self.shared.data.read();
+            data.view(parent)?;
+            let visible = data.views.iter().filter(|v| !v.hidden).count();
+            if visible >= MAX_VIEWS {
+                return Err(AppError::new(
+                    ErrorCode::TooManyViews,
+                    format!("at most {MAX_VIEWS} views per file"),
+                ));
+            }
+            let chain = {
+                let mut chain = Self::chain_of(&data, parent);
+                chain.push(&data.view(parent)?.own);
+                chain
+            };
+            self.compile(&data, &compose(&chain, &own))?
+        };
+        let generation = self.shared.next_view_generation();
+        let info = {
+            let mut data = self.shared.data.write();
+            // Checked again: another view may have opened meanwhile.
+            data.view(parent)?;
+            if data.views.iter().filter(|v| !v.hidden).count() >= MAX_VIEWS {
+                return Err(AppError::new(
+                    ErrorCode::TooManyViews,
+                    format!("at most {MAX_VIEWS} views per file"),
+                ));
+            }
+            let id = data.next_view_id;
+            data.next_view_id += 1;
+            let mut view = ViewState::new(id, Some(parent), Some(Arc::from(sink)));
+            view.own = own;
+            view.requested_spec = spec;
+            data.views.push(view);
+            start_view_job(&self.shared, &mut data, id, generation);
+            let view = data.view(id)?;
+            ViewInfo {
+                view_id: id,
+                parent_view_id: Some(parent),
+                update: data.update_of(view),
+            }
+        };
+        self.shared.wake();
+        Ok(info)
+    }
+
+    /// Closes a view: its children take over its part of the chain and stay the same. View 0 stays
+    /// as a hidden identity (no list, no listener) while other views are open.
+    pub fn close_view(&self, view: u32) -> AppResult<()> {
+        let mut data = self.shared.data.write();
+        let index = data
+            .views
+            .iter()
+            .position(|v| v.id == view && !v.hidden)
+            .ok_or_else(|| unknown_view(view))?;
+        let (parent, handed) = {
+            let closing = &data.views[index];
+            let mut handed = closing.inherited.clone();
+            handed.push(closing.own.clone());
+            (closing.parent, handed)
+        };
+        for child in data.views.iter_mut().filter(|v| v.parent == Some(view)) {
+            child.parent = parent;
+            let mut inherited = handed.clone();
+            inherited.append(&mut child.inherited);
+            child.inherited = inherited;
+        }
+        let closing = &mut data.views[index];
+        // A running job of the view stops at its next check.
+        closing.job.fetch_add(1, Ordering::SeqCst);
+        if view == 0 {
+            let total = data.index.len();
+            let provisional = data.provisional.is_some();
+            let v = &mut data.views[0];
+            v.hidden = true;
+            v.sink = None;
+            v.parent = None;
+            v.own = ViewFilter::default();
+            v.inherited.clear();
+            v.requested_spec = FilterSpec::default();
+            v.filter_pending = false;
+            v.awaiting_relevel = None;
+            set_identity(v, total, provisional);
+        } else {
+            // Dropping the view drops its sink and with it the channel.
+            data.views.remove(index);
+        }
+        Ok(())
     }
 
     /// The columns of the current format.
@@ -783,7 +1280,8 @@ impl LogSession {
         let sample = Arc::clone(&self.shared.data.read().sample);
         let refs: Vec<&str> = sample.iter().map(String::as_str).collect();
         let format = fields::format_for(profile, &refs)?;
-        {
+        let generation = self.shared.job_generation.fetch_add(1, Ordering::SeqCst) + 1;
+        let info = {
             let mut data = self.shared.data.write();
             let format = Arc::new(data.with_rules(&format));
             data.detector = detector;
@@ -793,58 +1291,47 @@ impl LogSession {
             data.profile_auto = false;
             data.relevel_needed = true;
             data.dirty = true;
-        }
-        Ok(self.start_job())
-    }
-
-    fn start_job(&self) -> FilterInfo {
-        let generation = self.shared.job_generation.fetch_add(1, Ordering::SeqCst) + 1;
-        let view = self.shared.next_view_generation();
-        let mut data = self.shared.data.write();
-        data.dirty = true;
-        if !data.relevel_needed && data.requested_spec.is_identity() {
-            let total = data.index.len();
-            let spec = data.requested_spec.clone();
-            data.filter = FilteredLines::identity(spec, total);
-            data.finish_view(view);
-            data.filter_pending = false;
-            data.filter_progress = 1.0;
-            let info = FilterInfo {
-                view_generation: view,
-                pending: false,
-                filtered_lines: total as u64,
-            };
-            drop(data);
-            self.shared.wake();
-            return info;
-        }
-        data.filter_pending = true;
-        data.filter_progress = 0.0;
-        let info = FilterInfo {
-            view_generation: view,
-            pending: true,
-            filtered_lines: data.filter.len(data.index.len()) as u64,
+            // Every view waits for the new levels, then filters again.
+            let ids: Vec<u32> = data
+                .views
+                .iter()
+                .filter(|v| !v.hidden)
+                .map(|v| v.id)
+                .collect();
+            let mut info = None;
+            for id in ids {
+                let view_generation = self.shared.next_view_generation();
+                let started = start_view_job(&self.shared, &mut data, id, view_generation);
+                info = info.or(started);
+            }
+            info
         };
-        drop(data);
         let shared = Arc::clone(&self.shared);
-        let job = move || run_job(&shared, generation, view);
-        if thread::Builder::new()
-            .name("filter-job".into())
-            .spawn(job)
-            .is_err()
-        {
-            let mut data = self.shared.data.write();
-            data.filter_pending = false;
-            data.status = Status::Error {
-                message: "cannot start the filter thread".into(),
+        let spawned = thread::Builder::new()
+            .name("relevel-job".into())
+            .spawn(move || run_relevel(&shared, generation));
+        if spawned.is_err() {
+            self.shared.data.write().status = Status::Error {
+                message: "cannot start the level thread".into(),
             };
         }
-        info
+        info.ok_or_else(|| unknown_view(0))
     }
 
-    /// Next or previous line with a match in the current view, wrapping around once.
+    /// Next or previous line with a match in view 0, wrapping around once.
     pub fn find(
         &self,
+        from_line: Option<u32>,
+        query: &SearchQuery,
+        forward: bool,
+    ) -> AppResult<Option<FindHit>> {
+        self.find_in(0, from_line, query, forward)
+    }
+
+    /// Next or previous line with a match in a view, wrapping around once.
+    pub fn find_in(
+        &self,
+        view: u32,
         from_line: Option<u32>,
         query: &SearchQuery,
         forward: bool,
@@ -856,10 +1343,11 @@ impl LogSession {
         let token = self.shared.find_generation.fetch_add(1, Ordering::SeqCst) + 1;
         let (len, start) = {
             let data = self.shared.data.read();
+            let filter = &data.view(view)?.filter;
             let total = data.index.len();
-            let len = data.filter.len(total);
+            let len = filter.len(total);
             let start = match from_line {
-                Some(line) => data.filter.position_of(line, total),
+                Some(line) => filter.position_of(line, total),
                 None if forward => 0,
                 None => len,
             };
@@ -880,15 +1368,17 @@ impl LogSession {
             [(0, start.min(len), false), (start.min(len), len, true)]
         };
         for (from, to, wrapped) in parts {
-            if let Some(hit) = self.scan(&matcher, from, to, forward, wrapped, token)? {
+            if let Some(hit) = self.scan(view, &matcher, from, to, forward, wrapped, token)? {
                 return Ok(Some(hit));
             }
         }
         Ok(None)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn scan(
         &self,
+        view: u32,
         matcher: &TextMatcher,
         from: usize,
         to: usize,
@@ -920,11 +1410,15 @@ impl LogSession {
             };
             let lines = {
                 let data = self.shared.data.read();
+                // A view closed meanwhile has nothing more to find.
+                let Ok(v) = data.view(view) else {
+                    return Ok(None);
+                };
                 let total = data.index.len();
                 batch
                     .clone()
                     .filter_map(|p| {
-                        let line = data.filter.line_at(p, total)?;
+                        let line = v.filter.line_at(p, total)?;
                         Some((p, line, data.index.entries[line as usize]))
                     })
                     .collect::<Vec<_>>()
@@ -960,6 +1454,11 @@ impl LogSession {
     /// Levels per pixel bucket of the current view plus where the given lines are (prompt 007). Reads
     /// the running summary only, no line: a short read lock.
     pub fn overview(&self, buckets: usize, lines: &[u32]) -> AppResult<Overview> {
+        self.overview_of(0, buckets, lines)
+    }
+
+    /// Like `overview`, for a view.
+    pub fn overview_of(&self, view: u32, buckets: usize, lines: &[u32]) -> AppResult<Overview> {
         if buckets > MAX_OVERVIEW_BUCKETS || lines.len() > MAX_OVERVIEW_LINES {
             return Err(AppError::new(
                 ErrorCode::TooLarge,
@@ -969,23 +1468,25 @@ impl LogSession {
             ));
         }
         let data = self.shared.data.read();
+        let v = data.view(view)?;
+        let filter = &v.filter;
         let total = data.index.len();
-        let count = data.filter.len(total);
-        let summary = data.filter.summary().unwrap_or(&data.index.summary);
+        let count = filter.len(total);
+        let summary = filter.summary().unwrap_or(&data.index.summary);
         let marks = lines
             .iter()
             .map(|&line| {
-                let position = data.filter.position_of(line, total);
+                let position = filter.position_of(line, total);
                 OverviewMark {
                     line,
                     position: position as u32,
-                    visible: data.filter.line_at(position, total) == Some(line),
+                    visible: filter.line_at(position, total) == Some(line),
                 }
             })
             .collect();
         let laid = summary.buckets(count as u64, buckets);
         Ok(Overview {
-            view_generation: data.view_generation,
+            view_generation: v.view_generation,
             epoch: data.epoch,
             count: count as u64,
             buckets: laid.bits,
@@ -1003,34 +1504,57 @@ impl LogSession {
         forward: bool,
         levels: &[Level],
     ) -> Option<FindHit> {
+        self.find_level_in(0, from_position, forward, levels)
+            .ok()
+            .flatten()
+    }
+
+    /// Like `find_level`, in a view.
+    pub fn find_level_in(
+        &self,
+        view: u32,
+        from_position: Option<u32>,
+        forward: bool,
+        levels: &[Level],
+    ) -> AppResult<Option<FindHit>> {
         let mask = levels.iter().fold(0u8, |m, l| m | level_bit(*l));
         if mask == 0 {
-            return None;
+            return Ok(None);
         }
         let data = self.shared.data.read();
+        let filter = &data.view(view)?.filter;
         let total = data.index.len();
-        let count = data.filter.len(total) as u64;
-        let summary = data.filter.summary().unwrap_or(&data.index.summary);
-        let (position, wrapped) =
+        let count = filter.len(total) as u64;
+        let summary = filter.summary().unwrap_or(&data.index.summary);
+        let Some((position, wrapped)) =
             summary.find(count, from_position.map(u64::from), forward, mask, |p| {
-                let Some(line) = data.filter.line_at(p as usize, total) else {
+                let Some(line) = filter.line_at(p as usize, total) else {
                     return false;
                 };
                 let entry = data.index.entries[line as usize];
                 (line == 0 || !entry.is_continuation()) && mask & level_bit(entry.level()) != 0
-            })?;
-        let line = data.filter.line_at(position as usize, total)?;
-        Some(FindHit {
-            line,
-            position: position as u32,
-            wrapped,
-        })
+            })
+        else {
+            return Ok(None);
+        };
+        Ok(filter
+            .line_at(position as usize, total)
+            .map(|line| FindHit {
+                line,
+                position: position as u32,
+                wrapped,
+            }))
     }
 
-    /// Position of a line in the filtered view (or of the next visible line after it).
+    /// Position of a line in view 0 (or of the next visible line after it).
     pub fn position_of_line(&self, line: u32) -> u32 {
+        self.position_in(0, line).unwrap_or(0)
+    }
+
+    /// Position of a line in a view (or of the next visible line after it).
+    pub fn position_in(&self, view: u32, line: u32) -> AppResult<u32> {
         let data = self.shared.data.read();
-        data.filter.position_of(line, data.index.len()) as u32
+        Ok(data.view(view)?.filter.position_of(line, data.index.len()) as u32)
     }
 
     /// First and last line of the entry (head + continuations) a line belongs to.
@@ -1104,26 +1628,34 @@ impl LogSession {
         })
     }
 
-    /// The visible lines between two line numbers as text, for the clipboard.
+    /// The visible lines of view 0 between two line numbers as text, for the clipboard.
     pub fn copy_lines(&self, first: u32, last: u32) -> AppResult<String> {
-        self.copy(true, first, last)
+        self.copy(Some(0), first, last)
+    }
+
+    /// The lines of a view between two line numbers as text.
+    pub fn copy_lines_of(&self, view: u32, first: u32, last: u32) -> AppResult<String> {
+        self.copy(Some(view), first, last)
     }
 
     /// All lines between two line numbers, whatever the filter hides (an entry of the detail panel).
     pub fn copy_all_lines(&self, first: u32, last: u32) -> AppResult<String> {
-        self.copy(false, first, last)
+        self.copy(None, first, last)
     }
 
-    fn copy(&self, filtered: bool, first: u32, last: u32) -> AppResult<String> {
+    fn copy(&self, view: Option<u32>, first: u32, last: u32) -> AppResult<String> {
         let (lines, segments) = {
             let data = self.shared.data.read();
             let total = data.index.len();
-            let (from, to) = if filtered {
-                let from = data.filter.position_of(first, total);
-                let to = data
-                    .filter
+            let filter = match view {
+                Some(view) => Some(&data.view(view)?.filter),
+                None => None,
+            };
+            let (from, to) = if let Some(filter) = filter {
+                let from = filter.position_of(first, total);
+                let to = filter
                     .position_of(last.saturating_add(1), total)
-                    .min(data.filter.len(total));
+                    .min(filter.len(total));
                 (from, to)
             } else {
                 let to = (last as usize).saturating_add(1).min(total);
@@ -1135,9 +1667,9 @@ impl LogSession {
                     format!("more than {MAX_COPY_LINES} lines selected"),
                 ));
             }
-            let lines = if filtered {
+            let lines = if let Some(filter) = filter {
                 (from..to)
-                    .filter_map(|p| data.filter.line_at(p, total))
+                    .filter_map(|p| filter.line_at(p, total))
                     .map(|line| data.index.entries[line as usize])
                     .collect::<Vec<_>>()
             } else {
@@ -1197,7 +1729,7 @@ fn floor_char_boundary(text: &str, index: usize) -> usize {
 impl Drop for LogSession {
     fn drop(&mut self) {
         self.shared.shutdown.store(true, Ordering::SeqCst);
-        // Stops a running job at its next check.
+        // Stops a running relevel at its next check; filter jobs look at `shutdown`.
         self.shared.job_generation.fetch_add(1, Ordering::SeqCst);
         self.shared.wake();
         if let Some(report) = self.report.lock().take() {
@@ -1228,17 +1760,87 @@ fn is_current(shared: &Shared, generation: u64) -> bool {
     shared.job_generation.load(Ordering::SeqCst) == generation
 }
 
-fn run_job(shared: &Shared, generation: u64, view: u64) {
-    let relevel = shared.data.read().relevel_needed;
-    if relevel && !run_relevel(shared, generation) {
-        return;
+/// The view and every view below it, parents before children.
+fn subtree(data: &SessionData, view: u32) -> Vec<u32> {
+    let mut out = vec![view];
+    let mut i = 0;
+    while i < out.len() {
+        let at = out[i];
+        out.extend(
+            data.views
+                .iter()
+                .filter(|v| v.parent == Some(at) && !v.hidden)
+                .map(|v| v.id),
+        );
+        i += 1;
     }
-    run_filter(shared, generation, view);
+    out
+}
+
+/// Swaps in an identity list covering all lines; with a provisional last line its checkpoint, too.
+fn set_identity(view: &mut ViewState, total: usize, provisional: bool) {
+    let spec = view.requested_spec.clone();
+    view.provisional = (provisional && total > 0)
+        .then(|| FilteredLines::identity(spec.clone(), total - 1).checkpoint());
+    view.filter = FilteredLines::identity(spec, total);
+}
+
+/// Starts the filter job of a view for its `requested_spec` (under the write lock). An identity is
+/// immediate; while a relevel runs the job waits for it. Returns what `set_filter` answers.
+fn start_view_job(
+    shared: &Arc<Shared>,
+    data: &mut SessionData,
+    id: u32,
+    view_generation: u64,
+) -> Option<FilterInfo> {
+    let relevel = data.relevel_needed;
+    let total = data.index.len();
+    let provisional = data.provisional.is_some();
+    let view = data.view_mut(id).ok()?;
+    let generation = view.job.fetch_add(1, Ordering::SeqCst) + 1;
+    view.dirty = true;
+    if !relevel && view.requested_spec.is_identity() {
+        set_identity(view, total, provisional);
+        view.view_generation = view_generation;
+        view.filter_pending = false;
+        view.filter_progress = 1.0;
+        view.awaiting_relevel = None;
+        return Some(FilterInfo {
+            view_generation,
+            pending: false,
+            filtered_lines: total as u64,
+        });
+    }
+    view.filter_pending = true;
+    view.filter_progress = 0.0;
+    let info = FilterInfo {
+        view_generation,
+        pending: true,
+        filtered_lines: view.filter.len(total) as u64,
+    };
+    if relevel {
+        view.awaiting_relevel = Some(view_generation);
+        return Some(info);
+    }
+    view.awaiting_relevel = None;
+    let job = Arc::clone(&view.job);
+    let worker = Arc::clone(shared);
+    let spawned = thread::Builder::new()
+        .name("filter-job".into())
+        .spawn(move || run_filter(&worker, id, &job, generation, view_generation));
+    if spawned.is_err() {
+        view.filter_pending = false;
+        data.status = Status::Error {
+            message: "cannot start the filter thread".into(),
+        };
+    }
+    Some(info)
 }
 
 /// Detects the levels of all lines again after a profile change. Lines arriving meanwhile already
-/// use the new detector. Returns false if cancelled.
-fn run_relevel(shared: &Shared, generation: u64) -> bool {
+/// use the new detector. Then the new format applies and every view filters again. Returns false if
+/// cancelled.
+fn run_relevel(shared: &Arc<Shared>, generation: u64) -> bool {
     let (detector, segments, epoch) = {
         let data = shared.data.read();
         (
@@ -1268,6 +1870,9 @@ fn run_relevel(shared: &Shared, generation: u64) -> bool {
         };
         if batch.is_empty() {
             let mut data = shared.data.write();
+            if !is_current(shared, generation) {
+                return false;
+            }
             if data.epoch == epoch {
                 data.prev = prev;
                 // Lines that came in meanwhile already carry the new levels.
@@ -1279,6 +1884,26 @@ fn run_relevel(shared: &Shared, generation: u64) -> bool {
                 data.index.summary = summary;
             }
             data.relevel_needed = false;
+            // The columns change with new view generations, so cached spans are void.
+            if let Some(format) = data.requested_format.take() {
+                data.format = format;
+                data.columns_revision += 1;
+                for view in &mut data.views {
+                    view.view_generation = shared.next_view_generation();
+                    view.dirty = true;
+                }
+            }
+            let waiting: Vec<(u32, u64)> = data
+                .views
+                .iter()
+                .filter_map(|v| v.awaiting_relevel.map(|g| (v.id, g)))
+                .collect();
+            for (id, view_generation) in waiting {
+                start_view_job(shared, &mut data, id, view_generation);
+            }
+            data.dirty = true;
+            drop(data);
+            shared.wake();
             return true;
         }
         let mut updated = Vec::with_capacity(batch.len());
@@ -1307,24 +1932,23 @@ fn run_relevel(shared: &Shared, generation: u64) -> bool {
     }
 }
 
-/// Builds the filtered list for the requested spec without holding up the reader or the tail, and
-/// swaps it in at the end.
-fn run_filter(shared: &Shared, generation: u64, view: u64) {
+/// Builds the filtered list of a view for its requested spec without holding up the reader or the
+/// tail, and swaps it in at the end. `job` is the view's job counter: a newer job stops this one.
+fn run_filter(shared: &Shared, view: u32, job: &AtomicU64, generation: u64, view_generation: u64) {
+    let current =
+        || job.load(Ordering::SeqCst) == generation && !shared.shutdown.load(Ordering::SeqCst);
     'restart: loop {
         let (spec, epoch, segments) = {
             let data = shared.data.read();
-            (
-                data.requested_spec.clone(),
-                data.epoch,
-                data.segments.clone(),
-            )
+            let Ok(v) = data.view(view) else { return };
+            (v.requested_spec.clone(), data.epoch, data.segments.clone())
         };
         let test = spec.text_test();
         let mut builder = FilteredLines::new(spec);
         let mut reader = LineReader::new(segments, SCAN_BLOCK);
         let mut position = 0usize;
         loop {
-            if !is_current(shared, generation) {
+            if !current() {
                 return;
             }
             let (batch, total) = {
@@ -1345,13 +1969,15 @@ fn run_filter(shared: &Shared, generation: u64, view: u64) {
             position += batch.len();
             {
                 let mut data = shared.data.write();
-                data.filter_progress = position as f32 / total.max(1) as f32;
-                data.dirty = true;
+                if let Ok(v) = data.view_mut(view) {
+                    v.filter_progress = position as f32 / total.max(1) as f32;
+                    v.dirty = true;
+                }
             }
             shared.wake();
         }
         let mut data = shared.data.write();
-        if !is_current(shared, generation) {
+        if !current() {
             return;
         }
         if data.epoch != epoch {
@@ -1362,23 +1988,24 @@ fn run_filter(shared: &Shared, generation: u64, view: u64) {
         let segments = data.segments.clone();
         let mut reader = LineReader::new(segments, SCAN_BLOCK);
         let total = data.index.len();
-        let before_provisional = total - usize::from(data.provisional.is_some());
+        let provisional = data.provisional.is_some();
+        let before_provisional = total - usize::from(provisional);
         for line in position..before_provisional {
             let entry = data.index.entries[line];
             feed(&mut builder, &entry, &mut reader, &test);
         }
-        if let Some(provisional) = &mut data.provisional {
-            provisional.checkpoint = builder.checkpoint();
-        }
+        let checkpoint = provisional.then(|| builder.checkpoint());
         for line in before_provisional..total {
             let entry = data.index.entries[line];
             feed(&mut builder, &entry, &mut reader, &test);
         }
-        data.filter = builder;
-        data.finish_view(view);
-        data.filter_pending = false;
-        data.filter_progress = 1.0;
-        data.dirty = true;
+        let Ok(v) = data.view_mut(view) else { return };
+        v.provisional = checkpoint;
+        v.filter = builder;
+        v.view_generation = view_generation;
+        v.filter_pending = false;
+        v.filter_progress = 1.0;
+        v.dirty = true;
         drop(data);
         shared.wake();
         return;

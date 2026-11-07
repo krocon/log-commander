@@ -407,8 +407,9 @@ export class DetailPanelComponent {
     this.loadedLast = null;
     this.inFlight = true;
     this.loading.set(true);
+    // `now.sessionId` is the tab; the backend knows the session of the file (prompt 013).
     this.api
-      .getEntry(now.sessionId, now.anchor)
+      .getEntry(this.session().sessionId, now.anchor)
       .then((entry) => {
         // An answer for a line that is no longer selected is overtaken.
         if (!sameKey(this.current(), now)) return;

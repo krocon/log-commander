@@ -95,6 +95,22 @@ export interface SessionInfo {
   sources: SourceInfo[];
 }
 
+/** A filter opened as a tab of its own (prompt 013): a view of the same session, with its own channel. */
+export interface ViewInfo {
+  viewId: number;
+  parentViewId: number | null;
+  update: SessionUpdate;
+}
+
+/** The own filter of a view, as `set_filter` takes it. */
+export interface ViewFilterSpec {
+  levels: readonly Level[];
+  query: SearchQuery;
+  mode: SearchMode;
+  sources: number | null;
+  expr: FilterExpr | null;
+}
+
 export interface LogLine {
   line: number;
   level: Level;

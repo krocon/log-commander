@@ -51,7 +51,7 @@ describe('LogSessionService.applyPreset', () => {
     const query = { text: 'timeout', isRegex: false, caseSensitive: true };
     await service.applyPreset(session, { levels: ['WARN', 'ERROR'], query, mode: 'highlight' });
     expect(setFilter).toHaveBeenCalledTimes(1);
-    expect(setFilter).toHaveBeenCalledWith(1, ['WARN', 'ERROR'], query, 'highlight', null, null);
+    expect(setFilter).toHaveBeenCalledWith(1, ['WARN', 'ERROR'], query, 'highlight', null, null, 0);
     expect([...session.levels()]).toEqual(['WARN', 'ERROR']);
     expect(session.query()).toEqual(query);
     expect(session.searchMode()).toBe('highlight');
@@ -151,6 +151,7 @@ describe('LogSessionService.openMerged', () => {
       'filter',
       0b10,
       null,
+      0,
     );
   });
 });
@@ -166,14 +167,22 @@ describe('LogSessionService full log and back (prompt 007)', () => {
 
     await service.toggleFullLog(session);
     expect(setFilter).toHaveBeenCalledTimes(1);
-    expect(setFilter).toHaveBeenLastCalledWith(1, [...ALL_LEVELS], query, 'highlight', null, null);
+    expect(setFilter).toHaveBeenLastCalledWith(
+      1,
+      [...ALL_LEVELS],
+      query,
+      'highlight',
+      null,
+      null,
+      0,
+    );
     expect(session.keptFilter()?.mode).toBe('filter');
     expect(session.pendingReveal).toBe(12);
     expect(session.selection()?.anchor).toBe(12);
     expect(session.filterActive()).toBe(false);
 
     await service.toggleFullLog(session);
-    expect(setFilter).toHaveBeenLastCalledWith(1, ['ERROR'], query, 'filter', null, null);
+    expect(setFilter).toHaveBeenLastCalledWith(1, ['ERROR'], query, 'filter', null, null, 0);
     expect(session.keptFilter()).toBeNull();
     expect(session.selection()?.anchor).toBe(12);
   });
@@ -313,15 +322,151 @@ describe('LogSessionService and the dashboard (prompt 012)', () => {
     expect(session.revealHint).toBeNull();
   });
 
-  it('a bar of a level filters on that level, an unknown column does nothing', async () => {
+  it('a bar of a level opens a filter tab on that level, an unknown column does nothing', async () => {
     const { service, session, setFilter } = setup();
+    const openView = vi.fn(() => Promise.resolve({ viewId: 1, parentViewId: 0, update }));
+    (TestBed.inject(LogApi) as unknown as Record<string, unknown>)['openView'] = openView;
+    service.sessions.set([session]);
     session.mode.set('dashboard');
     expect(await service.filterFromDashboard(session, { sql: 'level', log: null }, 'WARN')).toBe(
       true,
     );
-    expect([...session.levels()]).toEqual(['WARN']);
-    expect(session.mode()).toBe('log');
-    expect(setFilter).toHaveBeenCalledTimes(1);
+    // Prompt 013: the dashboard's tab stays as it is, the drill-down is a tab of its own.
+    expect([...session.levels()]).toEqual([...ALL_LEVELS]);
+    expect(session.mode()).toBe('dashboard');
+    expect(setFilter).not.toHaveBeenCalled();
+    expect(openView).toHaveBeenCalledWith(
+      1,
+      0,
+      expect.objectContaining({ levels: ['WARN'] }),
+      expect.any(Function),
+    );
+    const tab = service.active()!;
+    expect(tab.viewId).toBe(1);
+    expect(tab.tabLabel()).toBe('a.log › WARN');
     expect(await service.filterFromDashboard(session, { sql: 'n', log: null }, 'x')).toBe(false);
+  });
+});
+
+describe('LogSessionService filter tabs (prompt 013)', () => {
+  function tabsSetup() {
+    const ctx = setup();
+    const api = TestBed.inject(LogApi) as unknown as Record<string, unknown>;
+    let next = 0;
+    const channels: ((u: SessionUpdate) => void)[] = [];
+    const openView = vi.fn(
+      (_s: number, parent: number, _f: unknown, onUpdate: (u: SessionUpdate) => void) => {
+        channels.push(onUpdate);
+        return Promise.resolve({ viewId: ++next, parentViewId: parent, update });
+      },
+    );
+    const closeView = vi.fn(() => Promise.resolve());
+    const close = vi.fn(() => Promise.resolve());
+    Object.assign(api, { openView, closeView, close });
+    ctx.service.sessions.set([ctx.session]);
+    return { ...ctx, openView, closeView, close, channels };
+  }
+
+  it('opens a tab right of its parent that filters further, named after the chain', async () => {
+    const { service, session, openView, setFilter } = tabsSetup();
+    session.levels.set(new Set(['ERROR']));
+    const child = (await service.openFilterTab(session, {
+      cond: { type: 'text', text: '4711', isRegex: false, caseSensitive: false },
+    }))!;
+    expect(openView).toHaveBeenCalledWith(
+      1,
+      0,
+      expect.objectContaining({ levels: expect.any(Array), mode: 'filter' }),
+      expect.any(Function),
+    );
+    expect(child.sessionId).toBe(1);
+    expect(child.viewId).toBe(1);
+    expect(child.id).not.toBe(session.id);
+    expect(child.parent()).toBe(session);
+    expect(child.tabLabel()).toBe('a.log › ERROR › „4711“');
+    expect(child.tabTitle()).toContain('a.log › ERROR › „4711“');
+    expect(service.active()).toBe(child);
+    // A filter of the child goes to its view.
+    await service.setLevels(child, new Set(['WARN']));
+    expect(setFilter).toHaveBeenLastCalledWith(
+      1,
+      ['WARN'],
+      expect.anything(),
+      'filter',
+      null,
+      expect.anything(),
+      1,
+    );
+    // A second filter tab of the file goes right of its own parent, before the first one.
+    const sibling = (await service.openFilterTab(session))!;
+    expect(service.sessions().map((s) => s.id)).toEqual([session.id, sibling.id, child.id]);
+    expect(sibling.tabLabel()).toBe('a.log › ERROR › Alle');
+    // Bookmarks are the file's.
+    expect(child.bookmarks).toBe(session.bookmarks);
+  });
+
+  it('routes the updates of each view to its tab', async () => {
+    const { service, session, channels } = tabsSetup();
+    const child = (await service.openFilterTab(session))!;
+    channels[0]({ ...update, filteredLines: 42, totalLines: 100 });
+    expect(child.filteredLines()).toBe(42);
+    expect(session.filteredLines()).toBe(0);
+  });
+
+  it('closing a parent keeps the chain of its children; the last tab closes the file', async () => {
+    const { service, session, closeView, close } = tabsSetup();
+    session.levels.set(new Set(['ERROR']));
+    const child = (await service.openFilterTab(session))!;
+    child.query.set({ text: 'Order', isRegex: false, caseSensitive: false });
+    const grandchild = (await service.openFilterTab(child, {
+      cond: { type: 'text', text: '4711', isRegex: false, caseSensitive: false },
+    }))!;
+    expect(grandchild.tabLabel()).toBe('…› Order › „4711“');
+    expect(grandchild.tabTitle()).toContain('a.log › ERROR › Order › „4711“');
+
+    await service.close(child.id);
+    expect(closeView).toHaveBeenLastCalledWith(1, 1);
+    expect(grandchild.parent()).toBe(session);
+    expect(grandchild.tabLabel()).toBe('…› Order › „4711“');
+    expect(grandchild.tabTitle()).toContain('a.log › ERROR › Order › „4711“');
+
+    await service.close(session.id);
+    expect(closeView).toHaveBeenLastCalledWith(1, 0);
+    expect(grandchild.parent()).toBeNull();
+    expect(grandchild.tabTitle()).toContain('a.log › ERROR › Order › „4711“');
+    expect(close).not.toHaveBeenCalled();
+
+    await service.close(grandchild.id);
+    expect(close).toHaveBeenCalledWith(1);
+    expect(service.sessions()).toEqual([]);
+  });
+
+  it('refuses a ninth tab of a file and says why', async () => {
+    const { service, session, openView } = tabsSetup();
+    for (let i = 0; i < 7; i++) await service.openFilterTab(session);
+    expect(service.sessions()).toHaveLength(8);
+    expect(service.filterTabLimit(session)).toContain('Höchstens 8');
+    expect(await service.openFilterTab(session)).toBeNull();
+    expect(openView).toHaveBeenCalledTimes(7);
+    expect(service.error()).toContain('Höchstens 8');
+  });
+
+  it('opening the file again lands on its own tab', async () => {
+    const { service, session } = tabsSetup();
+    const child = (await service.openFilterTab(session))!;
+    expect(service.active()).toBe(child);
+    expect(await service.tryOpen('/a.log')).toBeNull();
+    expect(service.active()).toBe(session);
+  });
+
+  it('marks new errors of the view in a filter tab in the background', async () => {
+    const { service, session, channels } = tabsSetup();
+    const child = (await service.openFilterTab(session))!;
+    service.activate(session.id);
+    const counts = { ...update.counts, ERROR: 3 };
+    channels[0]({ ...update, counts, viewCounts: update.viewCounts });
+    expect(child.hasNewErrors()).toBe(false);
+    channels[0]({ ...update, counts, viewCounts: counts });
+    expect(child.hasNewErrors()).toBe(true);
   });
 });

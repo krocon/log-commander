@@ -47,6 +47,9 @@ Alle Zellen einer Zeile (Rohansicht: Nummer und Text, Spaltenansicht: jede Spalt
 Hintergrund. FATAL ist als
 einziges Level eine kräftige Fläche mit weißem Text, ERROR und WARN haben eine getönte Fläche und eine Markierung am Rand.
 
+Filter-Tabs (Prompt 013) nutzen vorhandene Tokens: gestrichelte Linie und `↳` in `--text-dim` vor einem Tab, der den Tab
+links von ihm weiter filtert.
+
 ## Kontrast (WCAG AA)
 
 `npm run contrast` prüft in beiden Themes jedes Paar aus `PAIRS` in `scripts/check-contrast.mjs` auf mindestens 4,5:1: alle

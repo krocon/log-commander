@@ -4,12 +4,12 @@
 
 use crate::encoding::{display_text, Encoding};
 use crate::fields::{self, MIN_CONFIDENCE};
-use crate::filter::Probe;
-use crate::indexer::{read_at, LineEntry, LineReader, LineSplitter, Segment, MAX_SEARCH_BYTES};
+use crate::filter::{Probe, TextTest};
+use crate::indexer::{read_at, LineEntry, LineSplitter, Segment};
 use crate::model::Status;
 use crate::platform::{file_id, open_file_id, open_shared, FileId};
 use crate::profile::{suggest_profile, Profile, ProfileRegistry};
-use crate::session::{detection_bytes, Provisional, Shared};
+use crate::session::{detection_bytes, Fresh, Shared};
 use notify::{EventKind, RecursiveMode, Watcher};
 use std::fs::File;
 use std::io;
@@ -303,43 +303,42 @@ impl Tailer {
     }
 
     fn ingest(&mut self, skip: usize, n: usize) {
-        let (detector, mut prev, test, encoding) = {
+        let (detector, mut prev, (ids, tests), encoding) = {
             let data = self.shared.data.read();
             (
                 Arc::clone(&data.detector),
                 data.prev,
-                data.filter.spec.text_test(),
+                data.text_tests(),
                 data.encoding,
             )
         };
-        let mut batch: Vec<(LineEntry, Probe)> = Vec::with_capacity(n / 80);
+        // Prepared before the lock: the probe of every view per line, the text decoded once.
+        let views = tests.len();
+        let mut entries: Vec<LineEntry> = Vec::with_capacity(n / 80);
+        let mut probes: Vec<Probe> = Vec::with_capacity(n / 80 * views);
         let block = &self.buf[skip..n];
         self.splitter.feed(block, |offset, raw| {
             let text = detection_bytes(raw, encoding);
             let (level, continuation) = detector.classify(&text, &mut prev);
-            let probe = test.probe_raw(raw, encoding, !continuation);
-            batch.push((
-                LineEntry::new(offset, raw.len() as u32, level, continuation),
-                probe,
+            if views == 1 {
+                probes.push(tests[0].probe_raw(raw, encoding, !continuation));
+            } else {
+                TextTest::probe_many(&tests, raw, encoding, !continuation, &mut probes);
+            }
+            entries.push(LineEntry::new(
+                offset,
+                raw.len() as u32,
+                level,
+                continuation,
             ));
         });
         let mut data = self.shared.data.write();
-        // The write lock is held for the whole batch: the filter cannot change in between.
-        let now = data.filter.spec.text_test();
-        let same = now.same(&test);
-        let mut reader = (!same).then(|| LineReader::new(data.segments.clone(), BLOCK_SIZE));
-        for (entry, probe) in batch {
-            // The filter changed since this batch was prepared: look at the text again.
-            let probe = || match &mut reader {
-                None => probe,
-                Some(reader) => reader.raw(&entry, MAX_SEARCH_BYTES).map_or_else(
-                    |_| Probe::default(),
-                    |(raw, enc)| now.probe_raw(raw, enc, !entry.is_continuation()),
-                ),
-            };
-            data.filter
-                .append(entry.level(), entry.is_continuation(), probe);
-            data.index.push(entry);
+        // The write lock is held for the whole batch: no filter or view can change in between.
+        let mut fresh = Fresh::new(&data, &ids, &tests);
+        for (i, entry) in entries.into_iter().enumerate() {
+            let prepared = &probes[i * views..(i + 1) * views];
+            let mut current = fresh.line(entry);
+            data.push_line(entry, |v| current.probe(v, prepared));
         }
         data.prev = prev;
     }
@@ -440,25 +439,19 @@ impl Tailer {
         }
         let encoding = data.encoding;
         let detector = Arc::clone(&data.detector);
-        let provisional = Provisional {
-            checkpoint: data.filter.checkpoint(),
-            prev: data.prev,
-        };
+        let before = data.prev;
         let mut prev = data.prev;
         let text = detection_bytes(raw, encoding);
         let (level, continuation) = detector.classify(&text, &mut prev);
-        let test = data.filter.spec.text_test();
-        data.filter.append(level, continuation, || {
-            test.probe_raw(raw, encoding, !continuation)
-        });
-        data.index.push(LineEntry::new(
-            offset,
-            raw.len() as u32,
-            level,
-            continuation,
-        ));
+        let (_, tests) = data.text_tests();
+        let mut probes = Vec::with_capacity(tests.len());
+        TextTest::probe_many(&tests, raw, encoding, !continuation, &mut probes);
+        data.mark_provisional(before);
+        data.push_line(
+            LineEntry::new(offset, raw.len() as u32, level, continuation),
+            |v| probes[v],
+        );
         data.prev = prev;
-        data.provisional = Some(provisional);
         data.dirty = true;
     }
 
@@ -483,27 +476,21 @@ impl Tailer {
         {
             return;
         }
-        let update = {
-            let mut data = self.shared.data.write();
-            if !data.dirty {
-                return;
-            }
-            data.dirty = false;
-            let update = data.update();
-            data.filter.take_retracted();
+        let loading = self.loading;
+        let sent = self.shared.emit(|data| {
             // One-shot states: the next update says Live again.
             if matches!(data.status, Status::Truncated | Status::Rotated) {
-                data.status = if self.loading {
+                data.status = if loading {
                     Status::Loading { progress: 0.0 }
                 } else {
                     Status::Live
                 };
                 data.dirty = true;
             }
-            update
-        };
-        self.last_emit = Some(Instant::now());
-        (self.shared.sink)(update);
+        });
+        if sent {
+            self.last_emit = Some(Instant::now());
+        }
     }
 }
 

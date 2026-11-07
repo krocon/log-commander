@@ -62,7 +62,7 @@ import {
           [attr.aria-posinset]="node.posInSet"
           [attr.aria-expanded]="node.expandable ? node.expanded : null"
           [attr.aria-selected]="node.current"
-          [attr.aria-checked]="node.exprId && node.level > 3 ? node.enabled : null"
+          [attr.aria-checked]="node.exprId && !node.exprRoot ? node.enabled : null"
           [attr.aria-invalid]="node.error ? true : null"
           [attr.tabindex]="node.id === roving() ? 0 : -1"
           [class.off]="node.enabled === false"
@@ -84,7 +84,7 @@ import {
           <span class="twisty" aria-hidden="true">{{
             node.expandable ? (node.expanded ? '▾' : '▸') : ''
           }}</span>
-          @if (node.exprId && node.level > 3) {
+          @if (node.exprId && !node.exprRoot) {
             <input
               type="checkbox"
               class="onoff"
@@ -116,7 +116,7 @@ import {
           } @else {
             <span class="label">{{ node.label }}</span>
           }
-          @if (node.kind === 'file' && sessionOf(node); as session) {
+          @if ((node.kind === 'file' || node.kind === 'view') && sessionOf(node); as session) {
             <app-session-marks [session]="session" [status]="true" />
           }
           @if (node.kind === 'source' && sessionOf(node); as session) {
@@ -166,7 +166,7 @@ import {
               +( )
             </button>
           }
-          @if (node.kind === 'file' && node.current) {
+          @if ((node.kind === 'file' || node.kind === 'view') && node.current) {
             <button
               type="button"
               class="add"
@@ -176,6 +176,24 @@ import {
               (click)="startAdd(node, $event)"
             >
               +
+            </button>
+          }
+          @if (
+            node.kind === 'active-filter' && editing() !== node.id && sessionOf(node);
+            as session
+          ) {
+            <button
+              type="button"
+              class="tab-open"
+              tabindex="-1"
+              [disabled]="!!sessions.filterTabLimit(session)"
+              [title]="
+                sessions.filterTabLimit(session) ??
+                'Als Tab öffnen: das Ergebnis in einem neuen Tab weiter filtern (T)'
+              "
+              (click)="openTab(node, $event)"
+            >
+              ⧉ Tab
             </button>
           }
           @if (node.kind === 'active-filter' && editing() !== node.id) {
@@ -317,6 +335,7 @@ import {
       padding: 1px 5px;
     }
     .save,
+    .tab-open,
     .remove,
     .op,
     .add {
@@ -330,7 +349,8 @@ import {
       color: var(--accent);
       font-weight: 600;
     }
-    .save {
+    .save,
+    .tab-open {
       border-color: var(--border);
     }
     .remove {
@@ -362,6 +382,10 @@ export class LogTreeComponent {
         sources: s.sources,
         tree: s.filterTree(),
         treeError: s.treeError(),
+        parentId: s.parent()?.id ?? null,
+        viewId: s.viewId,
+        label: s.viewId === 0 ? undefined : s.tabLabel(),
+        title: s.viewId === 0 ? undefined : s.tabTitle(),
         columnLabel: (id: string) => s.columns()?.columns.find((c) => c.id === id)?.label ?? id,
       })),
       this.sessions.activeId(),
@@ -375,7 +399,10 @@ export class LogTreeComponent {
     const nodes = this.nodes();
     const id = this.focusId();
     if (id && nodes.some((n) => n.id === id)) return id;
-    return (nodes.find((n) => n.kind === 'file' && n.current) ?? nodes[0])?.id ?? null;
+    return (
+      (nodes.find((n) => (n.kind === 'file' || n.kind === 'view') && n.current) ?? nodes[0])?.id ??
+      null
+    );
   });
 
   protected sourceColorOf(index: number): number {
@@ -404,7 +431,7 @@ export class LogTreeComponent {
   protected removeTitle(node: TreeNode): string {
     if (node.kind === 'saved') return 'Gespeicherten Filter löschen (Entf)';
     if (node.exprId) {
-      return node.level === 3 ? 'Alle Bedingungen entfernen (Entf)' : 'Entfernen (Entf)';
+      return node.exprRoot ? 'Alle Bedingungen entfernen (Entf)' : 'Entfernen (Entf)';
     }
     return node.kind === 'filter-levels' ? 'Alle Level zeigen (Entf)' : 'Suche entfernen (Entf)';
   }
@@ -509,7 +536,7 @@ export class LogTreeComponent {
   }
 
   protected isDraggable(node: TreeNode): boolean | null {
-    return node.exprId && node.level > 3 ? true : null;
+    return node.exprId && !node.exprRoot ? true : null;
   }
 
   protected onDragStart(node: TreeNode, event: DragEvent): void {
@@ -563,6 +590,7 @@ export class LogTreeComponent {
   private activate(node: TreeNode): void {
     switch (node.kind) {
       case 'file':
+      case 'view':
         if (node.sessionId !== null) this.sessions.activate(node.sessionId);
         break;
       case 'saved': {
@@ -614,6 +642,13 @@ export class LogTreeComponent {
     if (fallback && this.host.nativeElement.contains(document.activeElement)) {
       this.moveFocus(node.parentId ?? fallback.id);
     }
+  }
+
+  /** The result of the node's tab as a new filter tab (prompt 013). */
+  protected openTab(node: TreeNode, event?: Event): void {
+    event?.stopPropagation();
+    const session = this.sessionOf(node);
+    if (session) void this.sessions.openFilterTab(session);
   }
 
   protected startSave(node: TreeNode, event?: Event): void {
@@ -705,7 +740,7 @@ export class LogTreeComponent {
   private onTreeKey(event: KeyboardEvent, node: TreeNode): boolean {
     const session = this.sessionOf(node);
     if (!session) return false;
-    const inTree = !!node.exprId && node.level > 3;
+    const inTree = !!node.exprId && !node.exprRoot;
     if (event.altKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
       if (!inTree) return false;
       const exprId = node.exprId as string;
@@ -718,10 +753,20 @@ export class LogTreeComponent {
     }
     if (event.altKey) return false;
     const canAdd =
-      !!node.exprId || node.kind === 'active-filter' || (node.kind === 'file' && node.current);
+      !!node.exprId ||
+      node.kind === 'active-filter' ||
+      ((node.kind === 'file' || node.kind === 'view') && node.current);
     if ((event.key === 'a' || event.key === 'A') && canAdd) {
       if (event.shiftKey) this.addGroup(node);
       else this.startAdd(node);
+      return true;
+    }
+    if (
+      (event.key === 't' || event.key === 'T') &&
+      !event.shiftKey &&
+      (node.kind === 'active-filter' || node.kind === 'file' || node.kind === 'view')
+    ) {
+      this.openTab(node);
       return true;
     }
     if (!inTree) return false;

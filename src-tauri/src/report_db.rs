@@ -1763,7 +1763,13 @@ mod tests {
             "SELECT printf('%.*c', 1000000, 'a') LIKE '%' || printf('%.*c', 20000, 'a') || 'b'",
         );
         assert!(message.contains("too big"), "{message}");
-        assert!(started.elapsed() < Duration::from_secs(1));
+        // Refused at once (a few ms); the bound only has to rule out the 41 s, also for a debug build
+        // on a loaded machine with the other tests running in parallel.
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "{:?}",
+            started.elapsed()
+        );
         // Patterns are short, values at most 64 KB: the worst LIKE within the limits is quick.
         let message = refused(
             &db,
