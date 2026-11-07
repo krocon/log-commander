@@ -24,7 +24,8 @@
       if (Date.now() - start > timeoutMs) {
         const state = document.body.innerText.slice(0, 1500).replace(/\n/g, ' | ');
         await report(`visibility=${document.visibilityState}`);
-        throw new Error(`timeout: ${what} UI: ${state}`);
+        const bar = document.querySelector('app-status-bar')?.innerText.replace(/\n/g, ' | ');
+        throw new Error(`timeout: ${what} STATUS: ${bar} UI: ${state}`);
       }
       await sleep(30);
     }
@@ -127,6 +128,96 @@
       throw new Error(`fields: ${JSON.stringify(firstLine.fields)}`);
     }
     await report('PASS fields of the first line');
+
+    // Column view (prompt 009): the table's header shows the fields, one cell per field. Afterwards the raw
+    // view (T), in which every check below runs as before.
+    const heads = () =>
+      $$('app-log-table-view .ge-table-header .lt-head:not(.lt-head-gutter)').filter(
+        (h) => h.getBoundingClientRect().width > 0 && h.getBoundingClientRect().height > 0,
+      );
+    const headLabels = () => heads().map((h) => h.textContent.trim()).join(',');
+    const headOf = (label) => heads().find((h) => h.textContent.trim() === label);
+    const fieldCells = (id) => inView($$(`app-log-table-view .lt-cell[data-col="${id}"]:not(.lt-span, .lt-spanned)`));
+    const spanCell = () => $$('app-log-table-view .lt-span').find((c) => c.textContent.includes('Caused by'));
+    const menu = () => $('app-column-menu');
+    const menuRow = (id) => menu()?.querySelector(`li[data-col="${id}"]`);
+    const menuButton = (text) => [...menu().querySelectorAll('button')].find((b) => b.textContent.trim() === text);
+    const columnsButton = () => button('▦');
+    const ALL_COLUMNS = 'Zeit,Level,pid,Thread,Logger,Nachricht';
+    await waitFor('column header shows the fields', () => headLabels() === ALL_COLUMNS);
+    await waitFor('columns switch is pressed', () => columnsButton().getAttribute('aria-pressed') === 'true');
+    await waitFor('header cells are column headers', () => heads().every((h) => h.getAttribute('role') === 'columnheader'));
+    await waitFor('cells hold the fields', () =>
+      fieldCells('thread')[0]?.textContent === 'main' &&
+      fieldCells('level')[0]?.textContent === 'INFO' &&
+      fieldCells('message')[0]?.textContent === 'Starting ShopApplication v2.4.1 using Java 21',
+    );
+    await waitFor('a stack trace spans from the first column', () => {
+      const first = fieldCells('timestamp')[0];
+      return spanCell() && first && Math.abs(spanCell().getBoundingClientRect().left - first.getBoundingClientRect().left) < 1.5;
+    });
+    const flush = (label, id) => {
+      const head = headOf(label).getBoundingClientRect();
+      const cell = fieldCells(id)[0].getBoundingClientRect();
+      return Math.abs(head.left - cell.left) < 1.5 && Math.abs(head.width - cell.width) < 1.5;
+    };
+    await waitFor('header and cells are flush', () => flush('Thread', 'thread') && flush('Logger', 'logger'));
+    const loggerLeft = headOf('Logger').getBoundingClientRect().left;
+    const spanTextLeft = () => spanCell()?.querySelector('.lt-text').getBoundingClientRect().left;
+    const spanText0 = spanTextLeft();
+    scroller().scrollLeft = 150;
+    await waitFor('scrolled sideways, header and cells stay flush', () =>
+      headOf('Logger').getBoundingClientRect().left <= loggerLeft - 140 && flush('Logger', 'logger'),
+    );
+    await waitFor('a span moves with the columns', () => Math.abs(spanTextLeft() - (spanText0 - 150)) < 1.5);
+    scroller().scrollLeft = 0;
+    await waitFor('back at the left', () => Math.abs(headOf('Logger').getBoundingClientRect().left - loggerLeft) < 1.5);
+    press('F10', { shiftKey: true });
+    await waitFor('Shift+F10 opens the column menu with the focus in it', () =>
+      menu()?.getAttribute('role') === 'dialog' && menu().contains(document.activeElement),
+    );
+    const threadWidth = headOf('Thread').getBoundingClientRect().width;
+    menuRow('thread').querySelector('button[aria-label="Thread breiter"]').click();
+    await waitFor('a column gets wider from the menu', () =>
+      headOf('Thread').getBoundingClientRect().width > threadWidth + 10 && flush('Thread', 'thread'),
+    );
+    const widened = headOf('Thread').getBoundingClientRect().width;
+    const threadIndex = headOf('Thread').dataset.colIndex;
+    $(`app-log-table-view .ge-table-header [data-ge-action="resize-column"][data-col-index="${threadIndex}"]`).dispatchEvent(
+      new MouseEvent('dblclick', { bubbles: true, cancelable: true }),
+    );
+    await waitFor('double click on the edge fits the column to the rows on screen', () => {
+      const width = headOf('Thread').getBoundingClientRect().width;
+      const widest = Math.max(...fieldCells('thread').map((c) => c.querySelector('.lt-text').offsetWidth));
+      return width < widened - 10 && width >= widest && flush('Thread', 'thread');
+    });
+    menuRow('thread').querySelector('input').click();
+    await waitFor('a column can be hidden', () =>
+      headLabels() === 'Zeit,Level,pid,Logger,Nachricht' && fieldCells('thread').length === 0,
+    );
+    await waitFor('the message cannot be hidden', () => menuRow('message').querySelector('input').disabled);
+    menuRow('level').querySelector('button[aria-label="Level nach rechts"]').click();
+    await waitFor('a column moves to the right', () => headLabels() === 'Zeit,pid,Level,Logger,Nachricht');
+    menu().dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await waitFor('Escape closes the menu', () => !menu());
+    search('order');
+    await waitFor('matches are marked in the cells', () =>
+      $$('app-log-table-view .lt-cell[data-col="message"] .hit').some((h) => /order/i.test(h.textContent)),
+    );
+    search('');
+    await waitFor('search cleared in the column view', () => !$('.hit') && !status().includes(' von '));
+    $('app-log-table-view .ge-table-header [data-col-index="1"]').dispatchEvent(
+      new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 100, clientY: 120 }),
+    );
+    await waitFor('right click on the header opens the menu', () => !!menu());
+    menuButton('Zurücksetzen').click();
+    await waitFor('reset brings the layout of the format back', () => headLabels() === ALL_COLUMNS);
+    menuButton('Schließen').click();
+    await waitFor('menu closed', () => !menu());
+    press('t');
+    await waitFor('T switches to the raw view', () =>
+      columnsButton().getAttribute('aria-pressed') === 'false' && heads().length === 0 && !$('.lt-col'),
+    );
     await waitFor('text keeps its spaces', () => getComputedStyle(rows()[0]).whiteSpace === 'pre');
     await waitFor('text is exact, without added spaces', () =>
       rowTexts()[0] === '2026-01-15T10:00:00.123+01:00  INFO 4711 --- [           main] c.a.shop.ShopApplication                 : Starting ShopApplication v2.4.1 using Java 21',
@@ -411,6 +502,12 @@
     press('End');
     await waitFor('following again', () => pill() === 'Live');
 
+    // The column view comes back with its layout.
+    press('t');
+    await waitFor('T switches back to the columns', () =>
+      columnsButton().getAttribute('aria-pressed') === 'true' && headLabels() === ALL_COLUMNS,
+    );
+
     // Closing the tabs leads back to the start screen.
     click(tabOf('big.log').parentElement.querySelector('.close'));
     await waitFor('tab closed', () => tabs().length === 2);
@@ -443,6 +540,15 @@
     await waitFor('tab bar opens the path dialog', () => $('app-open-path-dialog dialog')?.open);
     $('app-open-path-dialog dialog').close();
     await waitFor('dialog can be dismissed', () => !$('app-open-path-dialog'));
+
+    // A file without structure: no header in the column view, the switch is off.
+    click(button('Pfad'));
+    await waitFor('path dialog for the plain file', () => $('app-open-path-dialog dialog')?.open);
+    typePath('~/plain.log').requestSubmit();
+    await waitFor('plain file is open', () => tabOf('plain.log') && rowTexts().some((t) => t.includes('just some words')));
+    await waitFor('no header for a file without structure', () =>
+      heads().length === 0 && !$('.lt-col') && columnsButton().disabled,
+    );
 
     await report('DONE');
   } catch (e) {

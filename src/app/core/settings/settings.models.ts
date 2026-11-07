@@ -1,6 +1,15 @@
 import { Level, Profile } from '../log/log.models';
 
 export type ThemeChoice = 'system' | 'dark' | 'light';
+/** Column view (prompt 009) or the raw line. */
+export type ColumnMode = 'columns' | 'raw';
+
+/** Order, widths and hidden columns of one format, stored per profile id. */
+export interface ColumnLayout {
+  order: string[];
+  widths: Record<string, number>;
+  hidden: string[];
+}
 
 export interface Settings {
   theme: ThemeChoice;
@@ -12,6 +21,9 @@ export interface Settings {
   colorOverrides: Record<string, string>;
   customProfiles: Profile[];
   recentFiles: string[];
+  columnMode: ColumnMode;
+  /** Per `ColumnSet.profileId`: two logs of the same format look the same. */
+  columnLayouts: Record<string, ColumnLayout>;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -22,6 +34,8 @@ export const DEFAULT_SETTINGS: Settings = {
   colorOverrides: {},
   customProfiles: [],
   recentFiles: [],
+  columnMode: 'columns',
+  columnLayouts: {},
 };
 
 export const MIN_FONT_SIZE = 9;
@@ -60,7 +74,36 @@ export function mergeSettings(saved: Partial<Settings> | null | undefined): Sett
   if (typeof merged.colorOverrides !== 'object' || merged.colorOverrides === null) {
     merged.colorOverrides = {};
   }
+  if (merged.columnMode !== 'columns' && merged.columnMode !== 'raw') {
+    merged.columnMode = DEFAULT_SETTINGS.columnMode;
+  }
+  merged.columnLayouts = mergeColumnLayouts(merged.columnLayouts);
   return merged;
+}
+
+const isStringArray = (v: unknown): v is string[] =>
+  Array.isArray(v) && v.every((x) => typeof x === 'string');
+
+/** Broken entries are dropped, broken parts of an entry fall back to empty. */
+function mergeColumnLayouts(saved: unknown): Record<string, ColumnLayout> {
+  if (typeof saved !== 'object' || saved === null || Array.isArray(saved)) return {};
+  const result: Record<string, ColumnLayout> = {};
+  for (const [profileId, value] of Object.entries(saved as Record<string, unknown>)) {
+    if (typeof value !== 'object' || value === null) continue;
+    const layout = value as Partial<Record<keyof ColumnLayout, unknown>>;
+    const widths: Record<string, number> = {};
+    if (typeof layout.widths === 'object' && layout.widths !== null) {
+      for (const [id, w] of Object.entries(layout.widths as Record<string, unknown>)) {
+        if (typeof w === 'number' && Number.isFinite(w) && w > 0) widths[id] = Math.round(w);
+      }
+    }
+    result[profileId] = {
+      order: isStringArray(layout.order) ? layout.order : [],
+      widths,
+      hidden: isStringArray(layout.hidden) ? layout.hidden : [],
+    };
+  }
+  return result;
 }
 
 export function addRecent(recent: readonly string[], path: string): string[] {

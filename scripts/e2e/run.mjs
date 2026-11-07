@@ -43,6 +43,10 @@ const log = join(dir, 'e2e.log');
 writeFileSync(log, readFileSync(join(root, 'samples/spring-boot.log')));
 const other = join(dir, 'other.log');
 writeFileSync(other, 'ERROR:root:other file\nINFO:root:still here\n');
+// No structure at all: no columns (prompt 009), opened by the scenario through the path dialog.
+writeFileSync(join(dir, 'plain.log'), 'just some words\nand some more words\n');
+// No structure at all: no columns (prompt 009), opened by the scenario through the path dialog.
+writeFileSync(join(dir, 'plain.log'), 'just some words\nand some more words\n');
 const big = join(dir, 'big.log');
 // `--big-lines N` for measurements with larger files (the spike of prompt 003 reads at 10 million).
 const bigLinesAt = process.argv.indexOf('--big-lines');

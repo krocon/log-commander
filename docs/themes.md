@@ -39,7 +39,7 @@ Einstellung `theme`: `system` (Standard), `dark`, `light`. Der `SettingsService`
 | Level | `--lv-<level>-fg`, `--lv-<level>-bg` für `trace`, `debug`, `info`, `warn`, `error`, `fatal`, `unknown`; dazu `--lv-info-badge`, `--lv-error-edge` | Zeilenfarbe je Level, Markierung am Zeilenrand |
 | Inline-Tokens | `--tok-time`, `--tok-number`, `--tok-string`, `--tok-id`, `--tok-url` | Hervorhebung in der Zeile (`highlight.ts`) |
 
-Beide Zellen einer Zeile tragen die Klasse `lv-<LEVEL>` (`table-logic.ts`). `log-table-view.css` setzt daraus Vorder- und
+Alle Zellen einer Zeile (Rohansicht: Nummer und Text, Spaltenansicht: jede Spalte) tragen die Klasse `lv-<LEVEL>` (`table-logic.ts`). `log-table-view.css` setzt daraus Vorder- und
 Hintergrund. FATAL ist als
 einziges Level eine kräftige Fläche mit weißem Text, ERROR und WARN haben eine getönte Fläche und eine Markierung am Rand.
 
@@ -49,6 +49,8 @@ einziges Level eine kräftige Fläche mit weißem Text, ERROR und WARN haben ein
 Level-Paare, Text auf Flächen, Treffer, Inline-Tokens auf dem Info-Hintergrund und `--accent-text` auf `--accent`. Die Prüfung
 läuft als erster Schritt in `npm run check`.
 
+- Kopfzeile und Spaltenmenü der Spaltenansicht (Prompt 009) nutzen vorhandene Tokens (`--text` auf `--bg-panel`,
+  `--bg-raised` und `--bg-hover`, `--text-dim` auf `--bg-raised`, Linien `--border`); diese Paare stehen in `PAIRS`.
 - Wird ein neues Vordergrund/Hintergrund-Paar gebraucht, gehört es in `PAIRS`. Ein Token ohne Paar wird nicht geprüft.
 - Grafische Elemente ohne Text (Ruler-Marken, Diagramme) brauchen 3:1 zum Hintergrund. Die Prüfung kennt das noch nicht. Wer
   solche Tokens einführt, ergänzt eine zweite Liste mit Schwelle 3.

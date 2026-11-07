@@ -6,12 +6,43 @@ import {
   RendererCleanupFnType,
 } from '@guiexpert/table';
 import { LogLine } from '../../core/log/log.models';
-import { lineSegments } from './highlight';
+import { cellSegments, lineSegments, TextSegment } from './highlight';
 import { SessionState } from '../sessions/session-state';
 import { rowClasses } from './table-logic';
+import { spansRow } from './columns-logic';
 
 export const COL_NUMBER = 0;
 export const COL_TEXT = 1;
+/** Column ids of the table besides the fields: the gutter and the raw line. */
+export const ID_NUMBER = 'number';
+export const ID_TEXT = 'text';
+
+/** What a table column shows: the raw line (`field` -1) or one field of the column view. */
+export interface TableColumn {
+  id: string;
+  field: number;
+}
+
+function appendSegments(parent: HTMLElement, segments: readonly TextSegment[]): void {
+  // Plain text needs no span of its own: fewer nodes per cell (a column view has many cells).
+  if (segments.length === 1 && !segments[0].cls) {
+    parent.textContent = segments[0].text;
+    return;
+  }
+  for (const seg of segments) {
+    const span = document.createElement('span');
+    if (seg.cls) span.className = seg.cls;
+    span.textContent = seg.text;
+    parent.appendChild(span);
+  }
+}
+
+function appendCut(parent: HTMLElement): void {
+  const cut = document.createElement('span');
+  cut.className = 'cut';
+  cut.textContent = ' … (gekürzt)';
+  parent.appendChild(cut);
+}
 
 /**
  * Renders a log cell. Log lines are foreign data: only `textContent`, never `innerHTML`.
@@ -22,7 +53,7 @@ class LogCellRenderer implements CellRendererIf {
     _rowIndex: number,
     columnIndex: number,
     _areaIdent: AreaIdent,
-    _areaModel: AreaModelIf,
+    areaModel: AreaModelIf,
     cellValue: LogLine | null,
   ): RendererCleanupFnType | undefined {
     if (!cellValue) return undefined;
@@ -31,19 +62,25 @@ class LogCellRenderer implements CellRendererIf {
       cellDiv.textContent = String(cellValue.line + 1);
       return undefined;
     }
+    const model = areaModel as LogAreaModel;
+    const column = model.columnAt(columnIndex);
     const text = document.createElement('span');
     text.className = 'lt-text';
-    for (const seg of lineSegments(cellValue)) {
-      const span = document.createElement('span');
-      if (seg.cls) span.className = seg.cls;
-      span.textContent = seg.text;
-      text.appendChild(span);
-    }
-    if (cellValue.truncated) {
-      const cut = document.createElement('span');
-      cut.className = 'cut';
-      cut.textContent = ' … (gekürzt)';
-      text.appendChild(cut);
+    if (column.field < 0) {
+      appendSegments(text, lineSegments(cellValue));
+      if (cellValue.truncated) appendCut(text);
+    } else {
+      cellDiv.dataset['col'] = column.id;
+      if (model.spans(cellValue)) {
+        // Only the cell the span starts in shows the line; it moves left to begin at the first column.
+        if (columnIndex !== model.spanFrom) return undefined;
+        appendSegments(text, lineSegments(cellValue));
+        if (cellValue.truncated) appendCut(text);
+        if (model.spanOffset > 0) text.style.marginLeft = `-${model.spanOffset}px`;
+      } else {
+        appendSegments(text, cellSegments(cellValue, column.field, model.messageField));
+        if (cellValue.truncated && column.field === model.messageField) appendCut(text);
+      }
     }
     cellDiv.appendChild(text);
     return undefined;
@@ -55,14 +92,54 @@ const RENDERER = new LogCellRenderer();
 /**
  * Body of the table: the rows the view draws (`displayedLines`), the text from the `PageCache`.
  * Only visible cells are asked for; a line not loaded yet is a placeholder row.
+ *
+ * Raw view: gutter + one column with the line. Column view (prompt 009): gutter + one column per field. The
+ * table moves columns (drag, `applyState`) through `changeColumnOrder`, so the model keeps its own order.
+ * A line that is not split (continuation, no match) spans from `spanFrom` to the last column: the table
+ * renders a colspan only from a cell it renders, so `spanFrom` is the first data column in view.
  */
 export class LogAreaModel extends AreaModel {
+  private columns: TableColumn[];
+  /** Field of `message`, where an unsplit line goes; -1 in the raw view. */
+  messageField = -1;
+  /** Table column a spanning row starts in, and by how many px its text moves left. */
+  spanFrom = COL_TEXT;
+  spanOffset = 0;
+  /** First shown data column: it carries the level mark. */
+  leadColumn = COL_TEXT;
+
   constructor(
     private readonly session: () => SessionState,
     private readonly rowHeight: () => number,
+    columns: TableColumn[] = [
+      { id: ID_NUMBER, field: -1 },
+      { id: ID_TEXT, field: -1 },
+    ],
   ) {
     super();
     this.areaIdent = 'body';
+    this.columns = columns;
+  }
+
+  get columnView(): boolean {
+    return this.messageField >= 0;
+  }
+
+  columnAt(index: number): TableColumn {
+    return this.columns[index] ?? { id: ID_TEXT, field: -1 };
+  }
+
+  columnIds(): string[] {
+    return this.columns.map((c) => c.id);
+  }
+
+  spans(line: LogLine): boolean {
+    return this.columnView && spansRow(line, this.messageField);
+  }
+
+  override changeColumnOrder(sourceColumnIndex: number, targetColumnIndex: number): void {
+    const [moved] = this.columns.splice(sourceColumnIndex, 1);
+    this.columns.splice(targetColumnIndex, 0, moved);
   }
 
   override getRowCount(): number {
@@ -84,17 +161,36 @@ export class LogAreaModel extends AreaModel {
   override getTextValueAt(rowIndex: number, columnIndex: number): string {
     const line = this.session().cache.line(rowIndex);
     if (!line) return '';
-    return columnIndex === COL_NUMBER ? String(line.line + 1) : line.text;
+    if (columnIndex === COL_NUMBER) return String(line.line + 1);
+    const column = this.columnAt(columnIndex);
+    if (column.field < 0) return line.text;
+    if (this.spans(line)) return columnIndex === this.spanFrom ? line.text : '';
+    const [start, end] = line.fields[column.field] ?? [0, 0];
+    return line.text.slice(start, end);
+  }
+
+  override getColspanAt(rowIndex: number, columnIndex: number): number {
+    if (!this.columnView || columnIndex !== this.spanFrom) return 1;
+    const line = this.session().cache.line(rowIndex);
+    return line && this.spans(line) ? this.columns.length - this.spanFrom : 1;
   }
 
   override getCustomClassesAt(rowIndex: number, columnIndex: number): string[] {
     const session = this.session();
-    const classes = rowClasses(
-      session.cache.line(rowIndex),
-      session.selection(),
-      session.currentHitLine(),
-    );
-    classes.push(columnIndex === COL_NUMBER ? 'lt-gutter' : 'lt-cell');
+    const line = session.cache.line(rowIndex);
+    const classes = rowClasses(line, session.selection(), session.currentHitLine());
+    if (columnIndex === COL_NUMBER) {
+      classes.push('lt-gutter');
+      return classes;
+    }
+    classes.push('lt-cell');
+    if (this.columnView) {
+      classes.push('lt-col');
+      if (columnIndex === this.leadColumn) classes.push('lt-lead');
+      if (line && this.spans(line)) {
+        classes.push(columnIndex === this.spanFrom ? 'lt-span' : 'lt-spanned');
+      }
+    }
     return classes;
   }
 

@@ -1,5 +1,6 @@
 // Measurement of prompt 003: the log view (GuiExpert Table) in the real webview. Until 1.1.107 it compared the
-// own viewport as well; the numbers are in prompts/done/003-gui-expert-table.design.md.
+// own viewport as well; the numbers are in prompts/done/003-gui-expert-table.design.md. Since prompt 009 it
+// compares the column view with the raw view (prompts/done/009-tabellen-header.design.md).
 // Run: node scripts/e2e/run.mjs --scenario scripts/e2e/spike-003.js
 // Every measurement goes out as a PASS line, the harness prints them.
 (async () => {
@@ -30,22 +31,29 @@
     }
   }
 
-  const MODES = {
-    table: {
-      root: () => $('app-log-table-view'),
-      scroller: () => $('app-log-table-view .ge-table-scroll-viewport'),
-      placeholder: '.lt-cell.loading',
-      firstLine() {
-        const top = $('app-log-table-view').getBoundingClientRect().top;
-        const cells = $$('app-log-table-view .lt-gutter')
-          .map((c) => ({ c, r: c.getBoundingClientRect() }))
-          .filter(({ r }) => r.bottom > top + 1)
-          .sort((a, b) => a.r.top - b.r.top);
-        return cells.length ? Number(cells[0].c.textContent) : -1;
-      },
-      textCell: () => $('app-log-table-view .lt-text'),
+  const table = {
+    root: () => $('app-log-table-view'),
+    scroller: () => $('app-log-table-view .ge-table-scroll-viewport'),
+    placeholder: '.lt-cell.loading',
+    firstLine() {
+      const top = $('app-log-table-view').getBoundingClientRect().top;
+      const cells = $$('app-log-table-view .lt-gutter')
+        .map((c) => ({ c, r: c.getBoundingClientRect() }))
+        .filter(({ r }) => r.bottom > top + 1)
+        .sort((a, b) => a.r.top - b.r.top);
+      return cells.length ? Number(cells[0].c.textContent) : -1;
     },
   };
+  // Prompt 009: the column view against the raw view (the view of 003), switched with T.
+  const MODES = {
+    columns: {
+      ...table,
+      columns: true,
+      textCell: () => $('app-log-table-view .lt-cell[data-col="message"] .lt-text'),
+    },
+    raw: { ...table, columns: false, textCell: () => $('app-log-table-view .lt-text') },
+  };
+  const columnsOn = () => button('▦')?.getAttribute('aria-pressed') === 'true';
 
   const stats = (values) => {
     const sorted = [...values].sort((a, b) => a - b);
@@ -91,7 +99,8 @@
   }
 
   async function setMode(name) {
-    await waitFor(`${name} view`, () => MODES[name].root());
+    if (columnsOn() !== MODES[name].columns) press('t');
+    await waitFor(`${name} view`, () => columnsOn() === MODES[name].columns);
     await sleep(500);
   }
 
@@ -122,17 +131,21 @@
       await sleep(15000);
     }
 
-    for (const name of ['table']) {
+    // 1. Follow at 5000 lines/s, all levels and ERROR+, both views first (the comparison of prompt 009).
+    for (const name of ['raw', 'columns']) {
       const mode = MODES[name];
       await setMode(name);
-
-      // 1. Follow at 5000 lines/s, all levels and ERROR+.
       await follow(name, mode, 'all', ['5000 5 INFO big']);
       click(button('ERROR+'));
       await sleep(800);
       await follow(name, mode, 'ERROR+', ['4000 5 INFO big', '1000 5 ERROR big']);
       click(button('Alle'));
       await sleep(800);
+    }
+
+    for (const name of ['columns', 'raw']) {
+      const mode = MODES[name];
+      await setMode(name);
 
       // 2. Reading in the middle while the file grows (blocker 1).
       const scroller = mode.scroller();

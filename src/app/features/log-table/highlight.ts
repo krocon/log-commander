@@ -1,4 +1,5 @@
 import { LogLine } from '../../core/log/log.models';
+import { sliceSegments } from './columns-logic';
 
 export interface TextSegment {
   text: string;
@@ -73,6 +74,29 @@ export function lineSegments(line: LogLine): TextSegment[] {
   if (!segments) {
     segments = buildSegments(line.text, line.matches);
     cache.set(line, segments);
+  }
+  return segments;
+}
+
+const cellCache = new WeakMap<LogLine, (TextSegment[] | undefined)[]>();
+
+/**
+ * The segments of one field of a line (column view): the segments of the whole line cut at the span, so tokens
+ * and matches look the same in every column. Cached per line and field. Without spans (`fields` empty) the
+ * whole line is the field `fallback`.
+ */
+export function cellSegments(line: LogLine, field: number, fallback = -1): TextSegment[] {
+  let perField = cellCache.get(line);
+  if (!perField) {
+    perField = [];
+    cellCache.set(line, perField);
+  }
+  let segments = perField[field];
+  if (!segments) {
+    const span = line.fields?.[field];
+    const [start, end] = span ?? (field === fallback ? [0, line.text.length] : [0, 0]);
+    segments = sliceSegments(lineSegments(line), start, Math.min(end, line.text.length));
+    perField[field] = segments;
   }
   return segments;
 }

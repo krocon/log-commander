@@ -35,7 +35,8 @@ src/                         Angular 22 (zoneless, Signals, OnPush, Standalone)
   app/features/sessions/     LogSessionService (Tabs, alle Aktionen), SessionState (je Tab), PageCache, filter-logic,
                              format-logic (Spalten, Formattext)
   app/features/log-table/    LogTableViewComponent (GuiExpert Table), LogAreaModel, viewport-logic (reines
-                             Scroll-Modell), table-logic, highlight (Inline-Tokens)
+                             Scroll-Modell), table-logic, highlight (Inline-Tokens, cellSegments), columns-logic
+                             (Spaltenansicht: Layout, Breiten, Spannen), column-menu (Spaltenmenü)
   app/features/toolbar|statusbar|tabs|start|settings/   UI
 src-tauri/src/               Rust; alles außer commands.rs und lib.rs ist frei von Tauri
   session.rs                 LogSession, Abfragen, Hintergrund-Jobs (Filter, Level neu), SessionManager
@@ -60,6 +61,14 @@ samples/                     Beispiel-Logs
   Anhängen nicht. Das Rad läuft über das eigene Modell; Ziehen an der Scrollleiste rechnet `onTableScroll` auf eine Zeile um.
   Feste Zeilenhöhe, kein Zeilenumbruch. `getValueAt` ist synchron: Nicht geladene Zeilen sind Platzhalter (`loading`).
   Messwerte und Abwägung: `prompts/done/003-gui-expert-table.design.md`.
+  **Spaltenansicht (Prompt 009) auf derselben Tabelle**, nicht auf einem eigenen Viewport: je Feld eine Tabellenspalte, Kopfzeile
+  der Tabelle (Breite ziehen, Titel ziehen, `role="columnheader"`), Rohansicht = die zwei Spalten von 003 (`T`, Schalter
+  in der Toolbar, `columnMode`). Die Tabelle wird nur bei anderem Modus, anderen Spalten oder anderer Kopfhöhe neu gebaut;
+  Menü-Aktionen laufen über `applyState`, Ziehen in der Kopfzeile liest die Tabelle danach aus. Layout je Profil in
+  `columnLayouts`. Die letzte sichtbare Spalte füllt den Rest. Fortsetzungs- und nicht zerlegte Zeilen spannen per
+  `getColspanAt` ab der ersten **sichtbaren** Datenspalte (`spanFrom`), ihr Text rückt um deren x nach links: Die Tabelle
+  zeichnet einen Colspan nur aus einer Zelle, die sie zeichnet, und `getMaxColspan` > 0 hieße alle Zeilen scannen.
+  Kein Sortieren. Details: `prompts/done/009-tabellen-header.design.md`.
   Editlicious ist als Editor mit Rope nicht passend: Der Text liegt hier bewusst nicht im Speicher.
 - **Virtuelle Offsets und Segmente:** Jede Datei einer Sitzung (vor/nach Rotation) belegt einen eigenen Offset-Bereich, der
   Handle bleibt offen. So bleiben Zeilennummern bei „alte Zeilen behalten“ gültig, höchstens 32 Dateien, dann Neubeginn.

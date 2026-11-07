@@ -17,6 +17,11 @@ const PAIRS = [
   ['lv-unknown-fg', 'lv-unknown-bg'],
   ['text', 'bg-app'],
   ['text-dim', 'bg-panel'],
+  // Column header and column menu (prompt 009).
+  ['text', 'bg-panel'],
+  ['text', 'bg-raised'],
+  ['text', 'bg-hover'],
+  ['text-dim', 'bg-raised'],
   ['hit-text', 'hit-bg'],
   ['hit-current-text', 'hit-current-bg'],
   ['tok-time', 'lv-info-bg'],
