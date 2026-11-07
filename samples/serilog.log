@@ -1,0 +1,11 @@
+2026-01-15 10:00:00.123 +01:00 [INF] Starting Shop.Api v2.4.1
+2026-01-15 10:00:00.456 +01:00 [DBG] Loaded configuration from appsettings.json
+2026-01-15 10:00:01.002 +01:00 [INF] Now listening on: https://localhost:5001
+2026-01-15 10:00:05.771 +01:00 [VRB] GET /api/orders/42 from 10.0.3.17
+2026-01-15 10:00:06.009 +01:00 [WRN] Pool usage at 87%, 3 connections free
+2026-01-15 10:00:07.334 +01:00 [ERR] Could not place order 4242
+System.TimeoutException: The operation has timed out.
+   at Shop.Data.ConnectionPool.Acquire() in /src/Shop.Data/ConnectionPool.cs:line 142
+   at Shop.Api.Orders.OrderService.Place(Order order) in /src/Shop.Api/Orders/OrderService.cs:line 57
+2026-01-15 10:00:07.400 +01:00 [FTL] Database connection lost
+2026-01-15 10:00:08.002 +01:00 [INF] Order 4243 placed

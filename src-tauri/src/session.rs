@@ -3,6 +3,7 @@
 
 use crate::encoding::{display_text, strip_ansi, Encoding};
 use crate::error::{AppError, AppResult, ErrorCode};
+use crate::fields::{self, FormatGuess};
 use crate::filter::{
     FilterCheckpoint, FilterSpec, FilteredLines, LevelMask, SearchMode, SearchQuery, TextMatcher,
 };
@@ -10,7 +11,9 @@ use crate::indexer::{
     LineEntry, LineIndex, LineReader, Segment, MAX_DISPLAY_BYTES, MAX_SEARCH_BYTES,
 };
 use crate::level::{Level, LevelDetector, PrevLine};
-use crate::model::{EntryRange, FilterInfo, FindHit, LogLine, SessionInfo, SessionUpdate, Status};
+use crate::model::{
+    ColumnSet, EntryRange, FilterInfo, FindHit, LogLine, SessionInfo, SessionUpdate, Status,
+};
 use crate::platform::open_shared;
 use crate::profile::{Profile, ProfileRegistry};
 use crate::tail::Tailer;
@@ -67,10 +70,20 @@ pub struct SessionData {
     pub encoding: Encoding,
     pub detector: Arc<LevelDetector>,
     pub profile_id: String,
+    /// The profile the user chose; its layout applies once the first lines are there.
+    pub chosen_profile: Option<Profile>,
     /// No choice by the user yet: the suggestion may still replace the profile.
     pub profile_auto: bool,
     pub suggested_profile: Option<String>,
     pub relevel_needed: bool,
+    /// How lines split into fields, and how well the sample fits.
+    pub format: Arc<FormatGuess>,
+    /// Waits for the running job: the spans change together with the view generation.
+    pub requested_format: Option<Arc<FormatGuess>>,
+    /// Changes with the columns; then the view generation changes too.
+    pub columns_revision: u64,
+    /// Decoded first lines of the file (at most `SAMPLE_LINES`), for building a format.
+    pub sample: Arc<Vec<String>>,
     pub prev: PrevLine,
     pub provisional: Option<Provisional>,
     pub epoch: u64,
@@ -98,6 +111,23 @@ impl SessionData {
         }
     }
 
+    /// Uses a new format right away, with a new view generation so cached spans are void.
+    pub fn set_format(&mut self, format: FormatGuess, view_generation: u64) {
+        self.format = Arc::new(format);
+        self.columns_revision += 1;
+        self.view_generation = view_generation;
+        self.dirty = true;
+    }
+
+    /// The view is recomputed: a format waiting for it takes over now.
+    fn finish_view(&mut self, view_generation: u64) {
+        self.view_generation = view_generation;
+        if let Some(format) = self.requested_format.take() {
+            self.format = format;
+            self.columns_revision += 1;
+        }
+    }
+
     /// Forgets all lines (truncation, rotation without keeping the old lines).
     pub fn reset_index(&mut self) {
         self.index.clear();
@@ -117,6 +147,7 @@ impl SessionData {
             file_size: self.file_size,
             epoch: self.epoch,
             view_generation: self.view_generation,
+            columns_revision: self.columns_revision,
             filter_pending: self.filter_pending,
             filter_progress: self.filter_progress,
             profile_id: self.profile_id.clone(),
@@ -132,6 +163,8 @@ pub struct Shared {
     pub data: RwLock<SessionData>,
     /// The newest job; an older one sees the difference and stops.
     job_generation: AtomicU64,
+    /// Source of view generations, separate from the jobs so a format change cancels none.
+    view_counter: AtomicU64,
     find_generation: AtomicU64,
     pub shutdown: AtomicBool,
     pub wake: Sender<()>,
@@ -139,6 +172,10 @@ pub struct Shared {
 }
 
 impl Shared {
+    pub fn next_view_generation(&self) -> u64 {
+        self.view_counter.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
     pub fn wake(&self) {
         // The receiver is only gone while the session shuts down.
         let _ = self.wake.send(());
@@ -182,9 +219,14 @@ impl LogSession {
             encoding: Encoding::Utf8,
             detector,
             profile_id: default_profile.id.clone(),
+            chosen_profile: None,
             profile_auto: true,
             suggested_profile: None,
             relevel_needed: false,
+            format: Arc::new(FormatGuess::none()),
+            requested_format: None,
+            columns_revision: 0,
+            sample: Arc::new(Vec::new()),
             prev: PrevLine::default(),
             provisional: None,
             epoch: 0,
@@ -203,6 +245,7 @@ impl LogSession {
         let shared = Arc::new(Shared {
             data: RwLock::new(data),
             job_generation: AtomicU64::new(0),
+            view_counter: AtomicU64::new(0),
             find_generation: AtomicU64::new(0),
             shutdown: AtomicBool::new(false),
             wake,
@@ -270,7 +313,7 @@ impl LogSession {
     /// Lines of a view. `filtered = false` addresses all lines of the file.
     pub fn get_lines(&self, filtered: bool, start: usize, count: usize) -> AppResult<Vec<LogLine>> {
         let count = count.min(MAX_GET_LINES);
-        let (lines, segments, matcher) = {
+        let (lines, segments, matcher, format) = {
             let data = self.shared.data.read();
             let total = data.index.len();
             let mut lines = Vec::with_capacity(count);
@@ -287,8 +330,10 @@ impl LogSession {
                 lines,
                 data.segments.clone(),
                 data.filter.spec.matcher.clone(),
+                Arc::clone(&data.format),
             )
         };
+        let parser = &format.parser;
         let mut reader = LineReader::new(segments, VIEW_BLOCK);
         let mut out = Vec::with_capacity(lines.len());
         for (line, entry) in lines {
@@ -299,13 +344,21 @@ impl LogSession {
             let matches = matcher
                 .as_ref()
                 .map_or_else(Vec::new, |m| m.match_ranges(&text));
+            let truncated = entry.len as usize > MAX_DISPLAY_BYTES;
+            // A continuation (stack trace) is no entry of its own: all of it is the message.
+            let fields = if entry.is_continuation() {
+                parser.whole_line(&text)
+            } else {
+                parser.parse(&text, truncated)
+            };
             out.push(LogLine {
                 line,
                 level: entry.level(),
                 text,
                 is_continuation: entry.is_continuation(),
-                truncated: entry.len as usize > MAX_DISPLAY_BYTES,
+                truncated,
                 matches,
+                fields,
             });
         }
         Ok(out)
@@ -333,12 +386,31 @@ impl LogSession {
         Ok(self.start_job())
     }
 
+    /// The columns of the current format.
+    pub fn columns(&self) -> ColumnSet {
+        let data = self.shared.data.read();
+        ColumnSet {
+            revision: data.columns_revision,
+            confidence: data.format.confidence,
+            profile_id: data.format.profile_id.clone(),
+            inferred_layout: data.format.inferred_layout.clone(),
+            columns: data.format.parser.columns().to_vec(),
+        }
+    }
+
+    /// A chosen profile wins over the suggestion, for the levels and for the layout. The new
+    /// columns apply when the levels are recomputed, together with a new view generation.
     pub fn set_profile(&self, profile: &Profile) -> AppResult<FilterInfo> {
         let detector = Arc::new(profile.detector()?);
+        let sample = Arc::clone(&self.shared.data.read().sample);
+        let refs: Vec<&str> = sample.iter().map(String::as_str).collect();
+        let format = Arc::new(fields::format_for(profile, &refs)?);
         {
             let mut data = self.shared.data.write();
             data.detector = detector;
             data.profile_id = profile.id.clone();
+            data.chosen_profile = Some(profile.clone());
+            data.requested_format = Some(format);
             data.profile_auto = false;
             data.relevel_needed = true;
             data.dirty = true;
@@ -348,17 +420,18 @@ impl LogSession {
 
     fn start_job(&self) -> FilterInfo {
         let generation = self.shared.job_generation.fetch_add(1, Ordering::SeqCst) + 1;
+        let view = self.shared.next_view_generation();
         let mut data = self.shared.data.write();
         data.dirty = true;
         if !data.relevel_needed && data.requested_spec.is_identity() {
             let total = data.index.len();
             let spec = data.requested_spec.clone();
             data.filter = FilteredLines::identity(spec, total);
-            data.view_generation = generation;
+            data.finish_view(view);
             data.filter_pending = false;
             data.filter_progress = 1.0;
             let info = FilterInfo {
-                view_generation: generation,
+                view_generation: view,
                 pending: false,
                 filtered_lines: total as u64,
             };
@@ -369,13 +442,13 @@ impl LogSession {
         data.filter_pending = true;
         data.filter_progress = 0.0;
         let info = FilterInfo {
-            view_generation: generation,
+            view_generation: view,
             pending: true,
             filtered_lines: data.filter.len(data.index.len()) as u64,
         };
         drop(data);
         let shared = Arc::clone(&self.shared);
-        let job = move || run_job(&shared, generation);
+        let job = move || run_job(&shared, generation, view);
         if thread::Builder::new()
             .name("filter-job".into())
             .spawn(job)
@@ -605,12 +678,12 @@ fn is_current(shared: &Shared, generation: u64) -> bool {
     shared.job_generation.load(Ordering::SeqCst) == generation
 }
 
-fn run_job(shared: &Shared, generation: u64) {
+fn run_job(shared: &Shared, generation: u64, view: u64) {
     let relevel = shared.data.read().relevel_needed;
     if relevel && !run_relevel(shared, generation) {
         return;
     }
-    run_filter(shared, generation);
+    run_filter(shared, generation, view);
 }
 
 /// Detects the levels of all lines again after a profile change. Lines arriving meanwhile already
@@ -674,7 +747,7 @@ fn run_relevel(shared: &Shared, generation: u64) -> bool {
 
 /// Builds the filtered list for the requested spec without holding up the reader or the tail, and
 /// swaps it in at the end.
-fn run_filter(shared: &Shared, generation: u64) {
+fn run_filter(shared: &Shared, generation: u64, view: u64) {
     'restart: loop {
         let (spec, epoch, segments) = {
             let data = shared.data.read();
@@ -759,7 +832,7 @@ fn run_filter(shared: &Shared, generation: u64) {
             );
         }
         data.filter = builder;
-        data.view_generation = generation;
+        data.finish_view(view);
         data.filter_pending = false;
         data.filter_progress = 1.0;
         data.dirty = true;

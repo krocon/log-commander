@@ -1,0 +1,8 @@
+Jan 15 10:00:00 shop-01 systemd[1]: Started Shop API service.
+Jan 15 10:00:01 shop-01 shop-api[4711]: info: listening on port 8080
+Jan 15 10:00:02 shop-01 sshd[5120]: Accepted publickey for deploy from 10.0.3.17 port 51234 ssh2
+Jan 15 10:00:05 shop-01 shop-api[4711]: warning: pool usage at 87%
+Jan 15 10:00:07 shop-01 shop-api[4711]: error: could not place order 4242
+Jan 15 10:00:07 shop-01 kernel: [12345.678901] Out of memory: Killed process 4711 (shop-api)
+Jan 15 10:00:08 shop-01 systemd[1]: shop-api.service: Main process exited, code=killed, status=9/KILL
+Jan 15 10:00:09 shop-01 CRON[6001]: (root) CMD (/usr/local/bin/backup.sh)

@@ -3,7 +3,10 @@
 use crate::error::{AppError, AppResult, ErrorCode};
 use crate::filter::{SearchMode, SearchQuery};
 use crate::level::Level;
-use crate::model::{EntryRange, FilterInfo, FindHit, LogLine, SessionInfo, SessionUpdate, Stats};
+use crate::model::{
+    ColumnSet, EntryRange, FieldPreview, FilterInfo, FindHit, LogLine, SessionInfo, SessionUpdate,
+    Stats,
+};
 use crate::profile::Profile;
 use crate::session::{LogSession, OpenOptions, SessionManager};
 use serde::Deserialize;
@@ -98,6 +101,20 @@ pub async fn set_profile(
     let session = session(&state, session_id)?;
     let profile = state.profile(&profile_id)?;
     blocking(move || session.set_profile(&profile)).await
+}
+
+#[tauri::command]
+pub async fn get_columns(
+    state: State<'_, SessionManager>,
+    session_id: u64,
+) -> AppResult<ColumnSet> {
+    Ok(session(&state, session_id)?.columns())
+}
+
+/// Tries a profile's layout on one line (settings dialog), without saving anything.
+#[tauri::command]
+pub async fn preview_fields(profile: Profile, line: String) -> AppResult<FieldPreview> {
+    blocking(move || crate::fields::preview(&profile, &line)).await
 }
 
 #[tauri::command]

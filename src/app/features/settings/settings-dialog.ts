@@ -21,6 +21,7 @@ import {
 import { SettingsService } from '../../core/settings/settings.service';
 import { LogSessionService } from '../sessions/log-session.service';
 import { formatMapping, newProfileId, parseMapping } from './profile-logic';
+import { draftFromInference, parseLayouts } from '../sessions/format-logic';
 
 @Component({
   selector: 'app-settings-dialog',
@@ -94,7 +95,7 @@ import { formatMapping, newProfileId, parseMapping } from './profile-logic';
           @for (profile of settings().customProfiles; track profile.id) {
             <div class="profile-row">
               <span class="name">{{ profile.name }}</span>
-              <code>{{ profile.patterns[0] }}</code>
+              <code>{{ profile.patterns[0] ?? profile.layouts?.[0] }}</code>
               <button type="button" (click)="editProfile(profile)">Bearbeiten</button>
               <button type="button" (click)="deleteProfile(profile.id)">Löschen</button>
             </div>
@@ -118,10 +119,61 @@ import { formatMapping, newProfileId, parseMapping } from './profile-logic';
               Level-Zuordnung, je Zeile WORT=LEVEL (optional)
               <textarea #mapping rows="3" spellcheck="false" [value]="draft().mapping"></textarea>
             </label>
+            <label>
+              Layouts für Spalten, je Zeile eine Regex mit benannten Gruppen (optional)
+              <textarea
+                #layouts
+                rows="3"
+                spellcheck="false"
+                [value]="draft().layouts"
+                placeholder="^(?P<timestamp>S+ S+) (?P<level>w+) (?P<message>.*)$"
+              ></textarea>
+            </label>
+            <div class="preview-input">
+              <label>
+                Beispielzeile
+                <input #sampleLine type="text" spellcheck="false" />
+              </label>
+              <button
+                type="button"
+                (click)="
+                  testLayout(
+                    name.value,
+                    pattern.value,
+                    mapping.value,
+                    layouts.value,
+                    sampleLine.value
+                  )
+                "
+              >
+                Testen
+              </button>
+            </div>
+            @if (preview(); as p) {
+              <div class="preview" role="status" aria-label="Vorschau der Felder">
+                @if (!p.matched) {
+                  <p class="hint">Die Zeile passt zu keinem Layout, sie bleibt eine Nachricht.</p>
+                }
+                <dl>
+                  @for (f of p.fields; track f.label) {
+                    <dt>{{ f.label }}</dt>
+                    <dd>{{ f.value }}</dd>
+                  }
+                </dl>
+              </div>
+            }
+            @if (inferredLayout(); as layout) {
+              <button type="button" (click)="adoptInference(layout)">
+                Erkanntes Format als eigenes Profil übernehmen
+              </button>
+            }
             @if (profileError(); as error) {
               <p class="error" role="alert">{{ error }}</p>
             }
-            <button type="button" (click)="saveProfile(name.value, pattern.value, mapping.value)">
+            <button
+              type="button"
+              (click)="saveProfile(name.value, pattern.value, mapping.value, layouts.value)"
+            >
               {{ draft().id ? 'Profil speichern' : 'Profil hinzufügen' }}
             </button>
           </div>
@@ -223,6 +275,41 @@ import { formatMapping, newProfileId, parseMapping } from './profile-logic';
     .profile-form button {
       border-color: var(--border);
     }
+    .preview-input {
+      display: flex;
+      align-items: flex-end;
+      gap: 8px;
+    }
+    .preview-input label {
+      flex: 1;
+    }
+    .preview-input button {
+      margin-bottom: 8px;
+    }
+    .preview {
+      margin: 0 0 8px;
+      font-size: 12px;
+    }
+    .preview dl {
+      display: grid;
+      grid-template-columns: max-content 1fr;
+      gap: 2px 10px;
+      margin: 0;
+    }
+    .preview dt {
+      color: var(--text-dim);
+    }
+    .preview dd {
+      margin: 0;
+      font-family: var(--font-mono);
+      white-space: pre;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .hint {
+      margin: 0 0 4px;
+      color: var(--text-dim);
+    }
     .error {
       color: var(--danger);
       margin: 0 0 8px;
@@ -243,7 +330,15 @@ export class SettingsDialogComponent implements OnInit {
   protected readonly minFont = MIN_FONT_SIZE;
   protected readonly maxFont = MAX_FONT_SIZE;
   protected readonly profileError = signal<string | null>(null);
-  protected readonly draft = signal({ id: '', name: '', pattern: '', mapping: '' });
+  protected readonly draft = signal({ id: '', name: '', pattern: '', mapping: '', layouts: '' });
+  protected readonly preview = signal<{
+    matched: boolean;
+    fields: { label: string; value: string }[];
+  } | null>(null);
+  /** The active tab's file fits no built-in format, but the inference found one. */
+  protected readonly inferredLayout = computed(
+    () => this.sessions.active()?.columns()?.inferredLayout ?? null,
+  );
 
   private readonly computedColors = computed(() => {
     this.settings();
@@ -298,17 +393,70 @@ export class SettingsDialogComponent implements OnInit {
       name: profile.name,
       pattern: profile.patterns[0] ?? '',
       mapping: formatMapping(profile.mapping),
+      layouts: (profile.layouts ?? []).join('\n'),
     });
+    this.preview.set(null);
+  }
+
+  protected adoptInference(layout: string): void {
+    const fileName = this.sessions.active()?.fileName ?? '';
+    this.profileError.set(null);
+    this.preview.set(null);
+    this.draft.set({ id: '', mapping: '', ...draftFromInference(layout, fileName) });
+  }
+
+  /** Shows how the backend splits the sample line; its error message if the profile is broken. */
+  protected async testLayout(
+    name: string,
+    pattern: string,
+    mappingText: string,
+    layoutsText: string,
+    line: string,
+  ): Promise<void> {
+    const parsed = parseMapping(mappingText);
+    if ('error' in parsed) {
+      this.profileError.set(parsed.error);
+      return;
+    }
+    const profile: Profile = {
+      id: 'preview',
+      name: name.trim() || 'Profil',
+      patterns: pattern.trim() ? [pattern] : [],
+      mapping: parsed.mapping,
+      layouts: parseLayouts(layoutsText),
+    };
+    try {
+      const result = await this.api.previewFields(profile, line);
+      this.profileError.set(null);
+      this.preview.set({
+        matched: result.matched,
+        fields: result.columns
+          .map((column, i) => {
+            const [start, end] = result.fields[i] ?? [0, 0];
+            return { label: column.label, value: line.slice(start, end) };
+          })
+          .filter((f) => f.value.length > 0),
+      });
+    } catch (e) {
+      this.preview.set(null);
+      this.profileError.set(describeError(toAppError(e)));
+    }
   }
 
   protected async deleteProfile(id: string): Promise<void> {
     await this.storeProfiles(this.settings().customProfiles.filter((p) => p.id !== id));
   }
 
-  protected async saveProfile(name: string, pattern: string, mappingText: string): Promise<void> {
+  protected async saveProfile(
+    name: string,
+    pattern: string,
+    mappingText: string,
+    layoutsText: string,
+  ): Promise<void> {
     const custom = this.settings().customProfiles;
-    if (!name.trim() || !pattern.trim()) {
-      this.profileError.set('Name und Regex sind Pflicht.');
+    const layouts = parseLayouts(layoutsText);
+    if (!name.trim() || (!pattern.trim() && layouts.length === 0)) {
+      this.profileError.set('Name und eine Regex für Level oder Layout sind Pflicht.');
       return;
     }
     const parsed = parseMapping(mappingText);
@@ -320,14 +468,16 @@ export class SettingsDialogComponent implements OnInit {
     const profile: Profile = {
       id,
       name: name.trim(),
-      patterns: [pattern],
+      patterns: pattern.trim() ? [pattern] : [],
       mapping: parsed.mapping,
+      layouts,
     };
     const next = this.draft().id
       ? custom.map((p) => (p.id === id ? profile : p))
       : [...custom, profile];
     if (await this.storeProfiles(next)) {
-      this.draft.set({ id: '', name: '', pattern: '', mapping: '' });
+      this.draft.set({ id: '', name: '', pattern: '', mapping: '', layouts: '' });
+      this.preview.set(null);
     }
   }
 

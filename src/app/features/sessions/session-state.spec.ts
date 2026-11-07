@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { LogApi } from '../../core/log/log-api';
-import { LogLine, SessionUpdate } from '../../core/log/log.models';
+import { ColumnSet, LogLine, SessionUpdate } from '../../core/log/log.models';
 import { SessionState } from './session-state';
 
 const line = (n: number): LogLine => ({
@@ -10,6 +10,7 @@ const line = (n: number): LogLine => ({
   isContinuation: false,
   truncated: false,
   matches: [],
+  fields: [],
 });
 
 const update = (filteredLines: number, change: Partial<SessionUpdate> = {}): SessionUpdate =>
@@ -21,12 +22,21 @@ const update = (filteredLines: number, change: Partial<SessionUpdate> = {}): Ses
     fileSize: filteredLines * 10,
     epoch: 0,
     viewGeneration: 0,
+    columnsRevision: 1,
     filterPending: false,
     filterProgress: 1,
     profileId: 'generic',
     encoding: 'utf8',
     ...change,
   }) as SessionUpdate;
+
+const columnSet = (revision: number): ColumnSet => ({
+  revision,
+  confidence: 1,
+  profileId: 'log4j',
+  inferredLayout: null,
+  columns: [{ id: 'message', label: 'Nachricht', kind: 'text' }],
+});
 
 /** A session whose lines arrive only when `respond` is called, and only up to the count at the call. */
 function setup(initial: number) {
@@ -35,6 +45,7 @@ function setup(initial: number) {
     getLines: (_id: number, _view: string, start: number, count: number) =>
       new Promise<LogLine[]>((resolve) => calls.push({ start, count, resolve })),
     getPosition: () => Promise.resolve(0),
+    getColumns: () => Promise.resolve(columnSet(1)),
   } as unknown as LogApi;
   const session = new SessionState(
     {
@@ -137,5 +148,38 @@ describe('SessionState.displayedLines', () => {
     expect(session.displayedLines()).toBe(90);
     session.applyUpdate(update(3, { epoch: 1, viewGeneration: 2 }));
     expect(session.displayedLines()).toBe(3);
+  });
+
+  it('loads the columns at the start and again when their revision changes', async () => {
+    const requested: number[] = [];
+    let revision = 1;
+    const api = {
+      getLines: () => Promise.resolve([]),
+      getPosition: () => Promise.resolve(0),
+      getColumns: () => {
+        requested.push(revision);
+        return Promise.resolve(columnSet(revision));
+      },
+    } as unknown as LogApi;
+    const session = new SessionState(
+      {
+        sessionId: 1,
+        path: '/a.log',
+        fileName: 'a.log',
+        suggestedProfileId: 'generic',
+        update: update(0),
+      },
+      api,
+    );
+    await Promise.resolve();
+    expect(session.columns()?.revision).toBe(1);
+    // Same revision: nothing to load.
+    session.applyUpdate(update(5));
+    expect(requested).toEqual([1]);
+    revision = 2;
+    session.applyUpdate(update(5, { columnsRevision: 2, viewGeneration: 1 }));
+    await Promise.resolve();
+    expect(requested).toEqual([1, 2]);
+    expect(session.columns()?.revision).toBe(2);
   });
 });

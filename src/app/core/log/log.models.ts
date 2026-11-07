@@ -23,6 +23,8 @@ export interface SessionUpdate {
   fileSize: number;
   epoch: number;
   viewGeneration: number;
+  /** Changes with the columns (format change); `viewGeneration` changes with it. */
+  columnsRevision: number;
   filterPending: boolean;
   filterProgress: number;
   profileId: string;
@@ -50,7 +52,38 @@ export interface LogLine {
   isContinuation: boolean;
   truncated: boolean;
   matches: [number, number][];
+  /** One span `[start, end)` in UTF-16 code units per column of `getColumns`, `[0, 0]` if empty. */
+  fields: [number, number][];
 }
+
+export type ColumnKind = 'timestamp' | 'level' | 'text' | 'number';
+
+export interface Column {
+  id: string;
+  label: string;
+  kind: ColumnKind;
+}
+
+/** The columns lines split into, fixed per session until the format changes. */
+export interface ColumnSet {
+  revision: number;
+  /** Share of the entry heads of the sample that fit the format, 0 to 1. */
+  confidence: number;
+  /** The profile whose layout splits the lines (`generic` for an inferred layout). */
+  profileId: string;
+  /** The regex the inference built, to take over into a custom profile. */
+  inferredLayout: string | null;
+  columns: Column[];
+}
+
+/** A layout tried on one line. */
+export interface FieldPreview {
+  columns: Column[];
+  fields: [number, number][];
+  matched: boolean;
+}
+
+export type ProfileStructure = 'regex' | 'json' | 'logfmt' | 'fix' | 'w3c';
 
 export interface FilterInfo {
   viewGeneration: number;
@@ -84,4 +117,7 @@ export interface Profile {
   json?: boolean;
   syslogPri?: boolean;
   head?: string | null;
+  /** Regexes over the whole line, named groups become columns. */
+  layouts?: string[];
+  structure?: ProfileStructure;
 }

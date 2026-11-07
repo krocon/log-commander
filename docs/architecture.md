@@ -1,6 +1,7 @@
 # Architektur
 
-Stand: Freeze-Button (Prompt 002) auf Basis des Startauftrags und des Flacker-Fixes (001). Dieses Dokument beschreibt
+Stand: Formaterkennung (Prompt 008) auf Basis des Startauftrags, des Flacker-Fixes (001), des Freeze-Buttons (002) und
+der GuiExpert Table (003). Dieses Dokument beschreibt
 Entscheidungen, nicht Wünsche. Geplantes steht in `docs/roadmap.md` und in `prompts/`.
 
 ## Überblick
@@ -22,6 +23,7 @@ Entscheidungen, nicht Wünsche. Geplantes steht in `docs/roadmap.md` und in `pro
 │  tail.rs       ein Worker-Thread je Datei: lesen, Rotation, Updates   │
 │  indexer.rs    LineIndex (16 Byte/Zeile), LineSplitter, LineReader    │
 │  level.rs / profile.rs   Level-Erkennung, Profile, Vorschlag          │
+│  fields.rs / timestamp.rs   Format, Felder je Zeile, Zeitstempel      │
 │  filter.rs     gefilterte Liste (inkrementell), Textsuche             │
 │  encoding.rs / platform.rs   Encodings, ANSI; Share-Flags, Datei-ID   │
 │  model.rs / error.rs   DTOs (camelCase), AppError { code, message }   │
@@ -43,7 +45,8 @@ Entscheidungen, nicht Wünsche. Geplantes steht in `docs/roadmap.md` und in `pro
 3. **Updates:** Höchstens etwa 10 `SessionUpdate` je Sekunde über einen Tauri-`Channel` (Zähler, Status, Größe, `epoch`,
    `viewGeneration`, Freeze-Zustand). Sie enthalten keine Zeilen.
 4. **Anzeigen:** Das Frontend fragt sichtbare Bereiche per `get_lines(view, start, count)` ab, in Seiten zu 200 Zeilen. Rust
-   liest den Text dafür aus der Datei (`LineReader` mit gleitendem Puffer), dekodiert, entfernt ANSI und kürzt auf 128 KB.
+   liest den Text dafür aus der Datei (`LineReader` mit gleitendem Puffer), dekodiert, entfernt ANSI, kürzt auf 128 KB und
+   zerlegt ihn mit dem `FieldParser` der Sitzung in Feldspannen (`fields`, Spalten über `get_columns`).
 5. **Ändern:** `set_filter` und `set_profile` starten Hintergrund-Jobs. Eine neue `viewGeneration` macht gecachte Seiten
    ungültig, eine neue `epoch` die Zeilennummern.
 
@@ -61,6 +64,7 @@ Entscheidungen, nicht Wünsche. Geplantes steht in `docs/roadmap.md` und in `pro
 | Freeze | Der Worker liest im Freeze nicht weiter, sendet aber Updates (Filter-Jobs melden sich über `tick()`) | Der Index steht, also sind Filter, Suche und Kopieren ohne Zusatzcode konsistent. Wird die Datei im Freeze geleert, warnt die Statusleiste, zurückgesetzt wird erst beim Fortsetzen. Prompt 002. |
 | Rotation und Truncation | Datei-Identität je OS (`platform.rs`; Windows `GetFileInformationByHandle`, nicht die Erstellzeit, wegen File Tunneling), Truncation über die kleinere Größe | Erkennt `logrotate` (umbenennen) und `copytruncate`. Grenze: Leeren und Neuschreiben über die alte Größe hinaus zwischen zwei Prüfungen bleibt unbemerkt. |
 | Beobachten | `notify` plus Polling (250 ms, bei aktivem Schreiber 100 ms) | `notify` ist auf Netzlaufwerken und in Docker-Volumes unzuverlässig. |
+| Felder | Beim Ausliefern in `get_lines`, nicht beim Indexieren: Spannen `[start, end)` in UTF-16 je Spalte. Format aus 200 Zeilen beim ersten Block (`detect_format`): bestes eingebautes Layout ab 80 % der Eintragsköpfe, sonst Inferenz (Trenner oder Zeitstempel/Level/Thread/Logger), sonst nur `message`. Layouts sind Teil der `Profile` (`layouts`, `structure` für JSON, logfmt, FIX, W3C) | Der Index bleibt bei 16 Byte, Filter, Suche und Tail werden nicht langsamer. Spalten bleiben je Sitzung fest, ein Profilwechsel tauscht sie mit der neuen `viewGeneration`. Prompt 008. |
 | Jobs | Filter und Neu-Leveln laufen in eigenen Threads, abbrechbar über eine Generation. Die letzten Zeilen werden unter der Sperre nachgezogen | Kein Halt im Tail, keine Zeile fällt zwischen Liste und Ende. |
 | Fehler | `AppError { code, message }` mit `snake_case`-Codes (`not_found`, `permission_denied`, `invalid_search`, `too_large`, …), gespiegelt in `app/core/errors/` | Stabile Codes für deutsche UI-Texte, die Originalmeldung bleibt als Detail. |
 | Backend-Zugriff | `LogApi` im Frontend, `invoke()` nur in `call.ts` | Ein Ort für die Fehlerabbildung und den Fall „kein Backend“ (Browser, Screenshots). |
@@ -78,6 +82,8 @@ Entscheidungen, nicht Wünsche. Geplantes steht in `docs/roadmap.md` und in `pro
 
 - Höchstens 2³² Zeilen und 32 Dateien (Segmente) je Sitzung, danach beginnt sie neu.
 - Anzeige 128 KB je Zeile, Suche 1 MB je Zeile. Eine Zeile ohne Ende wird bei 16 MB geteilt.
+- Felder: zerlegt werden die ersten 16 KB einer Zeile, höchstens 12 Spalten aus JSON-/logfmt-Schlüsseln bzw. FIX-Tags.
+  Nach einer Rotation mit anderem Format fallen die neuen Zeilen auf `message` zurück.
 - `get_lines` liefert höchstens 5000 Zeilen je Aufruf. Kopieren höchstens 1 Mio. Zeilen bzw. 256 MB.
 - Mehrere Rotationen während eines Freeze: Zwischenstände fehlen.
 
@@ -87,7 +93,8 @@ Entscheidungen, nicht Wünsche. Geplantes steht in `docs/roadmap.md` und in `pro
 |---|---|---|
 | `tauri` 2 mit `tauri-plugin-cli`, `-dialog`, `-store`, `-window-state` | Fenster, IPC, Öffnen-Dialog, Einstellungen, Fenstergröße, Kommandozeile | Offizielle Plugins, schmale Capabilities. |
 | `notify` 8 | Dateiänderungen | Standard im Rust-Ökosystem, Polling als Rückfall. |
-| `regex` 1 | Profile, Level-Erkennung, Suche | Lineare Laufzeit, kein ReDoS durch Nutzermuster. |
+| `chrono` 0.4 (nur `clock`, `std`) | Zeitstempel ohne Zone in lokaler Zeit, Datum aus der Änderungszeit (`timestamp.rs`, auch für den Merge aus Prompt 006) | Zeitzonen und Kalender von Hand sind fehleranfällig; ohne Standard-Features klein. |
+| `regex` 1 | Profile, Level-Erkennung, Layouts, Suche | Lineare Laufzeit, kein ReDoS durch Nutzermuster. |
 | `memchr` 2 | schneller Zeilensplit | War über `regex` schon im Baum. |
 | `encoding_rs` 0.8 | Dekodieren (UTF-8, UTF-16 LE/BE, Latin-1) | Bewährt, stammt aus Firefox. |
 | `parking_lot` 0.12 | `RwLock` der Sitzungsdaten | Kurze Sperren ohne Poisoning. |

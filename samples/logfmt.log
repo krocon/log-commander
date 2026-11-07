@@ -1,0 +1,7 @@
+time=2026-01-15T10:00:00.123Z level=info msg="server listening" addr=0.0.0.0:8080 pid=4711
+time=2026-01-15T10:00:01.000Z level=debug msg="loaded routes" count=128
+time=2026-01-15T10:00:02.500Z level=warn msg="deprecated option used" option=legacy_auth
+time=2026-01-15T10:00:03.250Z level=error msg="upstream returned 502" url=https://api.example.com/v1/items duration=1.532s
+time=2026-01-15T10:00:04.000Z level=info msg="request done" method=GET path=/api/orders/42 status=200 duration=0.012s
+time=2026-01-15T10:00:05.000Z level=error msg="dial \"db:5432\" failed" err="connection refused" retry=3
+time=2026-01-15T10:00:06.000Z level=info msg="shutting down" signal=SIGTERM

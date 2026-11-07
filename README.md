@@ -18,7 +18,13 @@ Like <code>tail -f</code> with a GUI: millions of lines, instant filters, no wai
 - **Stack traces stay together** – continuation lines inherit the level of their entry, and filtering and selecting
   treat the entry as a unit.
 - **Formats** – detected from the first lines: Log4j/Logback/Spring Boot, Python `logging`, Serilog, syslog,
-  nginx/Apache error logs, JSON Lines (including numeric Pino/Bunyan levels). Add your own regex with `(?P<level>...)`.
+  nginx/Apache error logs, JSON Lines (including numeric Pino/Bunyan levels), Common/Combined access logs, W3C/IIS,
+  NLog, Java GC (unified logging), FIX, logfmt. Add your own regex with `(?P<level>...)`.
+- **Fields** – each line is split into fields such as time, thread, level, logger and message, without defining a
+  format. JSON and logfmt keys and FIX tags become fields; an unknown format is inferred (delimiters or timestamp,
+  level, `[thread]`, `logger:`), otherwise the line stays one message. The profile tooltip shows how well the format
+  fits ("Log4j · 97 %"); custom profiles take layouts (regexes with named groups) with a live preview. The columns
+  themselves are drawn by a later step; the log view looks as before.
 - **Search** – filter or highlight, regular expressions, case sensitivity, jump between matches.
 - **Follow** – stays at the end while you are there; scroll up and it pauses and counts the new lines.
 - **Freeze** – holds a tab to read in peace: lines, counts and the position stay put while filters and search keep

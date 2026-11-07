@@ -2,7 +2,8 @@
 //! waits for a `notify` event or the next poll. Handles the incomplete last line, truncation,
 //! rotation and a missing file, and sends bundled updates.
 
-use crate::encoding::Encoding;
+use crate::encoding::{display_text, Encoding};
+use crate::fields::{self, MIN_CONFIDENCE};
 use crate::filter::TextMatcher;
 use crate::indexer::{read_at, LineEntry, LineReader, LineSplitter, Segment, MAX_SEARCH_BYTES};
 use crate::model::Status;
@@ -32,6 +33,10 @@ const MIN_TICK: Duration = Duration::from_millis(40);
 const PARTIAL_COMMIT_AFTER: Duration = Duration::from_secs(1);
 /// Old files kept open after rotations; more would pile up file descriptors.
 const MAX_SEGMENTS: usize = 32;
+/// Lines of the first block that decide the profile and the format.
+pub const SAMPLE_LINES: usize = 200;
+/// Text of the sample kept per line; the format only looks at the start anyway.
+const SAMPLE_LINE_BYTES: usize = fields::MAX_PARSE_BYTES;
 
 struct TailFile {
     file: Arc<File>,
@@ -245,20 +250,23 @@ impl Tailer {
         Ok(n)
     }
 
-    /// First data of a file: encoding, BOM and the profile suggestion. Returns the BOM length.
+    /// First data of a file: encoding, BOM, the profile suggestion and the format. Returns the BOM
+    /// length. Later files of the session (rotation) keep the format: their lines that do not fit
+    /// fall back to a single message.
     fn start_file(&mut self, n: usize) -> usize {
         let sample = &self.buf[..n];
         let (encoding, bom) = Encoding::detect(sample);
         let body = &sample[bom..];
         let mut splitter = LineSplitter::new(encoding, 0);
         let mut plain: Vec<Vec<u8>> = Vec::new();
+        let mut texts: Vec<String> = Vec::new();
         splitter.feed(body, |_, raw| {
-            if plain.len() < 200 {
+            if plain.len() < SAMPLE_LINES {
                 plain.push(detection_bytes(raw, encoding).into_owned());
+                let raw = &raw[..raw.len().min(SAMPLE_LINE_BYTES)];
+                texts.push(display_text(raw, encoding).into_owned());
             }
         });
-        let suggestion = suggest_profile(plain.iter().map(Vec::as_slice));
-        let profile = ProfileRegistry::default().find(&suggestion).ok();
         self.current.started = true;
         self.splitter = LineSplitter::new(encoding, self.current.base + bom as u64);
         let mut data = self.shared.data.write();
@@ -271,9 +279,38 @@ impl Tailer {
             });
         }
         if data.suggested_profile.is_none() {
+            drop(data);
+            let texts = Arc::new(texts);
+            let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
+            let registry = ProfileRegistry::default();
+            let guess = fields::detect_format(&refs, &registry.list());
+            // A layout that fits is the stronger evidence; otherwise the level keywords decide.
+            let suggestion =
+                if guess.confidence >= MIN_CONFIDENCE && guess.inferred_layout.is_none() {
+                    guess.profile_id.clone()
+                } else {
+                    suggest_profile(plain.iter().map(Vec::as_slice))
+                };
+            let profile = registry.find(&suggestion).ok();
+            let view = self.shared.next_view_generation();
+            let mut data = self.shared.data.write();
             data.suggested_profile = Some(suggestion);
-            if data.profile_auto {
+            data.sample = Arc::clone(&texts);
+            let format = if data.profile_auto {
                 apply_suggestion(&mut data, profile.as_ref());
+                Some(guess)
+            } else {
+                // Chosen before there was anything to read: its layout, now with a sample.
+                data.chosen_profile
+                    .clone()
+                    .and_then(|chosen| fields::format_for(&chosen, &refs).ok())
+            };
+            if let Some(format) = format {
+                if data.requested_format.is_some() {
+                    data.requested_format = Some(Arc::new(format));
+                } else {
+                    data.set_format(format, view);
+                }
             }
         }
         bom

@@ -2,6 +2,7 @@
 //! them.
 
 use crate::encoding::Encoding;
+use crate::fields::Column;
 use crate::level::Level;
 use serde::Serialize;
 
@@ -62,6 +63,8 @@ pub struct SessionUpdate {
     pub epoch: u64,
     /// Changes when the filtered list or the levels were recomputed: cached lines are void.
     pub view_generation: u64,
+    /// Changes with the columns (format change); `view_generation` changes with it.
+    pub columns_revision: u64,
     pub filter_pending: bool,
     pub filter_progress: f32,
     pub profile_id: String,
@@ -96,6 +99,32 @@ pub struct LogLine {
     pub truncated: bool,
     /// Search matches `[start, end)` in UTF-16 code units.
     pub matches: Vec<[u32; 2]>,
+    /// One span `[start, end)` in UTF-16 code units per column of `get_columns`, `[0, 0]` if empty.
+    pub fields: Vec<[u32; 2]>,
+}
+
+/// The columns lines split into, fixed per session until the format changes.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ColumnSet {
+    pub revision: u64,
+    /// Share of the entry heads of the sample that fit the format, 0 to 1.
+    pub confidence: f32,
+    /// The profile whose layout splits the lines (`generic` for an inferred layout).
+    pub profile_id: String,
+    /// The regex the inference built, to take over into a custom profile.
+    pub inferred_layout: Option<String>,
+    pub columns: Vec<Column>,
+}
+
+/// A layout tried on one line (settings dialog).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FieldPreview {
+    pub columns: Vec<Column>,
+    pub fields: Vec<[u32; 2]>,
+    /// The line fits the layout; otherwise everything is in the message.
+    pub matched: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

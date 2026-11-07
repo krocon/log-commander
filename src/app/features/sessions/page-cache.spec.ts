@@ -9,6 +9,7 @@ const line = (n: number): LogLine => ({
   isContinuation: false,
   truncated: false,
   matches: [],
+  fields: [],
 });
 
 function deferredLoader() {

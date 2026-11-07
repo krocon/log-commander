@@ -14,8 +14,25 @@ const SUGGEST_LINES: usize = 100;
 const TIMESTAMP_HEAD: &str = r"(?-u)^\[?\d{4}[-/]\d{2}[-/]\d{2}[T ]\d{2}:\d{2}";
 const GENERIC_PATTERN: &str = r"(?i-u)\b(?P<level>TRACE|DEBUG|INFO|NOTICE|WARN|WARNING|ERROR|ERR|FATAL|CRITICAL|CRIT|SEVERE)\b";
 
+/// How a line splits into fields (`fields.rs`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Structure {
+    /// The `layouts`: regexes with named groups. Without layouts the format is inferred.
+    #[default]
+    Regex,
+    /// JSON Lines: the top-level keys of the sample.
+    Json,
+    /// `key=value key="quoted value"`.
+    Logfmt,
+    /// FIX `tag=value`, separated by SOH (shown as `|`) or `|`.
+    Fix,
+    /// W3C extended log (IIS): names from the `#Fields:` directive.
+    W3c,
+}
+
 /// Definition of a profile; custom ones arrive from the settings of the frontend.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Profile {
     pub id: String,
@@ -32,6 +49,12 @@ pub struct Profile {
     pub syslog_pri: bool,
     #[serde(default)]
     pub head: Option<String>,
+    /// Regexes over the whole line; named groups become columns (`timestamp`, `date`, `time`,
+    /// `thread`, `level`, `logger`, `message` are known, any other name is a column of its own).
+    #[serde(default)]
+    pub layouts: Vec<String>,
+    #[serde(default)]
+    pub structure: Structure,
 }
 
 impl Profile {
@@ -45,10 +68,20 @@ impl Profile {
             json: false,
             syslog_pri: false,
             head: Some(TIMESTAMP_HEAD.into()),
+            layouts: Vec::new(),
+            structure: Structure::Regex,
         }
     }
 
+    fn with_layouts(mut self, layouts: &[&str]) -> Self {
+        self.layouts = layouts.iter().map(|l| (*l).to_string()).collect();
+        self
+    }
+
+    /// The level detection of this profile. Also checks the layouts, so a broken one is reported
+    /// the same way as a broken level regex.
     pub fn detector(&self) -> AppResult<LevelDetector> {
+        crate::fields::compile_layouts(self)?;
         let patterns = self
             .patterns
             .iter()
@@ -88,6 +121,12 @@ fn invalid(name: &str, reason: &str) -> AppError {
     AppError::new(ErrorCode::InvalidProfile, format!("{name}: {reason}"))
 }
 
+/// Timestamp shapes shared by the layouts.
+const TS_ISO: &str = r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?";
+const TS_ISO_OR_TIME: &str =
+    r"(?:\d{4}-\d{2}-\d{2}[T ])?\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?";
+const LOG4J_LEVELS: &str = "TRACE|DEBUG|INFO|WARN|WARNING|ERROR|FATAL";
+
 pub fn builtin_profiles() -> Vec<Profile> {
     let mut generic = Profile::builtin(
         GENERIC_PROFILE,
@@ -102,7 +141,25 @@ pub fn builtin_profiles() -> Vec<Profile> {
         &[
             r"(?-u)^\[?(?:\d{4}-\d{2}-\d{2}[T ])?\d{2}:\d{2}:\d{2}[.,]?\d*(?:Z|[+-]\d{2}:?\d{2})?\]?\s+(?:\[[^\]]*\]\s+)?(?P<level>TRACE|DEBUG|INFO|WARN|WARNING|ERROR|FATAL)\b",
         ],
-    );
+    )
+    .with_layouts(&[
+        // Spring Boot: `… INFO 4711 --- [app] [main] c.a.App : message` (application optional).
+        &format!(
+            r"^(?P<timestamp>{TS_ISO})\s+(?P<level>{LOG4J_LEVELS})\s+(?P<pid>\d+)\s+---\s+(?:\[(?P<application>[^\]]*)\]\s+)?\[\s*(?P<thread>[^\]]*?)\s*\]\s+(?P<logger>\S+)\s*:\s?(?P<message>.*)$"
+        ),
+        // Logback default: `10:00:00.123 [main] WARN  c.a.App - message`.
+        &format!(
+            r"^\[?(?P<timestamp>{TS_ISO_OR_TIME})\]?\s+\[(?P<thread>[^\]]*)\]\s+(?P<level>{LOG4J_LEVELS})\s+(?P<logger>\S+)\s+-\s?(?P<message>.*)$"
+        ),
+        // Log4j `%d %-5p [%t] %c - %m`.
+        &format!(
+            r"^\[?(?P<timestamp>{TS_ISO_OR_TIME})\]?\s+(?P<level>{LOG4J_LEVELS})\s+\[(?P<thread>[^\]]*)\]\s+(?P<logger>\S+)\s+-\s?(?P<message>.*)$"
+        ),
+        // Time and level only.
+        &format!(
+            r"^\[?(?P<timestamp>{TS_ISO_OR_TIME})\]? +(?P<level>{LOG4J_LEVELS})\b *(?:(?P<logger>[\w.$]+) - )?(?P<message>.*)$"
+        ),
+    ]);
     let python = Profile::builtin(
         "python",
         "Python logging",
@@ -111,21 +168,36 @@ pub fn builtin_profiles() -> Vec<Profile> {
             r"(?-u)^\S+ \S+ - .*? - (?P<level>DEBUG|INFO|WARNING|ERROR|CRITICAL) - ",
             r"(?-u)^\d{4}-\d{2}-\d{2} \S+ (?P<level>DEBUG|INFO|WARNING|ERROR|CRITICAL) ",
         ],
-    );
+    )
+    .with_layouts(&[
+        r"^(?P<level>DEBUG|INFO|WARNING|ERROR|CRITICAL):(?P<logger>[^:\s]*):(?P<message>.*)$",
+        r"^(?P<timestamp>\S+ \S+) - (?P<logger>.*?) - (?P<level>DEBUG|INFO|WARNING|ERROR|CRITICAL) - (?P<message>.*)$",
+        r"^(?P<timestamp>\d{4}-\d{2}-\d{2} \S+) (?P<level>DEBUG|INFO|WARNING|ERROR|CRITICAL) (?:(?P<logger>[^:\s]+): )?(?P<message>.*)$",
+    ]);
     let serilog = Profile::builtin(
         "serilog",
         "Serilog",
         &[
             r"(?-u)\[(?:\d{2}:\d{2}:\d{2}\s)?(?P<level>VRB|DBG|INF|WRN|ERR|FTL|Verbose|Debug|Information|Warning|Error|Fatal)\]",
         ],
-    );
+    )
+    .with_layouts(&[
+        r"^(?P<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?(?: ?[+-]\d{2}:\d{2})?) \[(?P<level>VRB|DBG|INF|WRN|ERR|FTL|Verbose|Debug|Information|Warning|Error|Fatal)\] (?P<message>.*)$",
+        r"^\[(?P<time>\d{2}:\d{2}:\d{2}) (?P<level>VRB|DBG|INF|WRN|ERR|FTL)\] (?P<message>.*)$",
+    ]);
     let mut syslog = Profile::builtin(
         "syslog",
         "Syslog",
         &[
             r"(?i-u)^[A-Z][a-z]{2}\s+\d+\s\d{2}:\d{2}:\d{2}\s\S+\s[^:]+:\s.*?\b(?P<level>DEBUG|INFO|NOTICE|WARN|WARNING|ERROR|ERR|FATAL|CRITICAL|CRIT|ALERT|EMERG|PANIC)\b",
         ],
-    );
+    )
+    .with_layouts(&[
+        // RFC 3164, optionally with the priority.
+        r"^(?:<(?P<pri>\d{1,3})>)?(?P<timestamp>[A-Z][a-z]{2} [ \d]\d \d{2}:\d{2}:\d{2}) (?P<host>\S+) (?P<logger>[^\s:\[]+)(?:\[(?P<pid>\d+)\])?: ?(?P<message>.*)$",
+        // RFC 5424.
+        r"^<(?P<pri>\d{1,3})>1 (?P<timestamp>\S+) (?P<host>\S+) (?P<logger>\S+) (?P<pid>\S+) (?P<msgid>\S+) (?P<data>-|(?:\[[^\]]*\])+) ?(?P<message>.*)$",
+    ]);
     syslog.syslog_pri = true;
     syslog.head = Some(r"(?-u)^[A-Z][a-z]{2}\s+\d+\s\d{2}:\d{2}:\d{2}\s".into());
 
@@ -133,12 +205,72 @@ pub fn builtin_profiles() -> Vec<Profile> {
         "webserver",
         "nginx / Apache error log",
         &[r"(?-u)\[(?:\w+:)?(?P<level>emerg|alert|crit|error|warn|notice|info|debug)\]"],
-    );
+    )
+    .with_layouts(&[
+        r"^(?P<timestamp>\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}) \[(?P<level>\w+)\] (?P<pid>\d+)#(?P<tid>\d+): (?P<message>.*)$",
+        r"^\[(?P<timestamp>[^\]]+)\] \[(?:(?P<module>\w+):)?(?P<level>\w+)\](?: \[pid (?P<pid>\d+)(?::tid (?P<tid>\d+))?\])?(?: \[client (?P<client>[^\]]+)\])? (?P<message>.*)$",
+    ]);
     let mut jsonl = Profile::builtin("jsonl", "JSON Lines", &[]);
     jsonl.json = true;
     jsonl.head = None;
+    jsonl.structure = Structure::Json;
 
-    vec![generic, log4j, python, serilog, syslog, webserver, jsonl]
+    // Access logs: 4xx is a warning, 5xx an error, everything else an entry without a level.
+    let mut access = Profile::builtin(
+        "access",
+        "Common / Combined Log (Apache, nginx)",
+        &[r#"(?-u)^\S+ \S+ \S+ \[[^\]]+\] "[^"]*" (?P<level>[45])\d\d "#],
+    )
+    .with_layouts(&[
+        r#"^(?P<client>\S+) (?P<ident>\S+) (?P<user>\S+) \[(?P<timestamp>[^\]]+)\] "(?P<request>[^"]*)" (?P<status>\d{3}) (?P<bytes>\d+|-)(?: "(?P<referer>[^"]*)" "(?P<agent>[^"]*)")?.*$"#,
+    ]);
+    access.mapping = HashMap::from([("4".into(), Level::Warn), ("5".into(), Level::Error)]);
+    access.head = Some(r"(?-u)^\S+ \S+ \S+ \[\d{2}/[A-Z][a-z]{2}/\d{4}:".into());
+
+    let mut w3c = Profile::builtin("w3c", "W3C Extended / IIS", &[]);
+    w3c.head = Some(r"(?-u)^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} ".into());
+    w3c.structure = Structure::W3c;
+
+    let nlog = Profile::builtin(
+        "nlog",
+        "NLog",
+        &[r"(?i-u)^\d{4}-\d{2}-\d{2} [\d:.]+\|(?P<level>trace|debug|info|warn|error|fatal)\|"],
+    )
+    .with_layouts(&[
+        r"^(?P<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?)\|(?P<level>[A-Za-z]+)\|(?P<logger>[^|]*)\|(?P<message>.*)$",
+    ]);
+
+    let mut gc = Profile::builtin(
+        "gc",
+        "Java GC (Unified Logging)",
+        &[r"(?-u)^\[[^\]]+\](?:\[[^\]]*\])*?\[(?P<level>trace|debug|info|warning|error)\s*\]"],
+    )
+    .with_layouts(&[
+        r"^\[(?P<timestamp>[^\]]+)\](?:\[(?P<uptime>[\d.,]+s)\])?(?:\[[^\]]*\])*?\[(?P<level>trace|debug|info|warning|error)\s*\]\[(?P<tags>[^\]]+?)\s*\]\s?(?:GC\((?P<gc>\d+)\)\s*)?(?P<message>.*?)(?:\s(?P<duration_ms>\d+(?:[.,]\d+)?)ms)?$",
+    ]);
+    gc.head = Some(r"(?-u)^\[\d".into());
+
+    let mut fix = Profile::builtin(
+        "fix",
+        "FIX",
+        &[r"(?-u)(?:^|[\x01|])35=(?P<level>[3j])[\x01|]"],
+    );
+    fix.mapping = HashMap::from([("3".into(), Level::Error), ("j".into(), Level::Error)]);
+    fix.head = Some(r"(?-u)8=FIX".into());
+    fix.structure = Structure::Fix;
+
+    let mut logfmt = Profile::builtin(
+        "logfmt",
+        "logfmt / key=value",
+        &[r#"(?i-u)(?:^|\s)(?:level|lvl|severity)="?(?P<level>[a-z]+)"#],
+    );
+    logfmt.head = Some(r"(?-u)^[\w.@-]+=".into());
+    logfmt.structure = Structure::Logfmt;
+
+    vec![
+        generic, log4j, python, serilog, syslog, webserver, jsonl, access, w3c, nlog, gc, fix,
+        logfmt,
+    ]
 }
 
 /// Picks the format most of the first lines fit; `generic` if none stands out. Lines must already
@@ -204,7 +336,10 @@ impl ProfileRegistry {
         let mut checked = Vec::with_capacity(profiles.len());
         for mut profile in profiles {
             profile.builtin = false;
-            if profile.patterns.is_empty() {
+            if profile.patterns.is_empty()
+                && profile.layouts.is_empty()
+                && profile.structure == Structure::Regex
+            {
                 return Err(invalid(&profile.name, "the regex is empty"));
             }
             profile.detector()?;
@@ -259,6 +394,7 @@ mod tests {
             json: false,
             syslog_pri: false,
             head: None,
+            ..Profile::default()
         };
         let mut registry = ProfileRegistry::default();
         registry.set_custom(vec![profile]).unwrap();
@@ -280,6 +416,7 @@ mod tests {
             json: false,
             syslog_pri: false,
             head: None,
+            ..Profile::default()
         };
         let err = registry.set_custom(vec![make("^ERR")]).unwrap_err();
         assert_eq!(err.code, ErrorCode::InvalidProfile);

@@ -1,0 +1,10 @@
+[2026-01-15T10:00:00.012+0100][info][gc] Using G1
+[2026-01-15T10:00:00.014+0100][info][gc,init] Version: 21.0.1+12-LTS (release)
+[2026-01-15T10:00:00.014+0100][info][gc,init] Heap Region Size: 1M
+[2026-01-15T10:00:01.532+0100][info][gc,start] GC(0) Pause Young (Normal) (G1 Evacuation Pause)
+[2026-01-15T10:00:01.540+0100][info][gc     ] GC(0) Pause Young (Normal) (G1 Evacuation Pause) 24M->4M(256M) 8.120ms
+[2026-01-15T10:00:03.104+0100][info][gc     ] GC(1) Pause Young (Normal) (G1 Evacuation Pause) 52M->9M(256M) 12.345ms
+[2026-01-15T10:00:05.877+0100][warning][gc,alloc] GC(2) To-space exhausted
+[2026-01-15T10:00:05.912+0100][info][gc     ] GC(2) Pause Young (Concurrent Start) (G1 Humongous Allocation) 230M->201M(256M) 35.002ms
+[2026-01-15T10:00:06.400+0100][info][gc     ] GC(3) Pause Full (G1 Compaction Pause) 250M->120M(256M) 410.778ms
+[2026-01-15T10:00:06.401+0100][error][gc] GC(3) Allocation failure, heap almost full

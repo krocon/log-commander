@@ -32,7 +32,8 @@ src/                         Angular 22 (zoneless, Signals, OnPush, Standalone)
   app/core/errors/           AppError (Codes = Rust error.rs), Texte
   app/core/log/              LogApi, DTOs (= Rust model.rs)
   app/core/settings/         SettingsService (tauri-plugin-store, wendet Theme/Farben an), reine Merge-Logik
-  app/features/sessions/     LogSessionService (Tabs, alle Aktionen), SessionState (je Tab), PageCache, filter-logic
+  app/features/sessions/     LogSessionService (Tabs, alle Aktionen), SessionState (je Tab), PageCache, filter-logic,
+                             format-logic (Spalten, Formattext)
   app/features/log-table/    LogTableViewComponent (GuiExpert Table), LogAreaModel, viewport-logic (reines
                              Scroll-Modell), table-logic, highlight (Inline-Tokens)
   app/features/toolbar|statusbar|tabs|start|settings/   UI
@@ -40,7 +41,9 @@ src-tauri/src/               Rust; alles außer commands.rs und lib.rs ist frei 
   session.rs                 LogSession, Abfragen, Hintergrund-Jobs (Filter, Level neu), SessionManager
   tail.rs                    Worker je Datei: Blöcke lesen, notify + Polling, Teilzeile, Truncation, Rotation, Updates
   indexer.rs                 LineIndex (16 Byte je Zeile), LineSplitter, LineReader, Segmente
-  level.rs, profile.rs       Level-Erkennung, eingebaute und eigene Profile, Vorschlag
+  level.rs, profile.rs       Level-Erkennung, eingebaute und eigene Profile (samt Layouts), Vorschlag
+  fields.rs                  Formaterkennung, Felder je Zeile (Spannen in UTF-16), JSON/logfmt/FIX/W3C-Scanner, Inferenz
+  timestamp.rs               Zeitstempel erkennen und nach µs UTC wandeln (auch für den Merge, Prompt 006)
   filter.rs                  gefilterte Zeilenliste (inkrementell), Textsuche
   encoding.rs, platform.rs   Encodings, ANSI; Share-Flags und Datei-Identität je OS
   e2e.rs                     nur Debug-Build: Szenario im WebView, siehe scripts/e2e/
@@ -75,12 +78,20 @@ samples/                     Beispiel-Logs
   wird erst beim Fortsetzen.
 - **Fortsetzungszeilen:** Einrücken, `at `, `Caused by:`, `Traceback`, `... ` wird vor der Regex geprüft
   (`at com.acme.error.Handler` ist keine ERROR-Zeile). Zeilen mit Zeitstempel ohne Level beginnen einen neuen Eintrag.
+- **Felder beim Ausliefern, nicht beim Indexieren (Prompt 008):** `get_lines` zerlegt jede Zeile mit dem `FieldParser`
+  der Sitzung in Spannen `[start, end)` in UTF-16 (`LogLine.fields`, eine je Spalte aus `get_columns`). Der Index bleibt bei
+  16 Byte, Filter, Suche und Tail laufen ohne Layout. Format aus einer Stichprobe von 200 Zeilen beim ersten Block
+  (`detect_format`): bestes eingebautes Layout ab 80 % der Eintragsköpfe (Fortsetzungszeilen zählen nicht), sonst
+  `infer_layout`, ab 50 % angezeigt, sonst nur `message`. Ein gefundenes Layout bestimmt auch den Profilvorschlag. Spalten
+  bleiben je Sitzung fest (Rotation behält sie, fremde Zeilen landen in `message`); ein Profilwechsel tauscht sie erst mit
+  der neuen `viewGeneration` (`columnsRevision` steigt mit). Fortsetzungszeilen sind ganz `message`. Nur die ersten 16 KB
+  werden zerlegt, der Rest gehört zum letzten Feld. SOH (`\x01`, FIX) zeigt `display_text` als `|`.
 - **Datei-Identität unter Windows** über `GetFileInformationByHandle`, nicht Erstellzeit (File Tunneling).
 - **CSP:** `dangerousDisableAssetCspModification: ["style-src"]` ist nötig. Sonst ergänzt Tauri Nonces, `'unsafe-inline'`
   gilt nicht mehr und Angulars Komponenten-Styles fehlen.
 - **`backgroundThrottling: disabled`:** Ein Live-Viewer muss auch hinter anderen Fenstern aktuell bleiben.
 - **Grenzen:** höchstens 2³² Zeilen je Sitzung (Index dann 64 GB), Anzeige 128 KB je Zeile, Suche 1 MB je Zeile, Zeile ohne
-  Ende wird bei 16 MB geteilt. Truncation wird über die kleinere Größe erkannt; wird eine Datei geleert und zwischen zwei
+  Ende wird bei 16 MB geteilt. Felder: höchstens 12 Spalten aus JSON-/logfmt-Schlüsseln bzw. FIX-Tags, zerlegt werden 16 KB. Truncation wird über die kleinere Größe erkannt; wird eine Datei geleert und zwischen zwei
   Prüfungen über die alte Größe hinaus neu beschrieben, bleibt das unbemerkt.
 
 ## Arbeitsweise

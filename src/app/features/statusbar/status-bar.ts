@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/c
 import { formatBytes, formatCount } from '../../shared/format';
 import { LogSessionService } from '../sessions/log-session.service';
 import { statusPill } from './status-pill';
+import { formatSummary, partlyRecognised } from '../sessions/format-logic';
 
 @Component({
   selector: 'app-status-bar',
@@ -18,6 +19,9 @@ import { statusPill } from './status-pill';
         <span class="stale">Datei wurde geleert, Anzeige ist evtl. unvollständig</span>
       }
       <span class="spring"></span>
+      @if (partly()) {
+        <span class="stale" [title]="formatTitle()">Format nur teilweise erkannt</span>
+      }
       @if (pending(); as bytes) {
         <span title="Seit dem Einfrieren geschrieben, wird beim Fortsetzen nachgelesen"
           >+{{ bytes }} warten</span
@@ -102,6 +106,11 @@ export class StatusBarComponent {
     if (!session) return { label: '', cls: '' };
     return statusPill(session.status(), session.frozen(), session.follow());
   });
+
+  protected readonly partly = computed(() => partlyRecognised(this.session()?.columns() ?? null));
+  protected readonly formatTitle = computed(
+    () => formatSummary(this.session()?.columns() ?? null, this.sessions.profiles()) ?? '',
+  );
 
   protected readonly pending = computed(() => {
     const bytes = this.session()?.update().pendingBytes ?? 0;

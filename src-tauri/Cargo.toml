@@ -16,6 +16,8 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+# Local time zone for timestamps without a zone (timestamp.rs, shared with the merge of prompt 006).
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 encoding_rs = "0.8"
 # Fast newline scan while indexing; already in the tree through regex.
 memchr = "2"

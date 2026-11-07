@@ -2,7 +2,9 @@ import { Injectable } from '@angular/core';
 import { Channel } from '@tauri-apps/api/core';
 import { call } from '../backend/call';
 import {
+  ColumnSet,
   EntryRange,
+  FieldPreview,
   FilterInfo,
   FindHit,
   Level,
@@ -53,6 +55,15 @@ export class LogApi {
 
   setProfile(sessionId: number, profileId: string): Promise<FilterInfo> {
     return call('set_profile', { sessionId, profileId });
+  }
+
+  getColumns(sessionId: number): Promise<ColumnSet> {
+    return call('get_columns', { sessionId });
+  }
+
+  /** Tries a profile's layout on one line; the backend checks the profile first. */
+  previewFields(profile: Profile, line: string): Promise<FieldPreview> {
+    return call('preview_fields', { profile, line });
   }
 
   find(
