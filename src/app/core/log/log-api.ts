@@ -18,6 +18,8 @@ import {
   MergeSourceSpec,
   Overview,
   Profile,
+  ReportResult,
+  ReportSchema,
   RulePreview,
   SearchMode,
   SearchQuery,
@@ -183,5 +185,27 @@ export class LogApi {
   /** A rule tried on some lines (the whole line is the source); checks the rule, too. */
   previewExtractRule(rule: ExtractRule, lines: readonly string[]): Promise<RulePreview> {
     return call('preview_extract_rule', { rule, lines });
+  }
+
+  /**
+   * The dashboard of a tab is shown (prompt 012): builds its database the first time and keeps it up to date
+   * every 5 s while open. `fields`: column ids to store, `null` for the numbers.
+   */
+  openReport(sessionId: number, fields: readonly string[] | null): Promise<ReportSchema> {
+    return call('open_report', { sessionId, fields });
+  }
+
+  /** The dashboard is hidden: no more catching up. */
+  closeReport(sessionId: number): Promise<void> {
+    return call('close_report', { sessionId });
+  }
+
+  /** One read-only SQL query; a newer one of the same `slot` (panel) stops an older one. */
+  runReport(sessionId: number, sql: string, slot: string): Promise<ReportResult> {
+    return call('run_report', { sessionId, sql, slot });
+  }
+
+  getReportSchema(sessionId: number): Promise<ReportSchema> {
+    return call('get_report_schema', { sessionId });
   }
 }

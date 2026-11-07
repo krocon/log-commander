@@ -82,6 +82,8 @@ pub struct SessionUpdate {
     pub frozen_stale: bool,
     /// Per source of a merge (empty for a single file); `file_size` is their sum.
     pub sources: Vec<SourceUpdate>,
+    /// The dashboard database (prompt 012), once a dashboard was opened.
+    pub report: Option<ReportStatus>,
 }
 
 /// Live state of one source of a merge.
@@ -244,4 +246,75 @@ pub struct EntryDetail {
     /// Source of the entry (merge) and the byte offset of its head in that file.
     pub source: u8,
     pub byte_offset: u64,
+}
+
+/// Where the dashboard database of a session stands (prompt 012); in `SessionUpdate` once it exists.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReportState {
+    #[default]
+    Building,
+    /// The time index is built after the first pass.
+    Indexing,
+    Ready,
+    Error,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportStatus {
+    pub state: ReportState,
+    /// Share of the lines in the table (of those there are now).
+    pub progress: f32,
+    /// Rows (entry heads) in the table.
+    pub rows: u64,
+    /// Lines of the log the table covers.
+    pub lines: u64,
+    /// Changes when the table starts over.
+    pub generation: u64,
+    /// Why it started over: `epoch` (file truncated, rotated, re-sorted), `columns` (profile, rules),
+    /// `fields` (other fields chosen).
+    pub reason: Option<String>,
+    /// What went wrong (state `error`), e.g. a full disk.
+    pub message: Option<String>,
+    /// Free space is tight for the estimated size.
+    pub low_space: bool,
+    /// Size of the database file in bytes.
+    pub size: u64,
+}
+
+/// Rows of a dashboard query: values as JSON (numbers, text, null).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportResult {
+    pub columns: Vec<String>,
+    pub rows: Vec<Vec<serde_json::Value>>,
+    /// More rows than the limit (10 000) or too many bytes: the rest is missing.
+    pub truncated: bool,
+    pub elapsed_ms: f64,
+}
+
+/// A column of the table `log` for the help of the SQL editor.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SchemaColumn {
+    pub name: String,
+    pub sql_type: String,
+    pub description: String,
+    /// The column of the log view it comes from (fields only).
+    pub column: Option<String>,
+    pub kind: Option<crate::fields::ColumnKind>,
+    pub unit: Option<String>,
+    /// In the table now; others can be chosen.
+    pub included: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportSchema {
+    pub table: String,
+    pub columns: Vec<SchemaColumn>,
+    /// File names by `source`.
+    pub sources: Vec<String>,
+    pub status: Option<ReportStatus>,
 }

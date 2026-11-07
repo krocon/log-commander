@@ -44,6 +44,8 @@ export interface SessionUpdate {
   frozenStale: boolean;
   /** Per source of a merge (empty for a single file); `fileSize` is their sum. */
   sources: SourceUpdate[];
+  /** The dashboard database (prompt 012), once a dashboard was opened. */
+  report?: ReportStatus | null;
 }
 
 /** Live state of one source of a merge. */
@@ -273,3 +275,54 @@ export type FilterCondType = FilterCond['type'];
 export type FilterExpr =
   | { kind: 'group'; id: string; op: 'and' | 'or'; negate: boolean; children: FilterExpr[] }
   | { kind: 'cond'; id: string; negate: boolean; cond: FilterCond };
+
+// ---- Dashboard (prompt 012), mirrors ReportStatus, ReportResult, ReportSchema in model.rs ----
+
+export type ReportState = 'building' | 'indexing' | 'ready' | 'error';
+
+export interface ReportStatus {
+  state: ReportState;
+  /** Share of the lines in the table (of those there are now). */
+  progress: number;
+  /** Rows (entry heads) in the table. */
+  rows: number;
+  /** Lines of the log the table covers. */
+  lines: number;
+  /** Changes when the table starts over. */
+  generation: number;
+  /** Why it started over: `epoch`, `columns` or `fields`. */
+  reason: string | null;
+  message: string | null;
+  lowSpace: boolean;
+  size: number;
+}
+
+export type ReportValue = number | string | null;
+
+export interface ReportResult {
+  columns: string[];
+  rows: ReportValue[][];
+  /** More than 10 000 rows (or too many bytes): the rest is missing. */
+  truncated: boolean;
+  elapsedMs: number;
+}
+
+export interface SchemaColumn {
+  name: string;
+  sqlType: string;
+  description: string;
+  /** The column of the log view it comes from (fields only). */
+  column: string | null;
+  kind: ColumnKind | null;
+  unit: string | null;
+  /** In the table now; others can be chosen. */
+  included: boolean;
+}
+
+export interface ReportSchema {
+  table: string;
+  columns: SchemaColumn[];
+  /** File names by `source`. */
+  sources: string[];
+  status: ReportStatus | null;
+}

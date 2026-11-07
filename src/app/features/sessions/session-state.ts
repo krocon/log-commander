@@ -113,6 +113,13 @@ export class SessionState {
    */
   pendingReveal: number | null = null;
   jumpMark: JumpMark | null = null;
+  /**
+   * A line the dashboard jumped to that the filter hides (prompt 012): `G` shows it in the whole log, as long
+   * as the view was not scrolled since the jump.
+   */
+  revealHint: { line: number; mark: JumpMark } | null = null;
+  /** Log or dashboard of this tab (prompt 012); the log stays live below the dashboard. */
+  readonly mode = signal<'log' | 'dashboard'>('log');
   readonly currentHitLine = signal<number | null>(null);
   readonly findMessage = signal<string | null>(null);
 

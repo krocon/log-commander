@@ -73,6 +73,9 @@ writeFileSync(
       localHour(9),
     ),
 );
+// Dashboard (prompt 012): the Spring Boot sample once more, opened by the scenario through the path dialog.
+const dash = join(dir, 'dash.log');
+writeFileSync(dash, readFileSync(join(root, 'samples/spring-boot.log')));
 /** `HH:00` local for 09:00 UTC on that day, so both files mean the same moment without a zone. */
 function localHour(utcHour) {
   const d = new Date(Date.UTC(2026, 0, 15, utcHour, 0, 0));
@@ -129,6 +132,9 @@ function act(action) {
   switch (verb) {
     case 'append':
       appendFileSync(log, `${text}\n`);
+      break;
+    case 'appenddash':
+      appendFileSync(dash, `${text}\n`);
       break;
     case 'bulk': {
       const n = Number(text);

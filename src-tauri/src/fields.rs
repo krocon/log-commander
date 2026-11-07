@@ -532,6 +532,41 @@ impl FieldParser {
             .value(column - self.base_len, text, &spans, MAX_PARSE_BYTES)
     }
 
+    /// Several fields of a line at once, with one pass of the layout (the dashboard of prompt 012
+    /// reads every entry head). Same values as `field` for each column.
+    pub fn fields<'a>(&self, text: &'a str, wanted: &[usize]) -> Vec<Option<&'a str>> {
+        let part = &text[..floor_char_boundary(text, MAX_PARSE_BYTES)];
+        let mut spans = vec![[0usize; 2]; self.base_len];
+        let fits = self.fill(part, part.len() < text.len(), &mut spans);
+        let base: Vec<Option<&'a str>> = (0..self.base_len)
+            .map(|column| {
+                if fits {
+                    let [start, end] = spans[column];
+                    part.get(start..end)
+                } else {
+                    (column == self.fallback).then_some(text)
+                }
+            })
+            .collect();
+        if !fits {
+            spans.fill([0, 0]);
+            spans[self.fallback] = [0, text.len()];
+        }
+        wanted
+            .iter()
+            .map(|&column| {
+                if column < self.base_len {
+                    base[column]
+                } else if column < self.columns.len() {
+                    self.extract
+                        .value(column - self.base_len, text, &spans, MAX_PARSE_BYTES)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
     /// Whether a line fits the format completely.
     pub fn matches(&self, text: &str) -> bool {
         let mut spans = vec![[0usize; 2]; self.base_len];

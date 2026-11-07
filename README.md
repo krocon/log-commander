@@ -70,6 +70,16 @@ Like <code>tail -f</code> with a GUI: millions of lines, instant filters, no wai
   „Abschnitt ab hier“/„bis hier“ (`>`/`<`) for the selection. Errors (a broken regex, an unknown time) show at
   their condition. The level chips and the search stay on top as an AND; saved filters keep the tree. At most 64
   conditions.
+- **Dashboard** – charts over time from SQL: errors per minute, the error rate, a measurement such as `took` per
+  minute (mean and maximum), entries per file of a merge. `Cmd/Ctrl+Shift+D` or „▥ Dashboard“ lays it over the tab,
+  the log keeps running below. On first use a small SQLite database is built in the background from the index, one
+  row per entry (stack traces count once) with `line`, `ts`, `level`, `source` and the numbers of the format and of
+  the extracted fields, never the message; it follows the tail every 5 s while shown and goes with the tab. Panels
+  start from templates and show their SQL to change: line, area, bars, stacked bars, pie, table, single value, in a
+  grid. `bucket(ts, '1m')` groups by minute (`'30s'`, `'1h'`, `'1d'` …). Click a point or bar (or pick it with
+  `←`/`→` and `Enter`) to jump to the first line of that minute, a table row with a `line` column to that line, a bar
+  without time axis (`GROUP BY logger`) to filter on it. Queries only read: one statement, no `ATTACH`, no
+  `PRAGMA`, no extensions, at most 10,000 rows and 10 s. Dashboards are stored per format.
 - **Search** – filter or highlight, regular expressions, case sensitivity, jump between matches.
 - **Follow** – stays at the end while you are there; scroll up and it pauses and counts the new lines.
 - **Freeze** – holds a tab to read in peace: lines, counts and the position stay put while filters and search keep
@@ -85,6 +95,7 @@ Like <code>tail -f</code> with a GUI: millions of lines, instant filters, no wai
 | ![Merged files](docs/screenshots/merge.png) | ![Merge dialog](docs/screenshots/merge-dialog.png) |
 | ![Filter tree](docs/screenshots/filter-tree.png) | ![Narrow window](docs/screenshots/narrow.png) |
 | ![Fields dialog](docs/screenshots/fields.png) | ![Extracted columns](docs/screenshots/extracted.png) |
+| ![Dashboard](docs/screenshots/dashboard.png) | ![Dashboard with SQL and schema](docs/screenshots/dashboard-sql.png) |
 
 ## Install
 
@@ -109,6 +120,9 @@ log-commander /var/log/app.log /var/log/other.log
 | `D`, double click on a line | Detail panel with the whole entry; in it the arrows scroll the panel |
 | `↑`, `↓` on the panel's bar | Panel height (`Shift`: bigger steps, `Home`/`End`, double click: default) |
 | `Cmd/Ctrl+B` | Show or hide the sidebar |
+| `Cmd/Ctrl+Shift+D` | Dashboard of the tab, or back to the log |
+| `Cmd/Ctrl+Enter` in a panel's SQL | Run the query |
+| `←`, `→`, `Home`, `End`, `Enter` on a chart | Pick a point (values in the legend), jump to its first line |
 | `↑`, `↓`, `←`, `→`, `Home`, `End` in the tree | Move, open and close nodes; `Enter`/`Space` activates, `Enter` on „Aktiver Filter“ saves it, `Delete` removes a filter |
 | `←`, `→` on the sidebar's bar | Sidebar width (`Shift`: bigger steps, double click: default) |
 | `Shift+F10` | Column menu (show, hide, move, resize, reset) |
@@ -173,6 +187,7 @@ Measured on an Apple Silicon Mac, release build, with
 | `get_overview` (800 px, 1000 bookmarks) | 0.3 ms |
 | `find_level`, no FATAL in 5.1 million lines | 0.13 ms |
 | `get_lines`, 5000 lines with 0 / 4 / 16 extracted fields (`extract_integration`) | 7.8 / 11.8 / 12.8 ms |
+| Dashboard database: build / size (numbers only) / errors per minute (`report_integration`) | 12.8 s / 226 MB / 1.0 s |
 
 At 10,000 lines per second the UI's event loop was never blocked for more than 8 ms (debug build, `npm run e2e`).
 

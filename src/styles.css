@@ -71,6 +71,23 @@
   --ruler-warn: #f0a94b;
   --ruler-bookmark: #5aa2f7;
   --ruler-selection: #d7dce3;
+  /* Dashboard (prompt 012): series, series per level, grid lines. */
+  --chart-1: #5aa2f7;
+  --chart-2: #f0a94b;
+  --chart-3: #4cc38a;
+  --chart-4: #d98ee0;
+  --chart-5: #e5d35a;
+  --chart-6: #4fc9c9;
+  --chart-7: #f07f7f;
+  --chart-8: #a7b3ff;
+  --chart-lv-unknown: #98a2b0;
+  --chart-lv-trace: #8b95a3;
+  --chart-lv-debug: #6cc4d8;
+  --chart-lv-info: #5aa2f7;
+  --chart-lv-warn: #f0a94b;
+  --chart-lv-error: #ff5c5c;
+  --chart-lv-fatal: #e879f9;
+  --chart-grid: #2e343f;
 }
 /* @end */
 
@@ -139,6 +156,22 @@
   --ruler-warn: #975b00;
   --ruler-bookmark: #1a66d6;
   --ruler-selection: #1f2933;
+  --chart-1: #1a66d6;
+  --chart-2: #b35f00;
+  --chart-3: #0f7a4a;
+  --chart-4: #9a3fa6;
+  --chart-5: #7d6a00;
+  --chart-6: #00727a;
+  --chart-7: #c0392b;
+  --chart-8: #4f5bd5;
+  --chart-lv-unknown: #5a6573;
+  --chart-lv-trace: #5f6b7a;
+  --chart-lv-debug: #0b6e8c;
+  --chart-lv-info: #1a66d6;
+  --chart-lv-warn: #975b00;
+  --chart-lv-error: #c62828;
+  --chart-lv-fatal: #a21caf;
+  --chart-grid: #d3d7dd;
 }
 /* @end */
 

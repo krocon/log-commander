@@ -8,7 +8,7 @@ use crate::level::Level;
 use crate::merge::MergeSource;
 use crate::model::{
     ColumnSet, EntryDetail, EntryRange, FieldPreview, FilterInfo, FindHit, LogLine, MergeCandidate,
-    Overview, SessionInfo, SessionUpdate, Stats,
+    Overview, ReportResult, ReportSchema, SessionInfo, SessionUpdate, Stats,
 };
 use crate::profile::Profile;
 use crate::session::{LogSession, OpenOptions, SessionManager};
@@ -353,4 +353,50 @@ pub async fn preview_extract_rule(rule: ExtractRule, lines: Vec<String>) -> AppR
         crate::extract::preview(&rule, &lines)
     })
     .await
+}
+
+/// The dashboard of a tab is shown (prompt 012): builds the database the first time, keeps it up to
+/// date every 5 s while open. `fields`: column ids to store (`None`: the numbers).
+#[tauri::command]
+pub async fn open_report(
+    state: State<'_, SessionManager>,
+    session_id: u64,
+    fields: Option<Vec<String>>,
+) -> AppResult<ReportSchema> {
+    let session = session(&state, session_id)?;
+    blocking(move || session.open_report(fields)).await
+}
+
+/// The dashboard is hidden: no more catching up (the file stays until the tab closes).
+#[tauri::command]
+pub async fn close_report(state: State<'_, SessionManager>, session_id: u64) -> AppResult<()> {
+    let session = session(&state, session_id)?;
+    blocking(move || {
+        session.close_report();
+        Ok(())
+    })
+    .await
+}
+
+/// One read-only SQL query on the dashboard database; a newer query of the same `slot` (panel)
+/// stops an older one.
+#[tauri::command]
+pub async fn run_report(
+    state: State<'_, SessionManager>,
+    session_id: u64,
+    sql: String,
+    slot: Option<String>,
+) -> AppResult<ReportResult> {
+    let session = session(&state, session_id)?;
+    blocking(move || session.run_report(&sql, slot.as_deref().unwrap_or(""))).await
+}
+
+/// Columns of the dashboard table and the fields that could be added.
+#[tauri::command]
+pub async fn get_report_schema(
+    state: State<'_, SessionManager>,
+    session_id: u64,
+) -> AppResult<ReportSchema> {
+    let session = session(&state, session_id)?;
+    blocking(move || session.report_schema()).await
 }

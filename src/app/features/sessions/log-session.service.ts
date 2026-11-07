@@ -4,6 +4,7 @@ import {
   ExtractRule,
   FilterCond,
   FilterInfo,
+  LEVELS,
   Level,
   MergeSourceSpec,
   Profile,
@@ -363,7 +364,11 @@ export class LogSessionService {
    * selection stays; the scroll waits for the new view (`pendingReveal`).
    */
   async revealInFullLog(session: SessionState): Promise<void> {
-    const selection = session.selection();
+    const hint = session.revealHint;
+    session.revealHint = null;
+    // A line the dashboard jumped to and the filter hides goes first, while the view is still there.
+    const hinted = hint && session.scroll() === hint.mark.scroll ? hint.line : null;
+    const selection = hinted !== null ? { anchor: hinted } : session.selection();
     if (!selection) {
       this.showFindMessage(session, 'Keine Zeile gewählt');
       return;
@@ -381,6 +386,78 @@ export class LogSessionService {
     };
     await this.switchFilter(session, fullLogOf(kept), selection.anchor);
     session.keptFilter.set(kept);
+  }
+
+  // ---- Dashboard (prompt 012) ----
+
+  /** Log or dashboard for a tab. */
+  setMode(session: SessionState, mode: 'log' | 'dashboard'): void {
+    session.mode.set(mode);
+  }
+
+  toggleDashboard(session: SessionState): void {
+    this.setMode(session, session.mode() === 'dashboard' ? 'log' : 'dashboard');
+  }
+
+  /**
+   * From the dashboard to a line (0-based index): back to the log, scrolled there like `E`/`W`, the selection
+   * stays. A line the filter hides: to the next visible one, and `G` shows it in the whole log.
+   */
+  async showLine(session: SessionState, line: number): Promise<void> {
+    try {
+      const position = await this.api.getPosition(session.id, line);
+      const [there] = await this.api.getLines(session.id, 'filtered', position, 1);
+      this.setMode(session, 'log');
+      session.jumpTo(position, line);
+      if (there?.line !== line) {
+        session.revealHint = {
+          line,
+          mark: session.jumpMark as NonNullable<typeof session.jumpMark>,
+        };
+        this.showFindMessage(
+          session,
+          `Zeile ${line + 1} ist ausgefiltert – G zeigt sie im Gesamtlog`,
+        );
+      } else {
+        session.revealHint = null;
+        this.showFindMessage(session, `Zeile ${line + 1}`);
+      }
+    } catch (e) {
+      this.showError(toAppError(e));
+    }
+  }
+
+  /**
+   * A bar without a time axis (`GROUP BY logger`) as a filter (prompt 010): level → level chips, source →
+   * source chips of a merge, a field of the log → field condition. Back to the log.
+   */
+  async filterFromDashboard(
+    session: SessionState,
+    column: { sql: string; log: string | null },
+    value: string,
+  ): Promise<boolean> {
+    const name = column.sql.toLowerCase();
+    if (name === 'level' && (LEVELS as readonly string[]).includes(value)) {
+      this.setMode(session, 'log');
+      await this.setLevels(session, new Set([value as Level]));
+      return true;
+    }
+    if (session.isMerge && (name === 'source' || name === 'quelle')) {
+      const index = session.sources.findIndex(
+        (s) => String(s.index) === value || s.fileName === value,
+      );
+      if (index >= 0) {
+        this.setMode(session, 'log');
+        await this.setSources(session, 1 << session.sources[index].index);
+        return true;
+      }
+    }
+    if (column.log) {
+      this.setMode(session, 'log');
+      this.filterByValue(session, column.log, value);
+      return true;
+    }
+    return false;
   }
 
   /** Back to the filter `revealInFullLog` kept, showing the selected line if the filter has it. */
