@@ -20,7 +20,16 @@
           const word = match[1];
           level = word === 'WARNING' ? 'WARN' : word === 'CRITICAL' ? 'FATAL' : word;
         }
-        return { line: index, level, text: line, isContinuation, truncated: false, matches: [] };
+        return {
+          line: index,
+          level,
+          text: line,
+          isContinuation,
+          truncated: false,
+          matches: [],
+          // One column (`message`) in this stand-in: the whole line.
+          fields: [[0, line.length]],
+        };
       });
   }
 
@@ -44,6 +53,7 @@
       fileSize: session.size,
       epoch: 0,
       viewGeneration: session.generation,
+      columnsRevision: 1,
       filterPending: false,
       filterProgress: 1,
       profileId: 'log4j',
@@ -123,6 +133,18 @@
       );
       return hit < 0 ? null : { line: all[hit].line, position: hit, wrapped: false };
     },
+    get_columns: () => ({
+      revision: 1,
+      confidence: 1,
+      profileId: 'log4j',
+      inferredLayout: null,
+      columns: [{ id: 'message', label: 'Nachricht', kind: 'text' }],
+    }),
+    preview_fields: ({ line }) => ({
+      columns: [{ id: 'message', label: 'Nachricht', kind: 'text' }],
+      fields: [[0, line.length]],
+      matched: false,
+    }),
     get_position: ({ line }) => line,
     get_entry_range: ({ line }) => ({ first: line, last: line }),
     list_profiles: () => PROFILES,

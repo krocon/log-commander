@@ -106,15 +106,20 @@ pub fn strip_ansi(text: &str) -> Cow<'_, str> {
     Cow::Owned(out)
 }
 
-/// Text of a raw line as the user sees it.
+/// Text of a raw line as the user sees it. The FIX separator SOH (`\x01`) shows as `|`, one UTF-16
+/// unit for one, so spans stay where they are.
 pub fn display_text<'a>(raw: &'a [u8], encoding: Encoding) -> Cow<'a, str> {
-    match encoding.decode(raw) {
+    let text = match encoding.decode(raw) {
         Cow::Borrowed(text) => strip_ansi(text),
         Cow::Owned(text) => match strip_ansi(&text) {
             Cow::Borrowed(_) => Cow::Owned(text),
             Cow::Owned(stripped) => Cow::Owned(stripped),
         },
+    };
+    if memchr::memchr(0x01, text.as_bytes()).is_none() {
+        return text;
     }
+    Cow::Owned(text.replace('\u{1}', "|"))
 }
 
 #[cfg(test)]
@@ -153,6 +158,14 @@ mod tests {
         assert_eq!(Encoding::Latin1.decode(b"K\xF6ln"), "Köln");
         assert_eq!(Encoding::Utf16Le.decode(b"h\0i\0"), "hi");
         assert_eq!(Encoding::Utf16Be.decode(b"\0h\0i"), "hi");
+    }
+
+    #[test]
+    fn fix_separator_shows_as_a_bar() {
+        assert_eq!(
+            display_text(b"8=FIX.4.4\x0135=A\x01", Encoding::Utf8),
+            "8=FIX.4.4|35=A|"
+        );
     }
 
     #[test]

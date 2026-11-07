@@ -5,6 +5,7 @@
 //! - `tail`: following a file (notify + polling, partial lines, truncation, rotation)
 //! - `indexer`: line index, block splitter, reading text back
 //! - `level`, `profile`: level detection
+//! - `fields`, `timestamp`: format detection, fields of a line, timestamps
 //! - `filter`: filtered line list, text search
 //! - `commands`: the thin Tauri command layer; everything else is free of Tauri
 
@@ -13,6 +14,7 @@ pub mod commands;
 pub mod e2e;
 pub mod encoding;
 pub mod error;
+pub mod fields;
 pub mod filter;
 pub mod indexer;
 pub mod level;
@@ -21,6 +23,7 @@ pub mod platform;
 pub mod profile;
 pub mod session;
 pub mod tail;
+pub mod timestamp;
 
 use session::SessionManager;
 use tauri::menu::{Menu, MenuItem, SubmenuBuilder};
@@ -60,6 +63,8 @@ pub fn run() {
             commands::get_lines,
             commands::set_filter,
             commands::set_profile,
+            commands::get_columns,
+            commands::preview_fields,
             commands::get_stats,
             commands::find_next,
             commands::find_prev,

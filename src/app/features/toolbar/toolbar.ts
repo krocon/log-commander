@@ -22,6 +22,7 @@ import {
   toggleLevel,
 } from '../sessions/filter-logic';
 import { LogSessionService } from '../sessions/log-session.service';
+import { formatSummary } from '../sessions/format-logic';
 
 const SEARCH_DEBOUNCE_MS = 200;
 
@@ -144,7 +145,7 @@ const SEARCH_DEBOUNCE_MS = 200;
       <select
         aria-label="Profil"
         [hidden]="!s"
-        title="Format-Profil"
+        [title]="profileTitle()"
         [disabled]="!s"
         (change)="onProfile($event)"
       >
@@ -260,6 +261,12 @@ export class ToolbarComponent implements OnInit, OnDestroy {
   protected readonly visibleLevels = computed<Level[]>(() => {
     const update = this.session()?.update();
     return LEVELS.filter((l) => l !== 'UNKNOWN' || (update?.counts.UNKNOWN ?? 0) > 0);
+  });
+
+  /** The profile plus how well the detected format fits, e.g. „Log4j · 97 %“. */
+  protected readonly profileTitle = computed(() => {
+    const summary = formatSummary(this.session()?.columns() ?? null, this.sessions.profiles());
+    return summary ? `Format-Profil: ${summary}` : 'Format-Profil';
   });
 
   protected readonly themeLabel = computed(() => {

@@ -13,6 +13,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const TIMEOUT: Duration = Duration::from_secs(10);
+const GENERIC_PATTERN_FOR_TESTS: &str = r"(?i)\b(?P<level>TRACE|DEBUG|INFO|WARN|ERROR|FATAL)\b";
 
 fn generic() -> Profile {
     builtin_profiles()
@@ -324,6 +325,7 @@ fn profile_change_recomputes_the_levels() {
         json: false,
         syslog_pri: false,
         head: None,
+        ..Profile::default()
     };
     let info = fx.session.set_profile(&profile).unwrap();
     fx.wait("relevel", |s| {
@@ -478,6 +480,37 @@ fn measure_500mb() {
         "get_lines (200 lines, random): {:?} each",
         start.elapsed() / pages as u32
     );
+
+    // Fields: 5000 lines per call with the detected layout and without one.
+    let columns = fx.session.columns();
+    assert_eq!(columns.profile_id, "log4j");
+    let time_pages = |label: &str| {
+        let start = Instant::now();
+        let calls = 20;
+        for call in 0..calls {
+            let lines = fx.session.get_lines(false, call * 200_000, 5000).unwrap();
+            assert_eq!(lines.len(), 5000);
+        }
+        println!(
+            "get_lines (5000 lines, {label}): {:?} each",
+            start.elapsed() / calls as u32
+        );
+    };
+    time_pages("with layout");
+    let plain = Profile {
+        id: "plain".into(),
+        name: "Plain".into(),
+        patterns: vec![GENERIC_PATTERN_FOR_TESTS.into()],
+        // No layout and no inference: the JSON scanner gives up at the first byte.
+        structure: log_commander_lib::profile::Structure::Json,
+        ..Profile::default()
+    };
+    let info = fx.session.set_profile(&plain).unwrap();
+    fx.wait("plain profile", |s| {
+        s.view_generation == info.view_generation && !s.filter_pending
+    });
+    assert_eq!(fx.session.columns().columns.len(), 1);
+    time_pages("without layout");
 
     // Tail with 10 000 lines/s for 3 seconds.
     let info = fx
@@ -706,4 +739,164 @@ fn a_file_deleted_during_a_freeze_stays_visible_until_resuming() {
 
     fx.session.set_frozen(false);
     fx.wait("reported", |s| s.status == Status::FileMissing);
+}
+
+/// Field values of a line by column id, empty ones left out.
+fn field_values(fx: &Fixture, line: usize) -> Vec<(String, String)> {
+    let columns = fx.session.columns().columns;
+    let lines = fx.session.get_lines(false, line, 1).unwrap();
+    let line = &lines[0];
+    let units: Vec<u16> = line.text.encode_utf16().collect();
+    assert_eq!(line.fields.len(), columns.len());
+    line.fields
+        .iter()
+        .zip(columns)
+        .filter(|([s, e], _)| e > s)
+        .map(|([s, e], c)| {
+            (
+                c.id,
+                String::from_utf16(&units[*s as usize..*e as usize]).unwrap(),
+            )
+        })
+        .collect()
+}
+
+fn value<'a>(values: &'a [(String, String)], id: &str) -> Option<&'a str> {
+    values
+        .iter()
+        .find(|(k, _)| k == id)
+        .map(|(_, v)| v.as_str())
+}
+
+#[test]
+fn fields_for_utf16_lines_and_continuations() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("utf16.log");
+    let text = "2024-01-15 10:00:00,123 ERROR [wörker] c.ä.App - Größe 😀 kaputt\r\n\tat a.B(B.java:1)\r\n2024-01-15 10:00:01,000 INFO [main] c.a.App - ok\r\n";
+    let mut bytes = vec![0xFF, 0xFE];
+    bytes.extend(text.encode_utf16().flat_map(u16::to_le_bytes));
+    fs::write(&path, bytes).unwrap();
+    let fx = open(&path, true);
+    fx.wait("loaded", |s| s.total_lines == 3);
+    let set = fx.session.columns();
+    assert_eq!(set.profile_id, "log4j");
+    assert!(set.revision >= 1);
+    assert_eq!(set.confidence, 1.0);
+    let v = field_values(&fx, 0);
+    assert_eq!(value(&v, "thread"), Some("wörker"));
+    assert_eq!(value(&v, "logger"), Some("c.ä.App"));
+    assert_eq!(value(&v, "message"), Some("Größe 😀 kaputt"));
+    // The stack trace line is all message.
+    let v = field_values(&fx, 1);
+    assert_eq!(
+        v,
+        vec![("message".to_string(), "\tat a.B(B.java:1)".to_string())]
+    );
+}
+
+#[test]
+fn rotation_keeps_the_layout_and_other_lines_fall_back_to_the_message() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("app.log");
+    fs::write(&path, "2024-01-15 10:00:00,123 INFO [main] a.B - one\n2024-01-15 10:00:01,123 WARN [main] a.B - two\n").unwrap();
+    let fx = open(&path, true);
+    fx.wait("loaded", |s| s.total_lines == 2);
+    let revision = fx.session.columns().revision;
+    fs::rename(&path, dir.path().join("app.log.1")).unwrap();
+    fs::write(&path, "{\"level\":\"info\",\"msg\":\"json now\"}\n").unwrap();
+    fx.wait("rotated", |s| s.total_lines == 3);
+    assert_eq!(fx.session.columns().revision, revision);
+    assert_eq!(value(&field_values(&fx, 0), "message"), Some("one"));
+    assert_eq!(
+        field_values(&fx, 2),
+        vec![(
+            "message".to_string(),
+            "{\"level\":\"info\",\"msg\":\"json now\"}".to_string()
+        )]
+    );
+}
+
+#[test]
+fn a_profile_change_brings_new_columns_with_a_new_view_generation() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("app.log");
+    fs::write(&path, "ERROR:root:boom\nINFO:db:ok\n").unwrap();
+    let fx = open(&path, true);
+    fx.wait("loaded", |s| s.total_lines == 2);
+    let before = fx.session.columns();
+    assert_eq!(before.profile_id, "python");
+    assert_eq!(fx.session.stats().columns_revision, before.revision);
+    let stats = fx.session.stats();
+
+    let custom = Profile {
+        id: "mine".into(),
+        name: "Mine".into(),
+        patterns: vec!["^(?P<level>ERROR|INFO):".into()],
+        layouts: vec!["^(?P<level>[A-Z]+):(?P<source>[a-z]+):(?P<message>.*)$".into()],
+        ..Profile::default()
+    };
+    let info = fx.session.set_profile(&custom).unwrap();
+    fx.wait("new profile", |s| {
+        s.view_generation == info.view_generation && !s.filter_pending
+    });
+    let after = fx.session.stats();
+    assert!(after.view_generation != stats.view_generation);
+    assert_eq!(after.columns_revision, before.revision + 1);
+    let set = fx.session.columns();
+    assert_eq!(set.profile_id, "mine");
+    let ids: Vec<&str> = set.columns.iter().map(|c| c.id.as_str()).collect();
+    assert_eq!(ids, ["level", "source", "message"]);
+    assert_eq!(value(&field_values(&fx, 1), "source"), Some("db"));
+
+    // A broken layout is refused like a broken level regex.
+    let broken = Profile {
+        layouts: vec!["(".into()],
+        ..custom
+    };
+    let err = fx.session.set_profile(&broken).unwrap_err();
+    assert_eq!(
+        err.code,
+        log_commander_lib::error::ErrorCode::InvalidProfile
+    );
+}
+
+#[test]
+fn empty_binary_and_cut_lines_give_fields_without_errors() {
+    let dir = tempfile::tempdir().unwrap();
+    let empty = dir.path().join("empty.log");
+    fs::write(&empty, "").unwrap();
+    let fx = open(&empty, true);
+    fx.wait("live", |s| s.status == Status::Live);
+    assert_eq!(fx.session.columns().columns.len(), 1);
+    // The first lines arrive later: the format is detected then.
+    append(&empty, "2024-01-15 10:00:00,123 INFO [main] a.B - late\n");
+    fx.wait("late line", |s| {
+        s.total_lines == 1 && s.columns_revision >= 1
+    });
+    assert_eq!(fx.session.columns().profile_id, "log4j");
+    assert_eq!(value(&field_values(&fx, 0), "message"), Some("late"));
+
+    let binary = dir.path().join("binary.log");
+    let bytes: Vec<u8> = (0..20_000u32).map(|i| (i * 7919 % 256) as u8).collect();
+    fs::write(&binary, bytes).unwrap();
+    let fx = open(&binary, true);
+    fx.wait("live", |s| s.status == Status::Live);
+    let total = fx.session.stats().total_lines as usize;
+    let lines = fx.session.get_lines(false, 0, total).unwrap();
+    let columns = fx.session.columns().columns.len();
+    assert!(lines.iter().all(|l| l.fields.len() == columns));
+
+    // A line over the display limit: the last field ends at the end of the text that was sent.
+    let long = dir.path().join("long.log");
+    let line = format!(
+        "2024-01-15 10:00:00,123 INFO [main] a.B - {}\n",
+        "ä".repeat(100_000)
+    );
+    fs::write(&long, line).unwrap();
+    let fx = open(&long, true);
+    fx.wait("live", |s| s.status == Status::Live);
+    let got = &fx.session.get_lines(false, 0, 1).unwrap()[0];
+    assert!(got.truncated);
+    let end = got.text.encode_utf16().count() as u32;
+    assert_eq!(got.fields.iter().map(|f| f[1]).max(), Some(end));
 }

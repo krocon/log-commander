@@ -1,6 +1,7 @@
 import { Signal, computed, linkedSignal, signal } from '@angular/core';
 import { LogApi } from '../../core/log/log-api';
 import {
+  ColumnSet,
   Level,
   SearchMode,
   SearchQuery,
@@ -10,6 +11,7 @@ import {
 } from '../../core/log/log.models';
 import { nextDisplayedLines } from './displayed-lines';
 import { ALL_LEVELS } from './filter-logic';
+import { isNewerColumns } from './format-logic';
 import { PageCache } from './page-cache';
 
 export interface ScrollPos {
@@ -33,6 +35,9 @@ export class SessionState {
   readonly suggestedProfileId: string;
 
   readonly update = signal<SessionUpdate>(null as unknown as SessionUpdate);
+  /** How lines split into fields; reloaded when `columnsRevision` changes. */
+  readonly columns = signal<ColumnSet | null>(null);
+  private columnsRequested = -1;
   readonly cache: PageCache;
 
   readonly levels = signal<ReadonlySet<Level>>(ALL_LEVELS);
@@ -129,6 +134,7 @@ export class SessionState {
     );
     this.update.set(info.update);
     this.seenErrors = errorCount(info.update);
+    this.loadColumns(info.update.columnsRevision);
   }
 
   applyUpdate(next: SessionUpdate): void {
@@ -156,6 +162,7 @@ export class SessionState {
       this.showTransient(next.status);
     }
     this.update.set(next);
+    if (next.columnsRevision !== prev.columnsRevision) this.loadColumns(next.columnsRevision);
     if (viewChanged && !this.follow()) this.pausedAtCount.set(next.filteredLines);
   }
 
@@ -186,6 +193,20 @@ export class SessionState {
           if (this.scroll() === requestedAt) this.scroll.set({ top, subPx: 0 });
         });
     }
+  }
+
+  private loadColumns(revision: number): void {
+    if (revision <= this.columnsRequested) return;
+    this.columnsRequested = revision;
+    this.api
+      .getColumns(this.id)
+      .then((set) => {
+        if (isNewerColumns(this.columns(), set)) this.columns.set(set);
+      })
+      .catch(() => {
+        // Without columns the view stays as it is; the next revision asks again.
+        if (this.columnsRequested === revision) this.columnsRequested = revision - 1;
+      });
   }
 
   private showTransient(status: Status): void {

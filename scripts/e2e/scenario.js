@@ -110,6 +110,23 @@
     click($$('.tab .title').find((t) => t.textContent.includes('e2e.log')));
     await waitFor('lines rendered', () => rowTexts().some((t) => t.includes('Starting ShopApplication')));
     await waitFor('counters', () => count('ERROR') === 8 && count('FATAL') === 1 && count('WARN') === 1);
+    // Format detection (prompt 008): the Spring Boot sample splits into the Log4j columns.
+    const columns = await invoke('get_columns', { sessionId: 1 });
+    const ids = columns.columns.map((c) => c.id).join(',');
+    if (columns.profileId !== 'log4j' || columns.confidence < 0.99) {
+      throw new Error(`format: ${columns.profileId} ${columns.confidence}`);
+    }
+    if (ids !== 'timestamp,level,pid,thread,logger,message') throw new Error(`columns: ${ids}`);
+    await report(`PASS format detected: ${columns.profileId} ${Math.round(columns.confidence * 100)} %, columns ${ids}`);
+    const [firstLine] = await invoke('get_lines', { sessionId: 1, view: 'all', start: 0, count: 1 });
+    const value = (id) => {
+      const [start, end] = firstLine.fields[columns.columns.findIndex((c) => c.id === id)];
+      return firstLine.text.slice(start, end);
+    };
+    if (value('thread') !== 'main' || value('message') !== 'Starting ShopApplication v2.4.1 using Java 21') {
+      throw new Error(`fields: ${JSON.stringify(firstLine.fields)}`);
+    }
+    await report('PASS fields of the first line');
     await waitFor('text keeps its spaces', () => getComputedStyle(rows()[0]).whiteSpace === 'pre');
     await waitFor('text is exact, without added spaces', () =>
       rowTexts()[0] === '2026-01-15T10:00:00.123+01:00  INFO 4711 --- [           main] c.a.shop.ShopApplication                 : Starting ShopApplication v2.4.1 using Java 21',
@@ -261,13 +278,24 @@
     const form = $('.profile-form');
     const [nameInput, patternInput] = form.querySelectorAll('input');
     const mappingInput = form.querySelector('textarea');
+    const formButton = (text) => [...form.querySelectorAll('button')].find((b) => b.textContent.trim().startsWith(text));
+    // Layout preview (prompt 008): the backend splits the sample line, spans in UTF-16.
+    const layoutsInput = form.querySelectorAll('textarea')[1];
+    const sampleInput = form.querySelectorAll('input')[2];
+    layoutsInput.value = '^(?P<level>[A-Z]+) (?P<message>.*)$';
+    sampleInput.value = 'WARN größer 😀 ok';
+    click(formButton('Testen'));
+    await waitFor('layout preview splits the sample line', () =>
+      [...form.querySelectorAll('.preview dd')].map((d) => d.textContent).join('|') === 'WARN|größer 😀 ok',
+    );
+    layoutsInput.value = '';
     nameInput.value = 'Mine';
     patternInput.value = '^no level group';
-    click(form.querySelector('button'));
+    click(formButton('Profil'));
     await waitFor('bad regex is refused', () => form.querySelector('.error')?.textContent.includes('level'));
     patternInput.value = ' : (?P<level>back|bulk) ';
     mappingInput.value = 'back=FATAL\nbulk=DEBUG';
-    click(form.querySelector('button'));
+    click(formButton('Profil'));
     await waitFor('profile accepted', () => !form.querySelector('.error') && $('.profile-row')?.textContent.includes('Mine'));
     $('dialog').close();
     await waitFor('settings closed', () => !$('dialog[open]'));

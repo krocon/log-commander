@@ -16,6 +16,7 @@ const line = (n: number, extra: Partial<LogLine> = {}): LogLine =>
     isContinuation: false,
     text: 'x',
     matches: [],
+    fields: [],
     truncated: false,
     ...extra,
   }) as LogLine;

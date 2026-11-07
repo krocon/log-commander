@@ -1,0 +1,8 @@
+2026-01-15 10:00:00.1234|INFO|Shop.Api.Program|Application starting
+2026-01-15 10:00:00.5678|DEBUG|Shop.Api.Startup|Configuring services from appsettings.Production.json
+2026-01-15 10:00:01.0021|INFO|Microsoft.Hosting.Lifetime|Now listening on: https://[::]:443
+2026-01-15 10:00:05.7712|TRACE|Shop.Api.Orders.OrderController|GET /api/orders/42 from 10.0.3.17
+2026-01-15 10:00:06.0093|WARN|Shop.Data.ConnectionPool|Pool usage at 87%, 3 connections free
+2026-01-15 10:00:07.3341|ERROR|Shop.Api.Orders.OrderService|Could not place order 4242: timeout after 30000 ms
+2026-01-15 10:00:07.3342|FATAL|Shop.Data.Database|Database connection lost
+2026-01-15 10:00:08.0020|INFO|Shop.Api.Orders.OrderService|Order 4243 placed
