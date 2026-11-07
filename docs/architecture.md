@@ -1,6 +1,6 @@
 # Architektur
 
-Stand: Verkettete Filter (Prompt 010), Overview Ruler und Navigation (Prompt 007), Dateien zusammenführen (Prompt 006), Seitenleiste (Prompt 005), Detail-Panel (Prompt 004), Spaltenansicht (Prompt 009) und Formaterkennung (Prompt 008) auf Basis des Startauftrags, des Flacker-Fixes (001), des Freeze-Buttons (002) und
+Stand: Felder aus der Nachricht (Prompt 011), Verkettete Filter (Prompt 010), Overview Ruler und Navigation (Prompt 007), Dateien zusammenführen (Prompt 006), Seitenleiste (Prompt 005), Detail-Panel (Prompt 004), Spaltenansicht (Prompt 009) und Formaterkennung (Prompt 008) auf Basis des Startauftrags, des Flacker-Fixes (001), des Freeze-Buttons (002) und
 der GuiExpert Table (003). Dieses Dokument beschreibt
 Entscheidungen, nicht Wünsche. Geplantes steht in `docs/roadmap.md` und in `prompts/`.
 
@@ -24,6 +24,7 @@ Entscheidungen, nicht Wünsche. Geplantes steht in `docs/roadmap.md` und in `pro
 │  indexer.rs    LineIndex (16 Byte/Zeile), LineSplitter, LineReader    │
 │  level.rs / profile.rs   Level-Erkennung, Profile, Vorschlag          │
 │  fields.rs / timestamp.rs   Format, Felder je Zeile, Zeitstempel      │
+│  extract.rs    extrahierte Felder: Regeln je Profil, Werte, Vorschläge│
 │  merge.rs      mehrere Dateien als eine Sitzung (Merger, Worker)      │
 │  filter.rs     gefilterte Liste (inkrementell), Textsuche             │
 │  filter_expr.rs  Filterbaum als ein Ausdruck: Blätter als Bitmaske    │
@@ -75,6 +76,7 @@ Entscheidungen, nicht Wünsche. Geplantes steht in `docs/roadmap.md` und in `pro
 | Rotation und Truncation | Datei-Identität je OS (`platform.rs`; Windows `GetFileInformationByHandle`, nicht die Erstellzeit, wegen File Tunneling), Truncation über die kleinere Größe | Erkennt `logrotate` (umbenennen) und `copytruncate`. Grenze: Leeren und Neuschreiben über die alte Größe hinaus zwischen zwei Prüfungen bleibt unbemerkt. |
 | Beobachten | `notify` plus Polling (250 ms, bei aktivem Schreiber 100 ms) | `notify` ist auf Netzlaufwerken und in Docker-Volumes unzuverlässig. |
 | Felder | Beim Ausliefern in `get_lines`, nicht beim Indexieren: Spannen `[start, end)` in UTF-16 je Spalte. Format aus 200 Zeilen beim ersten Block (`detect_format`): bestes eingebautes Layout ab 80 % der Eintragsköpfe, sonst Inferenz (Trenner oder Zeitstempel/Level/Thread/Logger), sonst nur `message`. Layouts sind Teil der `Profile` (`layouts`, `structure` für JSON, logfmt, FIX, W3C) | Der Index bleibt bei 16 Byte, Filter, Suche und Tail werden nicht langsamer. Spalten bleiben je Sitzung fest, ein Profilwechsel tauscht sie mit der neuen `viewGeneration`. Prompt 008. |
+| Extrahierte Felder | Regeln `{ id, name, column, pattern, kind, unit }` je Profil in den Settings, im Backend im `RuleBook` (geteilt von allen Sitzungen, `set_extract_rules` wirkt sofort auf alle Tabs des Profils, `load_extract_rules` beim Start). `FieldParser::with_rules` hängt die Spalten (`kind` `percent`/`duration`/`size`/`number`/`text`, `unit`, `rule`) hinter die des Formats; neue `columnsRevision` und `viewGeneration`, die Datei wird nicht neu gelesen. Regel = Regex mit genau einer Gruppe, erster Treffer in der Spanne der Quellspalte (erste 16 KB), Spannen dürfen die Nachricht überlappen. Fortsetzungszeilen ohne Extraktion. Ab 5 Regeln einer Quelle entscheidet ein `RegexSet`, welche laufen. Werte für Vergleiche über `parse_value` in Basiseinheit (s, Byte mit 1024er-Stufen, Prozent); unklare Zahlen (`1,234`) fehlen. Vorschläge (`suggest_fields`, blocking): bis 2000 Köpfe gleichmäßig über die Datei, `name=wert`, `name: wert`, `wort wert einheit`; weg fallen Namen von Spalten, IDs (Name oder fast eindeutige Ganzzahlen), Zeiten, Konstanten und Felder unter 5 %; höchstens 10. Im Frontend Hinweis in der Statusleiste (einmal je Profil), Dialog „Felder“, „Spalte aus Auswahl“ (`rule-from-selection.ts`) mit Vorschau über das Backend | Ein Index je Feld kostete Speicher je Zeile; eine Regex je sichtbare Zeile ist billig (5000 Zeilen: 7,8 → 11,8 ms mit 4, 12,8 ms mit 16 Regeln). Vorschlagen statt still anlegen: Spalten bleiben fest (008). Prompt 011. |
 | Jobs | Filter und Neu-Leveln laufen in eigenen Threads, abbrechbar über eine Generation. Die letzten Zeilen werden unter der Sperre nachgezogen | Kein Halt im Tail, keine Zeile fällt zwischen Liste und Ende. |
 | Fehler | `AppError { code, message }` mit `snake_case`-Codes (`not_found`, `permission_denied`, `invalid_search`, `too_large`, …), gespiegelt in `app/core/errors/` | Stabile Codes für deutsche UI-Texte, die Originalmeldung bleibt als Detail. |
 | Backend-Zugriff | `LogApi` im Frontend, `invoke()` nur in `call.ts` | Ein Ort für die Fehlerabbildung und den Fall „kein Backend“ (Browser, Screenshots). |
@@ -97,6 +99,8 @@ Entscheidungen, nicht Wünsche. Geplantes steht in `docs/roadmap.md` und in `pro
 - Anzeige 128 KB je Zeile, Suche 1 MB je Zeile. Eine Zeile ohne Ende wird bei 16 MB geteilt.
 - Felder: zerlegt werden die ersten 16 KB einer Zeile, höchstens 12 Spalten aus JSON-/logfmt-Schlüsseln bzw. FIX-Tags.
   Nach einer Rotation mit anderem Format fallen die neuen Zeilen auf `message` zurück.
+- Extrahierte Felder: höchstens 32 Regeln je Profil, ein Treffer je Zeile, keine Felder aus Fortsetzungszeilen. Eine Regel,
+  die in einer anderen Datei desselben Profils mit einer Spalte kollidiert (JSON-Schlüssel), fehlt dort.
 - Detail-Panel: höchstens 1 MiB Text je Eintrag (Kopieren ohne diese Grenze), formatiert wird bis 256 KB.
 - `get_lines` liefert höchstens 5000 Zeilen je Aufruf. Kopieren höchstens 1 Mio. Zeilen bzw. 256 MB.
 - Mehrere Rotationen während eines Freeze: Zwischenstände fehlen.

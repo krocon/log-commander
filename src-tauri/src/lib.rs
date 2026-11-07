@@ -15,6 +15,7 @@ pub mod commands;
 pub mod e2e;
 pub mod encoding;
 pub mod error;
+pub mod extract;
 pub mod fields;
 pub mod filter;
 pub mod filter_expr;
@@ -88,6 +89,10 @@ pub fn run() {
             commands::set_frozen,
             commands::list_profiles,
             commands::set_custom_profiles,
+            commands::set_extract_rules,
+            commands::load_extract_rules,
+            commands::suggest_fields,
+            commands::preview_extract_rule,
             #[cfg(debug_assertions)]
             e2e::e2e_report,
         ])

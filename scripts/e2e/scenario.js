@@ -969,6 +969,113 @@
       heads().length === 0 && !$('.lt-col') && columnsButton().disabled,
     );
 
+    // Extracted fields (prompt 011): a hint after opening, suggestions accepted, value in the column, rule deleted,
+    // a rule from marked text through the form. Without reading the file again.
+    click(button('Pfad'));
+    await waitFor('path dialog for the metrics file', () => $('app-open-path-dialog dialog')?.open);
+    typePath('~/metrics.log').requestSubmit();
+    await waitFor('metrics file is open', () => tabOf('metrics.log') && rowTexts().some((t) => t.includes('cpu=')));
+    let metricsId = null;
+    for (let id = 1; id < 40 && metricsId === null; id++) {
+      const stats = await invoke('get_stats', { sessionId: id }).catch(() => null);
+      if (stats?.totalLines === 300) metricsId = id;
+    }
+    if (metricsId === null) throw new Error('metrics session not found');
+    const metricsColumns = () => invoke('get_columns', { sessionId: metricsId });
+    const metricsBefore = await invoke('get_stats', { sessionId: metricsId });
+    const fieldHint = () => $$('app-status-bar button').find((b) => b.textContent.includes('erkannt'));
+    await waitFor('status bar hints at fields, no dialog by itself', () =>
+      /\d+ Felder erkannt/.test(fieldHint()?.textContent ?? '') && !$('app-fields-dialog'),
+    );
+    click(fieldHint());
+    const suggestionNames = () =>
+      $$('app-fields-dialog tr.suggestion input.name').map((i) => i.value).sort().join(',');
+    await waitFor('suggestions: cpu, mem, took, all ticked', () =>
+      $('app-fields-dialog dialog')?.open &&
+      suggestionNames() === 'cpu,mem,took' &&
+      $$('app-fields-dialog tr.suggestion input[type=checkbox]').every((c) => c.checked),
+    );
+    await waitFor('the hint is gone once seen', () => !fieldHint());
+    click(button('Ausgewählte übernehmen'));
+    await waitFor('rules listed in the dialog', () => $$('app-fields-dialog tr.rule').length === 3);
+    let fieldSet = await metricsColumns();
+    const fieldKinds = Object.fromEntries(fieldSet.columns.filter((c) => c.rule).map((c) => [c.id, c.kind]));
+    if (fieldKinds.cpu !== 'percent' || fieldKinds.mem !== 'size' || fieldKinds.took !== 'duration') {
+      throw new Error(`extracted kinds: ${JSON.stringify(fieldKinds)}`);
+    }
+    const [firstHead] = await invoke('get_lines', { sessionId: metricsId, view: 'all', start: 0, count: 1 });
+    const cpuIndex = fieldSet.columns.findIndex((c) => c.id === 'cpu');
+    const cpuValue = firstHead.text.slice(...firstHead.fields[cpuIndex]);
+    if (!/^\d+\.\d%$/.test(cpuValue) || !firstHead.text.includes(`cpu=${cpuValue}`)) {
+      throw new Error(`cpu of the first line: ${cpuValue}`);
+    }
+    const metricsAfter = await invoke('get_stats', { sessionId: metricsId });
+    if (metricsAfter.epoch !== metricsBefore.epoch || metricsAfter.totalLines !== metricsBefore.totalLines) {
+      throw new Error('accepting the rules read the file again');
+    }
+    await report(`PASS accepted fields without reading again: cpu of the first line ${cpuValue}`);
+    $('app-fields-dialog dialog').close();
+    await waitFor('fields dialog closed', () => !$('app-fields-dialog'));
+    if (columnsButton().getAttribute('aria-pressed') !== 'true') press('t');
+    const scrollTableTo = (x) => {
+      scroller().scrollLeft = x;
+      scroller().dispatchEvent(new Event('scroll'));
+    };
+    const cpuCell = () => $$('.lt-cell[data-col=cpu]:not(.lt-spanned)').find((c) => /^\d+\.\d%$/.test(c.textContent));
+    await waitFor('the column shows the value, right-aligned', () => {
+      scrollTableTo(scroller().scrollWidth);
+      return (
+        cpuCell() &&
+        $$(".lt-cell.lt-num[data-col]").some((c) => ["cpu", "mem", "took"].includes(c.dataset.col) && getComputedStyle(c).textAlign === "right")
+      );
+    });
+    scrollTableTo(0);
+
+    click(button('ƒ Felder'));
+    await waitFor('fields dialog from the toolbar lists the rules', () =>
+      $('app-fields-dialog dialog')?.open && $$('app-fields-dialog tr.rule').length === 3,
+    );
+    click($('app-fields-dialog button[aria-label="Regel cpu löschen"]'));
+    await waitFor('rule deleted: two left', () => $$('app-fields-dialog tr.rule').length === 2);
+    fieldSet = await metricsColumns();
+    if (fieldSet.columns.some((c) => c.id === 'cpu')) throw new Error('cpu column still there');
+    await report('PASS rule deleted, its column is gone');
+
+    // From marked text, the form way: the marked value typed in, pattern built, preview, created.
+    const setField = (selector, text) => {
+      const input = $(selector);
+      input.value = text;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    const fieldSample = $('app-fields-dialog #fields-sample').value;
+    const cpuMarked = /cpu=(\d+\.\d)%/.exec(fieldSample)?.[1];
+    if (!cpuMarked) throw new Error(`no cpu in the sample line: ${fieldSample}`);
+    setField('app-fields-dialog #fields-marked', cpuMarked);
+    click(button('Muster bauen'));
+    await waitFor('pattern built from the marked value', () =>
+      $('app-fields-dialog #fields-draft-pattern')?.value.includes('cpu=') &&
+      $('app-fields-dialog #fields-draft-name')?.value === 'cpu',
+    );
+    await waitFor('preview finds the value in the loaded lines', () =>
+      /Treffer in [1-9]\d* von \d+ geladenen Zeilen/.test($('app-fields-dialog .preview')?.textContent ?? ''),
+    );
+    setField('app-fields-dialog #fields-draft-pattern', 'cpu=[\\d.]+%');
+    await waitFor('a pattern without a group is refused by the backend', () =>
+      /Regel ungültig|group/.test($('app-fields-dialog .preview .error')?.textContent ?? ''),
+    );
+    setField('app-fields-dialog #fields-draft-pattern', 'cpu=([\\d.]+)%');
+    await waitFor('valid again', () => /Treffer in [1-9]/.test($('app-fields-dialog .preview')?.textContent ?? ''));
+    click(button('Als Spalte anlegen'));
+    await waitFor('rule from the marked text listed', () => $$('app-fields-dialog tr.rule').length === 3);
+    fieldSet = await metricsColumns();
+    const createdColumn = fieldSet.columns.find((c) => c.id === 'cpu');
+    if (createdColumn?.kind !== 'percent') throw new Error(`created column: ${JSON.stringify(createdColumn)}`);
+    await report('PASS column from marked text through the form');
+    $('app-fields-dialog dialog').close();
+    await waitFor('fields dialog closed again', () => !$('app-fields-dialog'));
+    click(tabOf('metrics.log').parentElement.querySelector('.close'));
+    await waitFor('metrics tab closed', () => !tabOf('metrics.log'));
+
     // Merge (prompt 006): two files into one tab in time order, source in the gutter, source filter, live.
     click(button('Pfad'));
     await waitFor('path dialog for merge-a', () => $('app-open-path-dialog dialog')?.open);

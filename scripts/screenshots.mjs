@@ -36,7 +36,7 @@ const files = {
   'worker.log': readFileSync(join(root, 'samples/python.log'), 'utf8'),
 };
 
-async function page(browser, { theme, withFiles = true }) {
+async function page(browser, { theme, withFiles = true, only = null }) {
   const context = await browser.newContext({
     viewport: { width: 1240, height: 680 },
     deviceScaleFactor: 2,
@@ -46,7 +46,7 @@ async function page(browser, { theme, withFiles = true }) {
   p.on('pageerror', (e) => console.error('page error:', e.message));
   await p.addInitScript({ path: join(root, 'scripts/e2e/mock-ipc.js') });
   await p.addInitScript((data) => window.__mock.setup(data), {
-    files: withFiles ? files : {},
+    files: only ?? (withFiles ? files : {}),
     recent: ['/var/log/shop/app.log', '/srv/worker/worker.log', '/var/log/nginx/error.log'],
   });
   await p.goto(url);
@@ -147,6 +147,32 @@ await start.click('button:text-is("Pfad eingeben …")');
 await start.fill('app-open-path-dialog input', '/tmp/app.log');
 await start.waitForTimeout(150);
 await shot(start, 'open-path');
+
+// Extracted fields (prompt 011): the suggestions of a log with measurements, then the new columns.
+const metrics = await page(browser, {
+  theme: 'dark',
+  only: { 'metrics.log': readFileSync(join(root, 'samples/metrics.log'), 'utf8') },
+});
+await metrics.click('button.fields-button');
+await metrics.waitForSelector('app-fields-dialog tr.suggestion');
+await shot(metrics, 'fields');
+await metrics.click('app-fields-dialog button:text-is("Ausgewählte übernehmen")');
+await metrics.waitForSelector('app-fields-dialog tr.rule');
+await metrics.click('app-fields-dialog button:text-is("Schließen")');
+// The new columns come last: scroll right to them.
+await metrics.waitForTimeout(300);
+const scrollRight = () =>
+  metrics.evaluate(() => {
+    const viewport = document.querySelector('app-log-table-view .ge-table-scroll-viewport');
+    viewport.scrollLeft = viewport.scrollWidth;
+    viewport.dispatchEvent(new Event('scroll'));
+  });
+await scrollRight();
+await metrics.waitForSelector('.lt-cell[data-col=cpu]:not(.lt-spanned)');
+// The last column widens to its content once drawn: once more to the end.
+await metrics.waitForTimeout(300);
+await scrollRight();
+await shot(metrics, 'extracted');
 
 const narrow = await page(browser, { theme: 'dark' });
 await narrow.setViewportSize({ width: 760, height: 520 });

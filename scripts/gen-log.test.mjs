@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { makeEntry, parseArgs } from './gen-log.mjs';
+import { makeEntry, metricsText, parseArgs } from './gen-log.mjs';
 
 function seeded(seed) {
   let state = seed;
@@ -53,4 +53,20 @@ test('parses options', () => {
 test('rejects unknown options and a missing file', () => {
   assert.throws(() => parseArgs(['--nope']));
   assert.throws(() => parseArgs([]));
+});
+
+test('metrics: cpu, mem and took in the message, ms or s', () => {
+  const random = seeded(17);
+  const units = new Set();
+  for (let i = 0; i < 300; i++) {
+    const text = metricsText(random);
+    const m = /^cpu=(\d+\.\d)% mem=(\d+\.\d)GB took (\d+ms|\d+\.\ds)$/.exec(text);
+    assert.ok(m, text);
+    units.add(m[3].endsWith('ms') ? 'ms' : 's');
+  }
+  assert.deepEqual([...units].sort(), ['ms', 's']);
+  const entry = makeEntry('python', now, seeded(5), 0, true);
+  assert.match(entry, / cpu=\d+\.\d% mem=/);
+  assert.equal(parseArgs(['a.log', '--metrics']).metrics, true);
+  assert.equal(parseArgs(['a.log']).metrics, false);
 });

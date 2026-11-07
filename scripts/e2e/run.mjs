@@ -18,6 +18,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
+import { makeEntry } from '../gen-log.mjs';
 
 const root = new URL('../..', import.meta.url).pathname;
 const exe = process.platform === 'win32' ? 'log-commander.exe' : 'log-commander';
@@ -45,6 +46,16 @@ const other = join(dir, 'other.log');
 writeFileSync(other, 'ERROR:root:other file\nINFO:root:still here\n');
 // No structure at all: no columns (prompt 009), opened by the scenario through the path dialog.
 writeFileSync(join(dir, 'plain.log'), 'just some words\nand some more words\n');
+// Measurements in the message (prompt 011): Python format, `cpu=… mem=… took …`, the same on every run.
+{
+  let state = 4711;
+  const random = () => (state = (state * 16807) % 2147483647) / 2147483647;
+  const start = Date.UTC(2026, 0, 15, 9);
+  let text = '';
+  for (let i = 0; i < 300; i++)
+    text += `${makeEntry('python', new Date(start + i * 1000), random, 0, true)}\n`;
+  writeFileSync(join(dir, 'metrics.log'), text);
+}
 // Merge (prompt 006): two formats whose entries interleave in time; generators make them grow later.
 const mergeA = join(dir, 'merge-a.log');
 const mergeB = join(dir, 'merge-b.log');

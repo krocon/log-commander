@@ -82,6 +82,16 @@ const SEARCH_DEBOUNCE_MS = 200;
       </button>
       <button
         type="button"
+        class="fields-button"
+        aria-haspopup="dialog"
+        [disabled]="!s"
+        title="Felder: Messwerte aus der Nachricht als eigene Spalten"
+        (click)="openFields()"
+      >
+        ƒ Felder
+      </button>
+      <button
+        type="button"
         class="detail-toggle"
         aria-controls="detail-panel"
         [attr.aria-pressed]="settings().detailVisible"
@@ -346,6 +356,7 @@ const SEARCH_DEBOUNCE_MS = 200;
     .full-log,
     .freeze,
     .columns,
+    .fields-button,
     .detail-toggle {
       white-space: nowrap;
     }
@@ -366,6 +377,12 @@ export class ToolbarComponent implements OnInit, OnDestroy {
   private readonly searchInput = viewChild.required<ElementRef<HTMLInputElement>>('search');
   protected readonly session = this.sessions.active;
   private debounce: ReturnType<typeof setTimeout> | null = null;
+
+  /** Prompt 011: rules that take fields out of the message. */
+  protected openFields(): void {
+    const session = this.session();
+    if (session) this.sessions.openFields(session);
+  }
 
   /** UNKNOWN only takes up room where it occurs. */
   protected readonly visibleLevels = computed<Level[]>(() => {

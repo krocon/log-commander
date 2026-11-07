@@ -28,6 +28,18 @@ export class PageCache {
     return this.line(position) !== null;
   }
 
+  /** Up to `max` held lines in position order, for previews over what is loaded (prompt 011). */
+  loadedLines(max: number): LogLine[] {
+    const out: LogLine[] = [];
+    for (const page of [...this.pages.keys()].sort((a, b) => a - b)) {
+      for (const line of this.pages.get(page) ?? []) {
+        if (out.length >= max) return out;
+        out.push(line);
+      }
+    }
+    return out;
+  }
+
   /** Where each held page ends. */
   *pageEnds(): Iterable<number> {
     for (const [page, lines] of this.pages) yield page * PAGE_SIZE + lines.length;

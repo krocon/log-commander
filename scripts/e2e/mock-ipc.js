@@ -99,7 +99,7 @@
       fileSize: session.size,
       epoch: 0,
       viewGeneration: session.generation,
-      columnsRevision: 1,
+      columnsRevision: session.columnsRevision ?? 1,
       filterPending: false,
       filterProgress: 1,
       profileId: 'log4j',
@@ -114,6 +114,77 @@
         lateLines: 0,
       })),
     };
+  }
+
+  // Extracted fields (prompt 011), simplified: rules are Rust regexes, `(?i:…)` becomes a case-insensitive JS one.
+  const extractRules = new Map();
+  const profileOf = (session) => (session.baseColumns ?? session.columns).length > 1 ? 'log4j' : 'python';
+  function jsRegex(pattern) {
+    const insensitive = pattern.includes('(?i');
+    return new RegExp(pattern.replace(/\(\?i:/g, '(?:').replace(/\(\?i\)/g, ''), insensitive ? 'i' : '');
+  }
+  function firstGroup(regex, text, offset = 0) {
+    const m = regex.exec(text);
+    if (!m || m[1] === undefined || m[1] === '') return null;
+    const start = m.index + m[0].indexOf(m[1]);
+    return [offset + start, offset + start + m[1].length];
+  }
+  function applyRules(session) {
+    session.baseColumns ??= session.columns;
+    const base = session.baseColumns;
+    const rules = extractRules.get(profileOf(session)) ?? [];
+    session.columns = [
+      ...base,
+      ...rules.map((r) => ({ id: r.name, label: r.name, kind: r.kind, unit: r.unit ?? undefined, rule: r.id })),
+    ];
+    const message = base.findIndex((c) => c.id === 'message');
+    for (const line of session.lines) {
+      const fields = line.fields.slice(0, base.length);
+      const [s, e] = fields[message] ?? [0, 0];
+      for (const rule of rules) {
+        const span = line.isContinuation ? null : firstGroup(jsRegex(rule.pattern), line.text.slice(s, e), s);
+        fields.push(span ?? [0, 0]);
+      }
+      line.fields = fields;
+    }
+    session.columnsRevision = (session.columnsRevision ?? 1) + 1;
+    session.generation++;
+    callbacks.get(session.channel)?.({ message: update(session), index: session.sent++ });
+  }
+  function suggest(session) {
+    const found = new Map();
+    const heads = session.lines.filter((l) => !l.isContinuation);
+    for (const line of heads) {
+      const seen = new Set();
+      for (const m of line.text.matchAll(/\b([A-Za-z_]\w*)(=| )(\d+(?:\.\d+)?)(%|ms|s|GB|MB|KB)?(?![\w.:-])/g)) {
+        const [, name, sep, , unit] = m;
+        if ((sep === ' ' && !unit) || seen.has(name) || /^(id|in|at|port|v)$/i.test(name)) continue;
+        seen.add(name);
+        const entry = found.get(name) ?? { name, sep, unit, count: 0, examples: [] };
+        entry.count++;
+        if (entry.examples.length < 3) entry.examples.push(m[0].slice(name.length + 1));
+        found.set(name, entry);
+      }
+    }
+    const kindOf = (unit) =>
+      unit === '%' ? 'percent' : unit === 'ms' || unit === 's' ? 'duration' : unit ? 'size' : 'number';
+    return [...found.values()]
+      .filter((f) => f.count / heads.length >= 0.05 && new Set(f.examples).size > 1)
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10)
+      .map((f) => ({
+        rule: {
+          id: `s-${f.name.toLowerCase()}`,
+          name: f.name,
+          column: 'message',
+          pattern: `(?i:\\b${f.name})${f.sep === '=' ? '=' : '[ \\t]+'}([-+]?\\d+(?:[.,]\\d+)*${f.unit ? `[ \\t]?(?:${f.unit === '%' ? '%' : f.unit === 'ms' || f.unit === 's' ? 'ms|s' : f.unit})` : ''})`,
+          kind: kindOf(f.unit),
+          unit: f.unit ?? null,
+        },
+        examples: f.examples,
+        share: f.count / heads.length,
+        distinct: new Set(f.examples).size,
+      }));
   }
 
   /** Sort key of a line's time: the first 19 characters with `T` as a space. */
@@ -281,13 +352,40 @@
       return hit < 0 ? null : { line: all[hit].line, position: hit, wrapped: false };
     },
     get_columns: ({ sessionId }) => {
-      const columns = sessions.get(sessionId).columns;
+      const session = sessions.get(sessionId);
+      const columns = session.columns;
       return {
-        revision: 1,
-        confidence: columns.length > 1 ? 1 : 0,
-        profileId: columns.length > 1 ? 'log4j' : 'python',
+        revision: session.columnsRevision ?? 1,
+        confidence: (session.baseColumns ?? columns).length > 1 ? 1 : 0,
+        profileId: profileOf(session),
         inferredLayout: null,
         columns,
+      };
+    },
+    set_extract_rules({ sessionId, rules }) {
+      const session = sessions.get(sessionId);
+      extractRules.set(profileOf(session), rules);
+      for (const other of sessions.values()) {
+        if (profileOf(other) === profileOf(session)) applyRules(other);
+      }
+      return handlers.get_columns({ sessionId });
+    },
+    load_extract_rules({ rules }) {
+      extractRules.clear();
+      for (const [profile, list] of Object.entries(rules ?? {})) extractRules.set(profile, list);
+      return null;
+    },
+    suggest_fields: ({ sessionId }) => suggest(sessions.get(sessionId)),
+    preview_extract_rule({ rule, lines }) {
+      const regex = jsRegex(rule.pattern);
+      const spans = lines.map((line) => firstGroup(regex, line));
+      return {
+        spans,
+        values: spans.map((span, i) => {
+          if (!span || rule.kind === 'text') return null;
+          const value = Number.parseFloat(lines[i].slice(span[0], span[1]).replace(',', '.'));
+          return Number.isFinite(value) ? value : null;
+        }),
       };
     },
     preview_fields: ({ line }) => ({

@@ -5,6 +5,7 @@
 //   node scripts/gen-log.mjs /tmp/app.jsonl --format json --rate 200
 //   node scripts/gen-log.mjs /tmp/app.log --rotate-every 50000 --truncate-every 0
 //   node scripts/gen-log.mjs /tmp/big.log --lines 5000000 --rate 0      (as fast as possible)
+//   node scripts/gen-log.mjs /tmp/metrics.log --metrics                  (cpu=, mem=, took … for prompt 011)
 import { appendFileSync, renameSync, truncateSync, existsSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
@@ -48,11 +49,21 @@ const STACK = [
   '\t... 12 more',
 ];
 
+/** Measurements in the text, as many services log them: `cpu=72.3% mem=1.2GB took 340ms`. */
+export function metricsText(random) {
+  const cpu = (random() * 100).toFixed(1);
+  const mem = (0.2 + random() * 3.8).toFixed(1);
+  // Mostly milliseconds, sometimes seconds: the unit varies like in real logs.
+  const took =
+    random() < 0.8 ? `${5 + Math.floor(random() * 900)}ms` : `${(1 + random() * 4).toFixed(1)}s`;
+  return `cpu=${cpu}% mem=${mem}GB took ${took}`;
+}
+
 /** One entry (one or more lines, without the final newline). */
-export function makeEntry(format, now, random, stackChance = 0.3) {
+export function makeEntry(format, now, random, stackChance = 0.3, metrics = false) {
   const level = pickLevel(random);
   const iso = now.toISOString();
-  const text = message(random);
+  const text = metrics ? `${message(random)} ${metricsText(random)}` : message(random);
   const stack = (level === 'ERROR' || level === 'FATAL') && random() < stackChance;
   switch (format) {
     case 'json':
@@ -93,6 +104,7 @@ export function parseArgs(argv) {
     rotateEvery: 0,
     truncateEvery: 0,
     stack: 0.3,
+    metrics: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -104,12 +116,13 @@ export function parseArgs(argv) {
     else if (arg === '--rotate-every') options.rotateEvery = Number(next());
     else if (arg === '--truncate-every') options.truncateEvery = Number(next());
     else if (arg === '--stack') options.stack = Number(next());
+    else if (arg === '--metrics') options.metrics = true;
     else if (arg.startsWith('--')) throw new Error(`unknown option ${arg}`);
     else options.file = arg;
   }
   if (!options.file)
     throw new Error(
-      'usage: gen-log.mjs <file> [--rate N] [--format spring|python|json|nginx] [--lines N] [--rotate-every N] [--truncate-every N] [--stack 0..1]',
+      'usage: gen-log.mjs <file> [--rate N] [--format spring|python|json|nginx] [--lines N] [--rotate-every N] [--truncate-every N] [--stack 0..1] [--metrics]',
     );
   return options;
 }
@@ -137,7 +150,8 @@ async function main() {
     const count = Math.min(perTick, options.lines - written);
     let chunk = '';
     for (let i = 0; i < count; i++) {
-      chunk += makeEntry(options.format, new Date(), Math.random, options.stack) + '\n';
+      chunk +=
+        makeEntry(options.format, new Date(), Math.random, options.stack, options.metrics) + '\n';
     }
     appendFileSync(options.file, chunk);
     written += count;

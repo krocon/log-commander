@@ -7,6 +7,7 @@
 //! layout gets an inferred one (`infer_layout`), and if that fails too, a single column `message`.
 
 use crate::error::{AppError, AppResult, ErrorCode};
+use crate::extract::{ExtractRule, Extractors};
 use crate::level::{LevelDetector, PrevLine};
 use crate::profile::{Profile, Structure, GENERIC_PROFILE};
 use crate::timestamp::{self, TsFormat};
@@ -40,6 +41,19 @@ pub enum ColumnKind {
     Level,
     Text,
     Number,
+    /// Extracted values (prompt 011): numbers with a unit, compared in their base unit.
+    Percent,
+    Duration,
+    Size,
+}
+
+impl ColumnKind {
+    pub fn is_numeric(self) -> bool {
+        matches!(
+            self,
+            ColumnKind::Number | ColumnKind::Percent | ColumnKind::Duration | ColumnKind::Size
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -48,6 +62,12 @@ pub struct Column {
     pub id: String,
     pub label: String,
     pub kind: ColumnKind,
+    /// Unit of an extracted value written without one (prompt 011).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
+    /// The extraction rule of the column, if it is one (prompt 011).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rule: Option<String>,
 }
 
 impl Column {
@@ -67,6 +87,8 @@ impl Column {
             id: id.into(),
             label: label.into(),
             kind,
+            unit: None,
+            rule: None,
         }
     }
 
@@ -75,10 +97,13 @@ impl Column {
             id: id.into(),
             label: label.into(),
             kind,
+            unit: None,
+            rule: None,
         }
     }
 }
 
+#[derive(Clone)]
 struct Layout {
     regex: Regex,
     /// Capture group index → column.
@@ -86,6 +111,7 @@ struct Layout {
 }
 
 /// Keys (JSON, logfmt) or tags (FIX) → column.
+#[derive(Clone)]
 struct KeyMap {
     columns: HashMap<String, usize>,
 }
@@ -96,6 +122,7 @@ impl KeyMap {
     }
 }
 
+#[derive(Clone)]
 enum Kind {
     MessageOnly,
     Regex(Vec<Layout>),
@@ -111,12 +138,16 @@ enum Kind {
     W3c,
 }
 
-/// Splits lines into the columns of one format.
+/// Splits lines into the columns of one format, and takes fields out of them (prompt 011): the
+/// columns of the format come first (`base_len`), the extracted ones after them.
+#[derive(Clone)]
 pub struct FieldParser {
     columns: Vec<Column>,
     /// Where a line goes that does not fit: `message`, or the last column.
     fallback: usize,
     kind: Kind,
+    base_len: usize,
+    extract: Extractors,
 }
 
 impl std::fmt::Debug for FieldParser {
@@ -139,7 +170,29 @@ impl FieldParser {
             columns: vec![Column::named("message")],
             fallback: 0,
             kind: Kind::MessageOnly,
+            base_len: 1,
+            extract: Extractors::default(),
         }
+    }
+
+    /// The same format with the extraction rules of its profile; rules from before are replaced.
+    pub fn with_rules(&self, rules: &[ExtractRule]) -> Self {
+        let mut parser = self.clone();
+        parser.columns.truncate(parser.base_len);
+        parser.extract = Extractors::build(rules, &parser.columns);
+        let extracted: Vec<Column> = parser.extract.columns().collect();
+        parser.columns.extend(extracted);
+        parser
+    }
+
+    /// The columns of the format, without the extracted ones.
+    pub fn base_columns(&self) -> &[Column] {
+        &self.columns[..self.base_len]
+    }
+
+    /// The column a line goes to that does not fit (`message`, mostly): what extraction reads.
+    pub fn fallback_column(&self) -> &Column {
+        &self.columns[self.fallback]
     }
 
     /// The parser a profile describes; JSON, logfmt, FIX and W3C take their columns from the sample.
@@ -207,9 +260,11 @@ impl FieldParser {
             return Self::message_only();
         }
         Self {
+            base_len: columns.len(),
             columns,
             fallback,
             kind,
+            extract: Extractors::default(),
         }
     }
 
@@ -294,6 +349,8 @@ impl FieldParser {
         let message = columns.len() - 1;
         Self {
             fallback: message,
+            base_len: columns.len(),
+            extract: Extractors::default(),
             columns,
             kind: Kind::Fix {
                 tags: KeyMap { columns: tags },
@@ -426,16 +483,19 @@ impl FieldParser {
         } else {
             text
         };
-        if self.fill(part, truncated || cut, &mut spans) {
-            if cut {
-                // The rest of a long line goes into the last field.
-                if let Some(last) = spans.iter_mut().filter(|s| s[1] > 0).max_by_key(|s| s[1]) {
-                    last[1] = text.len();
-                }
+        let (base, extracted) = spans.split_at_mut(self.base_len);
+        let fits = self.fill(part, truncated || cut, base);
+        if !fits {
+            base.fill([0, 0]);
+            base[self.fallback] = [0, text.len()];
+        }
+        // Extracted spans may overlap the column they come from; the value stays in the message too.
+        self.extract.fill(text, base, MAX_PARSE_BYTES, extracted);
+        if fits && cut {
+            // The rest of a long line goes into the last field.
+            if let Some(last) = base.iter_mut().filter(|s| s[1] > 0).max_by_key(|s| s[1]) {
+                last[1] = text.len();
             }
-        } else {
-            spans.fill([0, 0]);
-            spans[self.fallback] = [0, text.len()];
         }
         to_utf16(text, &spans)
     }
@@ -454,18 +514,27 @@ impl FieldParser {
             return None;
         }
         let part = &text[..floor_char_boundary(text, MAX_PARSE_BYTES)];
-        let mut spans = vec![[0usize; 2]; self.columns.len()];
-        if self.fill(part, part.len() < text.len(), &mut spans) {
-            let [start, end] = spans[column];
-            part.get(start..end)
-        } else {
-            (column == self.fallback).then_some(text)
+        let mut spans = vec![[0usize; 2]; self.base_len];
+        let fits = self.fill(part, part.len() < text.len(), &mut spans);
+        if column < self.base_len {
+            return if fits {
+                let [start, end] = spans[column];
+                part.get(start..end)
+            } else {
+                (column == self.fallback).then_some(text)
+            };
         }
+        if !fits {
+            spans.fill([0, 0]);
+            spans[self.fallback] = [0, text.len()];
+        }
+        self.extract
+            .value(column - self.base_len, text, &spans, MAX_PARSE_BYTES)
     }
 
     /// Whether a line fits the format completely.
     pub fn matches(&self, text: &str) -> bool {
-        let mut spans = vec![[0usize; 2]; self.columns.len()];
+        let mut spans = vec![[0usize; 2]; self.base_len];
         let part = &text[..floor_char_boundary(text, MAX_PARSE_BYTES)];
         self.fill(part, part.len() < text.len(), &mut spans)
     }
@@ -863,7 +932,7 @@ fn scan_fix(text: &str, start: usize, member: &mut dyn FnMut(&str, usize, usize)
 // Detection
 
 /// Result of the format detection for a session.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FormatGuess {
     /// The profile whose layout fits, or the generic one for an inferred layout.
     pub profile_id: String,
@@ -875,6 +944,16 @@ pub struct FormatGuess {
 }
 
 impl FormatGuess {
+    /// The same format with the extraction rules of its profile (prompt 011).
+    pub fn with_rules(&self, rules: &[ExtractRule]) -> Self {
+        Self {
+            profile_id: self.profile_id.clone(),
+            inferred_layout: self.inferred_layout.clone(),
+            confidence: self.confidence,
+            parser: self.parser.with_rules(rules),
+        }
+    }
+
     pub fn none() -> Self {
         Self {
             profile_id: GENERIC_PROFILE.into(),

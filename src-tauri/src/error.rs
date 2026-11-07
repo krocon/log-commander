@@ -21,6 +21,8 @@ pub enum ErrorCode {
     NoTimestamps,
     /// Not possible for a merge, or a merge that cannot be (count, duplicates).
     InvalidMerge,
+    /// An extraction rule (prompt 011) that cannot be used; `node_id` names the rule.
+    InvalidRule,
 }
 
 #[derive(Debug, Clone, Serialize, thiserror::Error)]

@@ -5,6 +5,7 @@ import { statusPill } from './status-pill';
 import { formatSummary, partlyRecognised } from '../sessions/format-logic';
 import { lateLines, sourceProblems } from '../merge/merge-logic';
 import { countConditions } from '../sessions/filter-tree';
+import { hintText } from '../fields/fields-logic';
 
 @Component({
   selector: 'app-status-bar',
@@ -30,6 +31,16 @@ import { countConditions } from '../sessions/filter-tree';
         <span class="stale">Datei wurde geleert, Anzeige ist evtl. unvollständig</span>
       }
       <span class="spring"></span>
+      @if (s.fieldHint(); as found) {
+        <button
+          type="button"
+          class="link hint"
+          title="Messwerte im Text als Spalten anlegen: Vorschläge ansehen"
+          (click)="openFields()"
+        >
+          {{ hintText(found.length) }}
+        </button>
+      }
       @if (partly()) {
         <span class="stale" [title]="formatTitle()">Format nur teilweise erkannt</span>
       }
@@ -162,6 +173,14 @@ export class StatusBarComponent {
     const count = lateLines(this.session()?.update().sources ?? []);
     return count > 0 ? formatCount(count) : '';
   });
+
+  protected readonly hintText = hintText;
+
+  /** Prompt 011: the suggestions found on opening, in the dialog „Felder“. */
+  protected openFields(): void {
+    const session = this.session();
+    if (session) this.sessions.openFields(session);
+  }
 
   protected resort(): void {
     const session = this.session();

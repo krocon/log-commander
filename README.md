@@ -29,6 +29,14 @@ Like <code>tail -f</code> with a GUI: millions of lines, instant filters, no wai
   to move it; right click on the header or `Shift+F10` opens a menu to show, hide, move and resize columns or reset
   them. The layout is remembered per format. `T` or the toolbar switch goes back to the raw lines. No sorting: the
   view stays in file order.
+- **Fields from the message** – measurements in the text such as `cpu=72.3% mem=1.2GB took 340ms` become columns of
+  their own, the file stays as it is. On opening the app looks at up to 2000 entries spread over the file and offers
+  what it finds in the status bar („3 Felder erkannt“, once per format, never as a dialog); IDs, times and constants
+  are left out. The dialog „ƒ Felder“ lists the suggestions with examples and share (name and type changeable),
+  the rules of the format (edit, delete) and builds a rule from marked text: right click „Spalte aus Auswahl …“ or
+  type the value, the preview shows the hits in the loaded lines. Types text, number, percent, duration and size;
+  units are converted, so `took > 500 ms` in the filter tree also finds `1.2s`. Rules are regexes with one group,
+  stored per format in the settings and valid for every file of that format right away. At most 32 per format.
 - **Detail panel** – the whole entry of the selected line below the log: head line and stack trace, without the
   cut at the screen edge and whatever the filter hides. Embedded JSON or XML is indented and coloured by its own
   tokenizer, so 64-bit ids stay exact and fragments work. Double click a line (or `D`) to open it, click other lines
@@ -76,6 +84,7 @@ Like <code>tail -f</code> with a GUI: millions of lines, instant filters, no wai
 | ![Detail panel](docs/screenshots/detail.png) | ![Sidebar](docs/screenshots/sidebar.png) |
 | ![Merged files](docs/screenshots/merge.png) | ![Merge dialog](docs/screenshots/merge-dialog.png) |
 | ![Filter tree](docs/screenshots/filter-tree.png) | ![Narrow window](docs/screenshots/narrow.png) |
+| ![Fields dialog](docs/screenshots/fields.png) | ![Extracted columns](docs/screenshots/extracted.png) |
 
 ## Install
 
@@ -163,6 +172,7 @@ Measured on an Apple Silicon Mac, release build, with
 | `get_lines`, 200 lines at a random position | 43 µs |
 | `get_overview` (800 px, 1000 bookmarks) | 0.3 ms |
 | `find_level`, no FATAL in 5.1 million lines | 0.13 ms |
+| `get_lines`, 5000 lines with 0 / 4 / 16 extracted fields (`extract_integration`) | 7.8 / 11.8 / 12.8 ms |
 
 At 10,000 lines per second the UI's event loop was never blocked for more than 8 ms (debug build, `npm run e2e`).
 

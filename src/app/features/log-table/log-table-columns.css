@@ -23,6 +23,12 @@
   visibility: hidden;
 }
 
+/* Numbers (prompt 011: extracted values, and number columns of a format) line up on the right. */
+.lt-host .ge-table-col-div.lt-col.lt-num:not(.lt-span) {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
 .lt-host .ge-table-header .ge-table-col-div.lt-head {
   line-height: var(--header-h);
   padding: 0;

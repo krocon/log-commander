@@ -61,6 +61,12 @@ export function defaultWidth(column: Column, charWidth: number): number {
     case 'number':
       chars = 7;
       break;
+    case 'percent':
+    case 'duration':
+    case 'size':
+      // Extracted values keep their unit: `340ms`, `1.2GB`.
+      chars = 9;
+      break;
     default:
       chars = KNOWN_CHARS[column.id] ?? 24;
   }

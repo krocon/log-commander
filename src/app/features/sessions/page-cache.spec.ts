@@ -102,4 +102,16 @@ describe('PageCache', () => {
     expect(cache.line(0)).toBeNull();
     expect(cache.line(69 * PAGE_SIZE)).not.toBeNull();
   });
+
+  it('lists the held lines in position order, at most as many as asked', async () => {
+    const { calls, loader } = deferredLoader();
+    const cache = new PageCache(loader);
+    cache.ensure(PAGE_SIZE, PAGE_SIZE + 1);
+    cache.ensure(0, 1);
+    calls[1].resolve([line(0), line(1)]);
+    calls[0].resolve([line(PAGE_SIZE)]);
+    await flush();
+    expect(cache.loadedLines(10).map((l) => l.line)).toEqual([0, 1, PAGE_SIZE]);
+    expect(cache.loadedLines(2).map((l) => l.line)).toEqual([0, 1]);
+  });
 });

@@ -293,7 +293,7 @@ impl Tailer {
             };
             if let Some(format) = format {
                 if data.requested_format.is_some() {
-                    data.requested_format = Some(Arc::new(format));
+                    data.requested_format = Some(Arc::new(data.with_rules(&format)));
                 } else {
                     data.set_format(format, view);
                 }

@@ -247,4 +247,29 @@ describe('cellSegments', () => {
     ).toBe('plain text');
     expect(cellSegments(l, 0, 3)).toEqual([]);
   });
+
+  it('carries overlapping spans: an extracted value stays in the message (prompt 011)', () => {
+    // cpu and took lie inside the message; a match over the value.
+    const text = 'INFO 🎉 cpu=72.3% took 340ms';
+    const l = line(
+      text,
+      [
+        [0, 4],
+        [5, text.length],
+        [12, 16],
+        [23, text.length],
+      ],
+      { matches: [[12, 14]] },
+    );
+    const join = (field: number) =>
+      cellSegments(l, field)
+        .map((s) => s.text)
+        .join('');
+    expect(join(1)).toBe('🎉 cpu=72.3% took 340ms');
+    expect(join(2)).toBe('72.3');
+    expect(join(3)).toBe('340ms');
+    // The match lies in both cells, the message and the extracted one.
+    expect(cellSegments(l, 2)[0]).toEqual({ text: '72', cls: 't-number hit' });
+    expect(cellSegments(l, 1).some((s) => s.text === '72' && s.cls.includes('hit'))).toBe(true);
+  });
 });

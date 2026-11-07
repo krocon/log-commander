@@ -2,6 +2,7 @@ import { Signal, computed, linkedSignal, signal } from '@angular/core';
 import { LogApi } from '../../core/log/log-api';
 import {
   ColumnSet,
+  FieldSuggestion,
   Level,
   SearchMode,
   SearchQuery,
@@ -74,6 +75,11 @@ export class SessionState {
   readonly treeError = signal<{ nodeId: string | null; message: string } | null>(null);
   /** Field conditions are compiled against the columns: a new format needs the filter again. */
   onColumnsChanged: (() => void) | null = null;
+  /** Once, when the first load is done (prompt 011: fields are suggested then). */
+  onLoaded: (() => void) | null = null;
+  private loadedNotified = false;
+  /** Fields `suggest_fields` found on opening (prompt 011): a hint in the status bar until the dialog opens. */
+  readonly fieldHint = signal<FieldSuggestion[] | null>(null);
   /** Counts filters set from outside the toolbar (sidebar); a search still being typed yields to them. */
   readonly presetRevision = signal(0);
 
@@ -234,6 +240,20 @@ export class SessionState {
       if (hasFieldConditions(this.filterTree())) this.onColumnsChanged?.();
     }
     if (viewChanged && !this.follow()) this.pausedAtCount.set(next.filteredLines);
+    this.notifyLoaded();
+  }
+
+  /** Calls `onLoaded` once the file is read for the first time (no more `loading`). */
+  notifyLoaded(): void {
+    if (this.loadedNotified || this.update().status.kind === 'loading') return;
+    this.loadedNotified = true;
+    this.onLoaded?.();
+  }
+
+  /** Columns the backend sent along (new extraction rules); older ones than shown are ignored. */
+  acceptColumns(set: ColumnSet): void {
+    if (isNewerColumns(this.columns(), set)) this.columns.set(set);
+    this.columnsRequested = Math.max(this.columnsRequested, set.revision);
   }
 
   /** The tab comes to the front: what happened is seen now. */

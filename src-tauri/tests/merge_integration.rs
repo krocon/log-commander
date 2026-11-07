@@ -86,7 +86,10 @@ fn try_merge(paths: &[&Path], keep_on_rotate: bool) -> Result<Fixture, ErrorCode
     LogSession::open_merged(
         1,
         sources(paths),
-        OpenOptions { keep_on_rotate },
+        OpenOptions {
+            keep_on_rotate,
+            ..OpenOptions::default()
+        },
         Box::new(move |update| sink_updates.lock().push(update)),
     )
     .map(|session| Fixture { session, updates })

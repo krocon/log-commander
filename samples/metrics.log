@@ -1,0 +1,60 @@
+2026-01-15T10:00:00.000Z  TRACE 4711 --- [worker-7] c.a.service.Handler : retrying connection to https://db.example.com:5512/primary cpu=53.0% mem=1.2GB took 738ms
+2026-01-15T10:00:01.370Z   INFO 4711 --- [worker-1] c.a.service.Handler : user 18827-32332 logged in from 10.0.26.206 cpu=84.4% mem=3.0GB took 490ms
+2026-01-15T10:00:02.740Z   INFO 4711 --- [worker-4] c.a.service.Handler : cache miss for key "session:45000-23347" cpu=91.5% mem=3.2GB took 697ms
+2026-01-15T10:00:04.110Z   INFO 4711 --- [worker-0] c.a.service.Handler : cache miss for key "session:35173-64093" cpu=15.8% mem=1.9GB took 178ms
+2026-01-15T10:00:05.480Z  ERROR 4711 --- [worker-5] c.a.service.Handler : retrying connection to https://db.example.com:5543/primary cpu=99.5% mem=0.9GB took 364ms
+java.lang.IllegalStateException: connection pool exhausted
+	at com.acme.db.Pool.acquire(Pool.java:142)
+	at com.acme.service.OrderService.place(OrderService.java:57)
+Caused by: java.net.SocketTimeoutException: Read timed out
+	... 12 more
+2026-01-15T10:00:06.850Z  DEBUG 4711 --- [worker-7] c.a.service.Handler : processed batch of 4030 items cpu=24.9% mem=2.1GB took 98ms
+2026-01-15T10:00:08.220Z   INFO 4711 --- [worker-6] c.a.service.Handler : processed batch of 1326 items cpu=46.7% mem=3.9GB took 719ms
+2026-01-15T10:00:09.590Z   INFO 4711 --- [worker-3] c.a.service.Handler : retrying connection to https://db.example.com:5446/primary cpu=56.7% mem=2.7GB took 445ms
+2026-01-15T10:00:10.960Z  TRACE 4711 --- [worker-7] c.a.service.Handler : processed batch of 1941 items cpu=41.1% mem=1.1GB took 644ms
+2026-01-15T10:00:12.330Z  TRACE 4711 --- [worker-2] c.a.service.Handler : cache miss for key "session:53269-12598" cpu=39.2% mem=0.5GB took 307ms
+2026-01-15T10:00:13.700Z   INFO 4711 --- [worker-1] c.a.service.Handler : user 20421-28446 logged in from 10.0.253.50 cpu=51.4% mem=3.2GB took 327ms
+2026-01-15T10:00:15.070Z   INFO 4711 --- [worker-2] c.a.service.Handler : user 72573-58930 logged in from 10.0.132.125 cpu=29.3% mem=1.7GB took 391ms
+2026-01-15T10:00:16.440Z   INFO 4711 --- [worker-1] c.a.service.Handler : request finished in 3645 ms cpu=87.0% mem=3.7GB took 4.2s
+2026-01-15T10:00:17.810Z   INFO 4711 --- [worker-7] c.a.service.Handler : user 81233-98465 logged in from 10.0.88.160 cpu=89.2% mem=0.7GB took 901ms
+2026-01-15T10:00:19.180Z  DEBUG 4711 --- [worker-3] c.a.service.Handler : cache miss for key "session:54287-17471" cpu=25.0% mem=1.0GB took 675ms
+2026-01-15T10:00:20.550Z  ERROR 4711 --- [worker-3] c.a.service.Handler : retrying connection to https://db.example.com:5085/primary cpu=75.3% mem=0.8GB took 550ms
+java.lang.IllegalStateException: connection pool exhausted
+	at com.acme.db.Pool.acquire(Pool.java:142)
+	at com.acme.service.OrderService.place(OrderService.java:57)
+Caused by: java.net.SocketTimeoutException: Read timed out
+	... 12 more
+2026-01-15T10:00:21.920Z  DEBUG 4711 --- [worker-3] c.a.service.Handler : processed batch of 2408 items cpu=15.2% mem=3.2GB took 49ms
+2026-01-15T10:00:23.290Z   INFO 4711 --- [worker-4] c.a.service.Handler : heap usage at 97% cpu=38.1% mem=3.4GB took 4.7s
+2026-01-15T10:00:24.660Z  TRACE 4711 --- [worker-3] c.a.service.Handler : processed batch of 1303 items cpu=33.7% mem=3.6GB took 2.8s
+2026-01-15T10:00:26.030Z   WARN 4711 --- [worker-6] c.a.service.Handler : request finished in 184 ms cpu=58.4% mem=2.6GB took 702ms
+2026-01-15T10:00:27.400Z  ERROR 4711 --- [worker-7] c.a.service.Handler : cache miss for key "session:44201-98178" cpu=99.1% mem=3.2GB took 281ms
+java.lang.IllegalStateException: connection pool exhausted
+	at com.acme.db.Pool.acquire(Pool.java:142)
+	at com.acme.service.OrderService.place(OrderService.java:57)
+Caused by: java.net.SocketTimeoutException: Read timed out
+	... 12 more
+2026-01-15T10:00:28.770Z   INFO 4711 --- [worker-1] c.a.service.Handler : heap usage at 121% cpu=25.0% mem=1.8GB took 654ms
+2026-01-15T10:00:30.140Z   INFO 4711 --- [worker-4] c.a.service.Handler : processed batch of 3123 items cpu=65.8% mem=1.1GB took 222ms
+2026-01-15T10:00:31.510Z  DEBUG 4711 --- [worker-6] c.a.service.Handler : retrying connection to https://db.example.com:5932/primary cpu=2.8% mem=0.6GB took 630ms
+2026-01-15T10:00:32.880Z   INFO 4711 --- [worker-5] c.a.service.Handler : request finished in 3954 ms cpu=27.2% mem=2.8GB took 50ms
+2026-01-15T10:00:34.250Z   INFO 4711 --- [worker-1] c.a.service.Handler : request finished in 4356 ms cpu=73.0% mem=1.3GB took 603ms
+2026-01-15T10:00:35.620Z   INFO 4711 --- [worker-3] c.a.service.Handler : retrying connection to https://db.example.com:5505/primary cpu=33.8% mem=2.9GB took 794ms
+2026-01-15T10:00:36.990Z   INFO 4711 --- [worker-1] c.a.service.Handler : user 44033-75181 logged in from 10.0.245.211 cpu=51.7% mem=0.2GB took 3.2s
+2026-01-15T10:00:38.360Z   INFO 4711 --- [worker-4] c.a.service.Handler : cache miss for key "session:14899-14156" cpu=69.2% mem=3.0GB took 420ms
+2026-01-15T10:00:39.730Z   INFO 4711 --- [worker-2] c.a.service.Handler : user 66222-18951 logged in from 10.0.45.209 cpu=84.9% mem=3.8GB took 2.4s
+2026-01-15T10:00:41.100Z  DEBUG 4711 --- [worker-6] c.a.service.Handler : retrying connection to https://db.example.com:5202/primary cpu=32.8% mem=2.8GB took 566ms
+2026-01-15T10:00:42.470Z  DEBUG 4711 --- [worker-3] c.a.service.Handler : retrying connection to https://db.example.com:5586/primary cpu=26.9% mem=1.4GB took 3.9s
+2026-01-15T10:00:43.840Z   INFO 4711 --- [worker-7] c.a.service.Handler : request finished in 338 ms cpu=1.5% mem=1.0GB took 553ms
+2026-01-15T10:00:45.210Z   INFO 4711 --- [worker-3] c.a.service.Handler : cache miss for key "session:6961-96008" cpu=19.9% mem=0.3GB took 475ms
+2026-01-15T10:00:46.580Z  DEBUG 4711 --- [worker-7] c.a.service.Handler : heap usage at 133% cpu=6.9% mem=4.0GB took 831ms
+2026-01-15T10:00:47.950Z   INFO 4711 --- [worker-6] c.a.service.Handler : processed batch of 740 items cpu=7.2% mem=3.8GB took 4.2s
+2026-01-15T10:00:49.320Z  ERROR 4711 --- [worker-6] c.a.service.Handler : user 17308-14014 logged in from 10.0.119.223 cpu=12.1% mem=0.9GB took 2.0s
+java.lang.IllegalStateException: connection pool exhausted
+	at com.acme.db.Pool.acquire(Pool.java:142)
+	at com.acme.service.OrderService.place(OrderService.java:57)
+Caused by: java.net.SocketTimeoutException: Read timed out
+	... 12 more
+2026-01-15T10:00:50.690Z   INFO 4711 --- [worker-2] c.a.service.Handler : user 10562-30278 logged in from 10.0.255.119 cpu=63.0% mem=3.2GB took 620ms
+2026-01-15T10:00:52.060Z   INFO 4711 --- [worker-1] c.a.service.Handler : cache miss for key "session:60155-44164" cpu=25.2% mem=2.9GB took 728ms
+2026-01-15T10:00:53.430Z   INFO 4711 --- [worker-5] c.a.service.Handler : cache miss for key "session:38904-75366" cpu=25.5% mem=2.3GB took 2.7s

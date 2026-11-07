@@ -1,4 +1,12 @@
-import { LEVELS, Level, Profile, SearchMode, SearchQuery } from '../log/log.models';
+import {
+  ExtractRule,
+  LEVELS,
+  Level,
+  Profile,
+  SearchMode,
+  SearchQuery,
+  ValueKind,
+} from '../log/log.models';
 import { FilterGroupNode, sanitizeTree } from '../../features/sessions/filter-tree';
 
 export type ThemeChoice = 'system' | 'dark' | 'light';
@@ -52,6 +60,10 @@ export interface Settings {
   sidebarWidth: number;
   sidebarTreeShare: number;
   savedFilters: SavedFilter[];
+  /** Extraction rules per profile id (prompt 011): they describe a format, like the column layouts. */
+  extractRules: Record<string, ExtractRule[]>;
+  /** Profiles `suggest_fields` already ran for on opening: the hint comes once per profile. */
+  fieldHints: string[];
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -72,6 +84,8 @@ export const DEFAULT_SETTINGS: Settings = {
   sidebarWidth: 240,
   sidebarTreeShare: 0.55,
   savedFilters: [],
+  extractRules: {},
+  fieldHints: [],
 };
 
 export const MIN_FONT_SIZE = 9;
@@ -86,6 +100,9 @@ export const MAX_SIDEBAR_WIDTH = 2000;
 export const MIN_TREE_SHARE = 0.1;
 export const MAX_TREE_SHARE = 0.9;
 export const MAX_SAVED_FILTERS = 100;
+/** Extraction rules per profile; the backend refuses more. */
+export const MAX_EXTRACT_RULES = 32;
+const MAX_FIELD_HINTS = 200;
 
 /** The tokens the colour settings offer. */
 export const COLOR_TOKENS: readonly { token: string; level: Level | null; label: string }[] = [
@@ -145,6 +162,10 @@ export function mergeSettings(saved: Partial<Settings> | null | undefined): Sett
     ? Math.min(MAX_TREE_SHARE, Math.max(MIN_TREE_SHARE, share))
     : DEFAULT_SETTINGS.sidebarTreeShare;
   merged.savedFilters = mergeSavedFilters(merged.savedFilters);
+  merged.extractRules = mergeExtractRules(merged.extractRules);
+  merged.fieldHints = isStringArray(merged.fieldHints)
+    ? [...new Set(merged.fieldHints)].slice(-MAX_FIELD_HINTS)
+    : [];
   return merged;
 }
 
@@ -182,6 +203,41 @@ export function mergeSavedFilters(saved: unknown): SavedFilter[] {
       tree: sanitizeTree(entry.tree),
     });
     if (result.length >= MAX_SAVED_FILTERS) break;
+  }
+  return result;
+}
+
+const VALUE_KINDS: readonly ValueKind[] = ['text', 'number', 'percent', 'duration', 'size'];
+
+/**
+ * Rules without id, name or pattern are dropped, a missing source is `message`, an unknown kind is text. The
+ * backend checks the patterns when they are loaded and leaves out what does not compile.
+ */
+export function mergeExtractRules(saved: unknown): Record<string, ExtractRule[]> {
+  if (typeof saved !== 'object' || saved === null || Array.isArray(saved)) return {};
+  const result: Record<string, ExtractRule[]> = {};
+  for (const [profileId, list] of Object.entries(saved as Record<string, unknown>)) {
+    if (!Array.isArray(list)) continue;
+    const rules: ExtractRule[] = [];
+    const ids = new Set<string>();
+    for (const value of list as unknown[]) {
+      if (typeof value !== 'object' || value === null) continue;
+      const r = value as Partial<Record<keyof ExtractRule, unknown>>;
+      if (typeof r.id !== 'string' || !r.id || ids.has(r.id)) continue;
+      if (typeof r.name !== 'string' || !r.name.trim()) continue;
+      if (typeof r.pattern !== 'string' || !r.pattern) continue;
+      ids.add(r.id);
+      rules.push({
+        id: r.id,
+        name: r.name.trim(),
+        column: typeof r.column === 'string' && r.column ? r.column : 'message',
+        pattern: r.pattern,
+        kind: VALUE_KINDS.includes(r.kind as ValueKind) ? (r.kind as ValueKind) : 'text',
+        unit: typeof r.unit === 'string' && r.unit ? r.unit : null,
+      });
+      if (rules.length >= MAX_EXTRACT_RULES) break;
+    }
+    if (rules.length) result[profileId] = rules;
   }
   return result;
 }

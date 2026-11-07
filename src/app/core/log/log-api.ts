@@ -5,6 +5,8 @@ import {
   ColumnSet,
   EntryDetail,
   EntryRange,
+  ExtractRule,
+  FieldSuggestion,
   FieldPreview,
   FilterExpr,
   FilterInfo,
@@ -16,6 +18,7 @@ import {
   MergeSourceSpec,
   Overview,
   Profile,
+  RulePreview,
   SearchMode,
   SearchQuery,
   SessionInfo,
@@ -157,5 +160,28 @@ export class LogApi {
 
   setCustomProfiles(profiles: Profile[]): Promise<void> {
     return call('set_custom_profiles', { profiles });
+  }
+
+  /**
+   * Extraction rules (prompt 011) for the profile of a session's format, right away for every open session of
+   * that profile. The new columns of the session come back; an invalid rule is an `invalid_rule` with `nodeId`.
+   */
+  setExtractRules(sessionId: number, rules: readonly ExtractRule[]): Promise<ColumnSet> {
+    return call('set_extract_rules', { sessionId, rules });
+  }
+
+  /** All rules from the settings per profile id, at start. */
+  loadExtractRules(rules: Record<string, ExtractRule[]>): Promise<void> {
+    return call('load_extract_rules', { rules });
+  }
+
+  /** Candidates for rules from a sample of entry heads spread over the whole file. */
+  suggestFields(sessionId: number): Promise<FieldSuggestion[]> {
+    return call('suggest_fields', { sessionId });
+  }
+
+  /** A rule tried on some lines (the whole line is the source); checks the rule, too. */
+  previewExtractRule(rule: ExtractRule, lines: readonly string[]): Promise<RulePreview> {
+    return call('preview_extract_rule', { rule, lines });
   }
 }

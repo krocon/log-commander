@@ -17,10 +17,11 @@
 | Alles außer E2E | `npm run check` |
 | E2E im echten WebView | `npm run e2e` (Debug-Build, echtes Backend, echte Datei; `-- --no-build` zum Wiederholen) |
 | Messung 500 MB | `cd src-tauri && cargo test --release --test tail_integration -- --ignored --nocapture measure_` |
+| Messung Feld-Regeln | `cd src-tauri && cargo test --release --test extract_integration -- --ignored --nocapture measure_` |
 | Messung Merge 2 × 500 MB | `cd src-tauri && cargo test --release --test merge_integration -- --ignored --nocapture measure_merge` |
 | Kontrast WCAG AA | `npm run contrast` (prüft `src/styles.css`) |
 | Screenshots für die Doku | `npm run build`, dann `node scripts/screenshots.mjs` (WebKit + IPC-Mock) |
-| Log-Generator | `node scripts/gen-log.mjs /tmp/app.log --rate 5000 [--format …] [--rotate-every N] [--truncate-every N]` |
+| Log-Generator | `node scripts/gen-log.mjs /tmp/app.log --rate 5000 [--format …] [--rotate-every N] [--truncate-every N] [--metrics]` (`--metrics`: `cpu= mem= took` für Prompt 011) |
 | Icons neu | `npx tauri icon src-tauri/icons/source/app-icon.svg -o src-tauri/icons` (danach `android/`, `ios/` löschen) |
 
 ## Layout
@@ -40,6 +41,7 @@ src/                         Angular 22 (zoneless, Signals, OnPush, Standalone)
                              Scroll-Modell), table-logic, highlight (Inline-Tokens, cellSegments), columns-logic
                              (Spaltenansicht: Layout, Breiten, Spannen), column-menu (Spaltenmenü),
                              overview-ruler + ruler-logic (Overview Ruler, Canvas)
+  app/features/fields/       FieldsDialog „Felder“ (Prompt 011), fields-logic (Prüfen, Vorschläge), rule-from-selection
   app/features/merge/        MergeDialog (Prompt 006), merge-logic (Quellenmaske, Namen, Farben, Dialogregeln)
   app/features/detail/       DetailPanel (Prompt 004), detail-format (JSON/XML-Tokenizer), detail-logic (Layout, Neuladen)
   app/shared/splitter.ts     wiederverwendbarer Splitter (Pointer Events, Tastatur), Rechnung in splitter-logic.ts
@@ -52,6 +54,7 @@ src-tauri/src/               Rust; alles außer commands.rs und lib.rs ist frei 
   indexer.rs                 LineIndex (16 Byte je Zeile), LineSplitter, LineReader, Segmente
   level.rs, profile.rs       Level-Erkennung, eingebaute und eigene Profile (samt Layouts), Vorschlag
   fields.rs                  Formaterkennung, Felder je Zeile (Spannen in UTF-16), JSON/logfmt/FIX/W3C-Scanner, Inferenz
+  extract.rs                 extrahierte Felder (Prompt 011): ExtractRule, RuleBook je Profil, Extractors, parse_value, suggest
   timestamp.rs               Zeitstempel erkennen und nach µs UTC wandeln (auch für den Merge, Prompt 006)
   filter.rs                  gefilterte Zeilenliste (inkrementell), Textsuche, Ausdruck je Eintrag
   filter_expr.rs             Filterbaum: FilterExpr (UND/ODER/NICHT, Text, Level, Feld, Zeit, Abschnitt, Zeilen) kompiliert, Quellenmaske
@@ -148,12 +151,23 @@ samples/                     Beispiel-Logs
 - **CSP:** `dangerousDisableAssetCspModification: ["style-src"]` ist nötig. Sonst ergänzt Tauri Nonces, `'unsafe-inline'`
   gilt nicht mehr und Angulars Komponenten-Styles fehlen.
 - **`backgroundThrottling: disabled`:** Ein Live-Viewer muss auch hinter anderen Fenstern aktuell bleiben.
+- **Extrahierte Felder (Prompt 011):** Regeln (Regex mit genau einer Gruppe über die Spanne einer Quellspalte, erster
+  Treffer) je Profil im `RuleBook`, das alle Sitzungen teilen (`OpenOptions.rules`); `FieldParser::with_rules` hängt ihre
+  Spalten hinter die des Formats, `SessionData::set_format` wendet sie immer an, `refresh_rules` gibt neue Revision und
+  `viewGeneration`. Ausgewertet bei `get_lines` und in Feld-Bedingungen (`FieldParser::field`), nichts im Index;
+  Fortsetzungszeilen ohne Extraktion, ab 5 Regeln einer Quelle `RegexSet` als Vorfilter. Zahlen nur über `parse_value`
+  (Basiseinheit s bzw. Byte, KB = 1024, `1,234` ist kein Wert). Name = Spalten-Id, darf keine Spalte des Formats sein
+  (`invalid_rule` mit `nodeId` = Regel-Id, keine Umbenennung). Vorschläge (`suggest_fields`) beim ersten Laden, nur ohne
+  Regeln und einmal je Profil (`fieldHints`), als Hinweis in der Statusleiste. Auswertung (012) soll auf
+  `FieldParser::field` + `parse_value` im Hintergrund-Job aufsetzen.
 - **Grenzen Merge:** höchstens 16 Quellen, verspätete Zeilen stehen am Ende, bis „Neu sortieren“; keine Zeilennummer der
   Quelldatei (nur Byte-Offset); ohne Zeitzone gilt die lokale Zone; ohne Zeitstempel in den ersten 200 Zeilen
   `no_timestamps`. Truncation einer Quelle, Rotation ohne Behalten oder mehr als 32 Segmente einer Quelle mischen alles neu.
 - **Grenzen Filterbaum:** höchstens 64 Bedingungen (Blätter), 16 Ebenen, 4096 Zeichen je Text/Muster/Wert, Regex-
   Größenlimit 32 MB; Fehler kommen als `invalid_search` mit `nodeId`. Feldbedingungen gelten mit dem Format beim Setzen
   (bei neuen Spalten setzt das Frontend den Filter neu), Zeilen-Bedingungen meinen Zeilennummern der aktuellen `epoch`.
+- **Grenzen Felder:** höchstens 32 Regeln je Profil, 40 Zeichen je Name, 4096 je Muster, ausgewertet in den ersten 16 KB
+  der Quellspalte; Vorschläge aus höchstens 2000 Köpfen, höchstens 10, ab 5 % Anteil.
 - **Grenzen:** höchstens 2³² Zeilen je Sitzung (Index dann 64 GB), Anzeige 128 KB je Zeile, Suche 1 MB je Zeile, Zeile ohne
   Ende wird bei 16 MB geteilt, Detail-Panel 1 MiB je Eintrag (Formatieren bis 256 KB). Felder: höchstens 12 Spalten aus JSON-/logfmt-Schlüsseln bzw. FIX-Tags, zerlegt werden 16 KB. Truncation wird über die kleinere Größe erkannt; wird eine Datei geleert und zwischen zwei
   Prüfungen über die alte Größe hinaus neu beschrieben, bleibt das unbemerkt.
