@@ -28,6 +28,9 @@ Architektur verbaut nichts davon.
 - Feld-Extraktion (Prompt 011): Messwerte aus der Nachricht als Spalten (Text, Zahl, Prozent, Dauer, Größe mit
   Einheiten), Vorschläge beim Öffnen als Hinweis, Dialog „Felder“, „Spalte aus Auswahl“ mit Vorschau, Regeln je Format,
   Feld-Bedingungen vergleichen in Basiseinheit (`took > 500 ms`)
+- Dashboard und SQL-Timeline (Prompt 012): SQLite je Tab (erst beim ersten Öffnen), eine Zeile je Eintrag mit Zeit,
+  Level, Quelle und Zahlenfeldern; Panels mit SQL (Linie, Fläche, Säulen, gestapelt, Kreis, Tabelle, Einzelwert),
+  Vorlagen, `bucket()`, Klick springt zur Zeile oder setzt einen Filter, live alle 5 s, abgesicherte Abfragen
 - Overview Ruler und Navigation (Prompt 007): Leiste rechts mit Fehlern, Warnungen, Lesezeichen, Auswahl und
   sichtbarem Bereich, Klick springt; `E`/`W` nächster Fehler bzw. Warnung, `M`/`N` Lesezeichen (nur im Speicher), `G`
   aus dem Filter ins Gesamtlog und zurück
@@ -46,8 +49,7 @@ Filtern aus dem Spaltenkopf (Wert der gewählten Zeile; die Zelle kann es schon)
 Layout je Quelle beim Merge (006), einklappbare Stacktraces, Zeilenumbruch als Folgezeilen fester Höhe (eine Logzeile belegt
 mehrere Tabellenzeilen; braucht eine Zeilen-zu-Bildschirmzeilen-Liste im Backend, neu je Breite und Schrift).
 
-**Felder (Nachfragen zu 011):** Auswertung und Diagramme der Werte (012, setzt auf `parse_value` im Hintergrund-Job
-auf), mehrere Treffer je Zeile als Liste, abgeleitete Spalten (Formeln), Felder aus Fortsetzungszeilen, Anlegen aus dem
+**Felder (Nachfragen zu 011):** mehrere Treffer je Zeile als Liste, abgeleitete Spalten (Formeln), Felder aus Fortsetzungszeilen, Anlegen aus dem
 Stacktrace, Regeln je Datei statt je Format.
 
 **Seitenleiste:** Thread/Logger als Knoten und Statistik-Zeilen (011),
@@ -60,6 +62,12 @@ Ziehen im Ruler, Mini-Vorschau beim Hover, eigene Regex-Marker.
 **Filter:** Query-DSL (`level:ERROR AND NOT "x"`) auf dem Ausdruck aus 010, Bedingungen des Baums als Highlight-Farben,
 Zeitfenster per Ziehen im Zeitstrahl (014), Filter-Vorlagen teilen, eigene Regex-Marker, persistente Lesezeichen und
 Notizen. Nachfragen zu 010: Zeit-Bedingung je Quelle beim Merge, Zeilenbedingungen über eine Truncation hinweg.
+
+**Dashboard (Nachfragen zu 012):** Teilen und Export (auch PDF), Alarme aus Abfragen, nur die gefilterte Ansicht
+auswerten (würde die Filterliste in die Datenbank kopieren), Nachricht als durchsuchbare Spalte (FTS), Abfragen über
+mehrere Tabs (dafür gibt es Merge), Panels frei ziehen statt Größenstufen, Zoom/Zeitauswahl im Diagramm als Filter
+(014), Säule ohne Zeitachse als Filter-Tab (013), Tabellen-Panel auf der GuiExpert Table, gruppierte `GROUP BY`-Abfragen
+schneller (vorberechnete Minuten, ~1 s je 5 Mio. Einträge heute).
 
 **Alarme:** Schwellenwert-, Muster- und Heartbeat-Trigger; Desktop-Benachrichtigung, E-Mail, Webhooks, Incident-Tools.
 

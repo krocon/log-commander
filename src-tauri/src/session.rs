@@ -17,11 +17,13 @@ use crate::level::{Level, LevelDetector, PrevLine};
 use crate::merge::{MergeSource, MergeWorker};
 use crate::model::{
     ColumnSet, EntryDetail, EntryRange, FilterInfo, FindHit, LogLine, Overview, OverviewMark,
-    SessionInfo, SessionUpdate, SourceInfo, SourceUpdate, Status,
+    ReportResult, ReportSchema, ReportStatus, SessionInfo, SessionUpdate, SourceInfo, SourceUpdate,
+    Status,
 };
 use crate::overview::{level_bit, LevelSummary};
 use crate::platform::open_shared;
 use crate::profile::{Profile, ProfileRegistry};
+use crate::report_db::{ReportDb, ReportLimits};
 use crate::tail::Tailer;
 use memchr::memchr;
 use parking_lot::{Mutex, RwLock};
@@ -56,6 +58,10 @@ pub struct OpenOptions {
     pub keep_on_rotate: bool,
     /// Extraction rules per profile (prompt 011), shared with the other sessions.
     pub rules: Arc<RuleBook>,
+    /// Folder for the dashboard database (prompt 012); without one there is no dashboard.
+    pub report_dir: Option<PathBuf>,
+    /// Limits of dashboard queries (tests use smaller ones).
+    pub report_limits: ReportLimits,
 }
 
 impl Default for OpenOptions {
@@ -63,6 +69,8 @@ impl Default for OpenOptions {
         Self {
             keep_on_rotate: true,
             rules: Arc::default(),
+            report_dir: None,
+            report_limits: ReportLimits::default(),
         }
     }
 }
@@ -118,6 +126,8 @@ pub struct SessionData {
     pub resort_requested: bool,
     /// Extraction rules of every profile (prompt 011): each format gets the rules of its profile.
     pub rule_book: Arc<RuleBook>,
+    /// The dashboard database (prompt 012), written by its builder.
+    pub report: Option<ReportStatus>,
 }
 
 impl SessionData {
@@ -161,6 +171,7 @@ impl SessionData {
             sources: Vec::new(),
             resort_requested: false,
             rule_book: Arc::clone(&options.rules),
+            report: None,
         }
     }
 
@@ -229,6 +240,7 @@ impl SessionData {
             pending_bytes: self.pending_bytes,
             frozen_stale: self.frozen_stale,
             sources: self.sources.clone(),
+            report: self.report.clone(),
         }
     }
 }
@@ -276,6 +288,10 @@ pub struct LogSession {
     shared: Arc<Shared>,
     worker: Mutex<Option<JoinHandle<()>>>,
     _watchers: Vec<notify::RecommendedWatcher>,
+    /// Dashboard (prompt 012): created when a dashboard opens the first time.
+    report: Mutex<Option<Arc<ReportDb>>>,
+    report_dir: Option<PathBuf>,
+    report_limits: ReportLimits,
 }
 
 impl LogSession {
@@ -297,6 +313,8 @@ impl LogSession {
             ));
         }
         let file = open_shared(&path).map_err(|e| AppError::from_io(&e, &path))?;
+        let report_dir = options.report_dir.clone();
+        let report_limits = options.report_limits;
         let detector = Arc::new(default_profile.detector()?);
         let data = SessionData::new(detector, default_profile.id.clone(), meta.len(), &options);
         let (wake, wake_rx): (Sender<()>, Receiver<()>) = channel();
@@ -318,6 +336,9 @@ impl LogSession {
             shared,
             worker: Mutex::new(Some(worker)),
             _watchers: watcher.into_iter().collect(),
+            report: Mutex::new(None),
+            report_dir,
+            report_limits,
         })
     }
 
@@ -330,6 +351,8 @@ impl LogSession {
         sink: UpdateSink,
     ) -> AppResult<Self> {
         let worker = MergeWorker::prepare(sources)?;
+        let report_dir = options.report_dir.clone();
+        let report_limits = options.report_limits;
         let first = worker.first_profile();
         let mut data = SessionData::new(
             Arc::new(first.detector()?),
@@ -358,6 +381,9 @@ impl LogSession {
             shared,
             worker: Mutex::new(Some(handle)),
             _watchers: watchers,
+            report: Mutex::new(None),
+            report_dir,
+            report_limits,
         })
     }
 
@@ -389,6 +415,87 @@ impl LogSession {
             update: data.update(),
             sources: self.sources.clone(),
         }
+    }
+
+    // ---- Dashboard (prompt 012) ----
+
+    /// The dashboard of this tab is shown: creates the database the first time, chooses its fields
+    /// (`None`: the numbers) and (re)starts the builder, which catches up every 5 s from now on.
+    pub fn open_report(&self, fields: Option<Vec<String>>) -> AppResult<ReportSchema> {
+        let db = {
+            let mut slot = self.report.lock();
+            match slot.as_ref() {
+                Some(db) => Arc::clone(db),
+                None => {
+                    let dir = self.report_dir.as_ref().ok_or_else(|| {
+                        AppError::new(ErrorCode::Io, "no cache folder for the dashboard")
+                    })?;
+                    let names = if self.is_merge() {
+                        self.sources.iter().map(|s| s.file_name.clone()).collect()
+                    } else {
+                        vec![self
+                            .path
+                            .file_name()
+                            .map_or_else(String::new, |n| n.to_string_lossy().into_owned())]
+                    };
+                    let db = Arc::new(ReportDb::create(dir, self.id, names, self.report_limits)?);
+                    *slot = Some(Arc::clone(&db));
+                    db
+                }
+            }
+        };
+        db.set_fields(fields);
+        db.start(Arc::clone(&self.shared), self.id)?;
+        self.report_schema()
+    }
+
+    /// The dashboard is hidden: the builder stops (the file stays until the session closes).
+    pub fn close_report(&self) {
+        let db = self.report.lock().clone();
+        if let Some(db) = db {
+            db.pause();
+        }
+    }
+
+    /// Whether a dashboard database exists, and whether its builder runs.
+    pub fn report_active(&self) -> (bool, bool) {
+        match self.report.lock().as_ref() {
+            Some(db) => (true, db.is_running()),
+            None => (false, false),
+        }
+    }
+
+    /// The file of the dashboard database, if there is one.
+    pub fn report_path(&self) -> Option<PathBuf> {
+        self.report
+            .lock()
+            .as_ref()
+            .map(|db| db.path().to_path_buf())
+    }
+
+    /// Columns of the table and the fields that could be added, for the help of the editor.
+    pub fn report_schema(&self) -> AppResult<ReportSchema> {
+        let db = self.report_db()?;
+        let (format, status) = {
+            let data = self.shared.data.read();
+            (Arc::clone(&data.format), data.report.clone())
+        };
+        Ok(db.schema(&format, status))
+    }
+
+    /// One read-only query on the dashboard database; a newer one of the same `slot` stops it. Runs
+    /// on its own connection, without the session lock: run it blocking.
+    pub fn run_report(&self, sql: &str, slot: &str) -> AppResult<ReportResult> {
+        self.report_db()?.query(sql, slot)
+    }
+
+    fn report_db(&self) -> AppResult<Arc<ReportDb>> {
+        self.report.lock().clone().ok_or_else(|| {
+            AppError::new(
+                ErrorCode::InvalidQuery,
+                "the dashboard of this tab is not open",
+            )
+        })
     }
 
     /// Merges all sources again from the start (late entries in place), as a new epoch.
@@ -1091,6 +1198,10 @@ impl Drop for LogSession {
         // Stops a running job at its next check.
         self.shared.job_generation.fetch_add(1, Ordering::SeqCst);
         self.shared.wake();
+        if let Some(report) = self.report.lock().take() {
+            // Stops the builder at its next batch and deletes the file.
+            report.shutdown();
+        }
         if let Some(worker) = self.worker.lock().take() {
             let _ = worker.join();
         }
@@ -1292,6 +1403,8 @@ pub struct SessionManager {
     next_id: AtomicU64,
     profiles: RwLock<ProfileRegistry>,
     rules: Arc<RuleBook>,
+    /// Folder for dashboard databases (prompt 012), set at start.
+    report_dir: RwLock<Option<PathBuf>>,
 }
 
 impl Default for SessionManager {
@@ -1301,6 +1414,7 @@ impl Default for SessionManager {
             next_id: AtomicU64::new(1),
             profiles: RwLock::new(ProfileRegistry::default()),
             rules: Arc::default(),
+            report_dir: RwLock::new(None),
         }
     }
 }
@@ -1313,6 +1427,9 @@ impl SessionManager {
         sink: UpdateSink,
     ) -> AppResult<SessionInfo> {
         options.rules = Arc::clone(&self.rules);
+        if options.report_dir.is_none() {
+            options.report_dir = self.report_dir.read().clone();
+        }
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let default_profile = self.profiles.read().find(crate::profile::GENERIC_PROFILE)?;
         let session = LogSession::open(id, path, options, &default_profile, sink)?;
@@ -1328,6 +1445,9 @@ impl SessionManager {
         sink: UpdateSink,
     ) -> AppResult<SessionInfo> {
         options.rules = Arc::clone(&self.rules);
+        if options.report_dir.is_none() {
+            options.report_dir = self.report_dir.read().clone();
+        }
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let session = LogSession::open_merged(id, sources, options, sink)?;
         let info = session.info();
@@ -1340,6 +1460,11 @@ impl SessionManager {
         session
             .map(drop)
             .ok_or_else(|| AppError::unknown_session(id))
+    }
+
+    /// The folder of this process for dashboard databases (prompt 012).
+    pub fn set_report_dir(&self, dir: PathBuf) {
+        *self.report_dir.write() = Some(dir);
     }
 
     pub fn session(&self, id: u64) -> AppResult<Arc<LogSession>> {

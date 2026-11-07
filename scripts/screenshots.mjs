@@ -5,6 +5,7 @@ import { createServer } from 'node:http';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { extname, join, normalize } from 'node:path';
 import { webkit } from 'playwright';
+import { makeEntry } from './gen-log.mjs';
 
 const root = new URL('..', import.meta.url).pathname;
 const dist = join(root, 'dist/log-commander/browser');
@@ -173,6 +174,30 @@ await metrics.waitForSelector('.lt-cell[data-col=cpu]:not(.lt-spanned)');
 await metrics.waitForTimeout(300);
 await scrollRight();
 await shot(metrics, 'extracted');
+
+// Dashboard (prompt 012): two hours of a shop with measurements, the default panels.
+{
+  let state = 4711;
+  const random = () => (state = (state * 16807) % 2147483647) / 2147483647;
+  const start = Date.UTC(2026, 0, 15, 9);
+  let text = '';
+  for (let i = 0; i < 1400; i++) {
+    text += `${makeEntry('spring', new Date(start + i * 5000 + Math.floor(random() * 4000)), random, 0.2, true)}\n`;
+  }
+  for (const theme of ['dark', 'light']) {
+    const dash = await page(browser, { theme, only: { 'shop.log': text } });
+    await dash.keyboard.press('Meta+Shift+D');
+    await dash.waitForSelector('app-dashboard-panel .rc[data-ready="1"]');
+    await dash.waitForTimeout(500);
+    await shot(dash, theme === 'dark' ? 'dashboard' : 'dashboard-light');
+    if (theme === 'dark') {
+      await dash.click('app-dashboard button.schema-toggle');
+      await dash.click('app-dashboard-panel:first-of-type button.edit');
+      await dash.waitForTimeout(300);
+      await shot(dash, 'dashboard-sql');
+    }
+  }
+}
 
 const narrow = await page(browser, { theme: 'dark' });
 await narrow.setViewportSize({ width: 760, height: 520 });

@@ -23,6 +23,8 @@ pub enum ErrorCode {
     InvalidMerge,
     /// An extraction rule (prompt 011) that cannot be used; `node_id` names the rule.
     InvalidRule,
+    /// A dashboard query (prompt 012) that is not allowed or fails; the message is the engine's.
+    InvalidQuery,
 }
 
 #[derive(Debug, Clone, Serialize, thiserror::Error)]

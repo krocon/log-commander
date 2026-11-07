@@ -18,6 +18,7 @@ import { getMatches } from '@tauri-apps/plugin-cli';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { DEFAULT_SETTINGS } from './core/settings/settings.models';
 import { SettingsService } from './core/settings/settings.service';
+import { DashboardComponent } from './features/dashboard/dashboard';
 import { DetailPanelComponent } from './features/detail/detail-panel';
 import { FieldsDialogComponent } from './features/fields/fields-dialog';
 import { PANEL_MIN, panelHeight, panelMax } from './features/detail/detail-logic';
@@ -40,6 +41,7 @@ import { SplitterComponent } from './shared/splitter';
   selector: 'app-root',
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
+    DashboardComponent,
     DetailPanelComponent,
     FieldsDialogComponent,
     LogTableViewComponent,
@@ -80,27 +82,44 @@ import { SplitterComponent } from './shared/splitter';
           />
         }
         <div class="column">
-          <div class="log-row">
-            <app-log-table-view class="log" [session]="session" />
-            @if (settings.settings().showOverviewRuler) {
-              <app-overview-ruler [session]="session" />
+          @let dash = session.mode() === 'dashboard';
+          <div class="log-layer" [class.behind]="dash" [inert]="dash">
+            <div class="log-row">
+              <app-log-table-view class="log" [session]="session" />
+              @if (settings.settings().showOverviewRuler) {
+                <app-overview-ruler [session]="session" />
+              }
+            </div>
+            @if (panelH() > 0) {
+              <app-splitter
+                orientation="horizontal"
+                pane="after"
+                label="Höhe des Detail-Panels"
+                title="Höhe ziehen, Pfeiltasten verschieben, Doppelklick: Standardhöhe"
+                controls="detail-panel"
+                [size]="panelH()"
+                [min]="panelMin"
+                [max]="panelMaxH()"
+                [defaultSize]="defaultDetailHeight"
+                (sizeChange)="dragHeight.set($event)"
+                (sizeCommit)="commitHeight($event)"
+              />
+              <app-detail-panel
+                id="detail-panel"
+                [session]="session"
+                [style.height.px]="panelH()"
+              />
             }
           </div>
-          @if (panelH() > 0) {
-            <app-splitter
-              orientation="horizontal"
-              pane="after"
-              label="Höhe des Detail-Panels"
-              title="Höhe ziehen, Pfeiltasten verschieben, Doppelklick: Standardhöhe"
-              controls="detail-panel"
-              [size]="panelH()"
-              [min]="panelMin"
-              [max]="panelMaxH()"
-              [defaultSize]="defaultDetailHeight"
-              (sizeChange)="dragHeight.set($event)"
-              (sizeCommit)="commitHeight($event)"
-            />
-            <app-detail-panel id="detail-panel" [session]="session" [style.height.px]="panelH()" />
+          @if (dash) {
+            <!-- Prompt 012: over the log, which keeps running below; loaded on first use. -->
+            @for (s of [session]; track s.id) {
+              @defer (on immediate) {
+                <app-dashboard class="dash-layer" [session]="s" />
+              } @placeholder {
+                <p class="dash-layer loading">Dashboard wird geladen …</p>
+              }
+            }
           }
         </div>
       </div>
@@ -158,6 +177,27 @@ import { SplitterComponent } from './shared/splitter';
       min-width: 0;
       display: flex;
       flex-direction: column;
+      position: relative;
+    }
+    .log-layer {
+      flex: 1 1 0;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    .log-layer.behind {
+      visibility: hidden;
+    }
+    .dash-layer {
+      position: absolute;
+      inset: 0;
+      z-index: 2;
+    }
+    .dash-layer.loading {
+      margin: 0;
+      padding: 16px;
+      background: var(--bg-app);
+      color: var(--text-dim);
     }
     .log-row {
       flex: 1 1 0;
@@ -349,6 +389,11 @@ export class App implements OnInit, OnDestroy {
     } else if (key === 'b' && !event.shiftKey && !event.altKey) {
       event.preventDefault();
       this.sidebar.toggle();
+    } else if (key === 'd' && event.shiftKey && !event.altKey) {
+      // Prompt 012: log or dashboard of the active tab.
+      event.preventDefault();
+      const session = this.sessions.active();
+      if (session) this.sessions.toggleDashboard(session);
     } else if (key === ',') {
       event.preventDefault();
       this.settingsOpen.set(true);

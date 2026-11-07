@@ -17,6 +17,7 @@
 | Alles außer E2E | `npm run check` |
 | E2E im echten WebView | `npm run e2e` (Debug-Build, echtes Backend, echte Datei; `-- --no-build` zum Wiederholen) |
 | Messung 500 MB | `cd src-tauri && cargo test --release --test tail_integration -- --ignored --nocapture measure_` |
+| Messung Dashboard | `cd src-tauri && cargo test --release --test report_integration -- --ignored --nocapture measure_` |
 | Messung Feld-Regeln | `cd src-tauri && cargo test --release --test extract_integration -- --ignored --nocapture measure_` |
 | Messung Merge 2 × 500 MB | `cd src-tauri && cargo test --release --test merge_integration -- --ignored --nocapture measure_merge` |
 | Kontrast WCAG AA | `npm run contrast` (prüft `src/styles.css`) |
@@ -61,6 +62,7 @@ src-tauri/src/               Rust; alles außer commands.rs und lib.rs ist frei 
   overview.rs                LevelSummary: Level-Bits je Abschnitt für Overview Ruler und find_level (max. 64 KB)
   merge.rs                   mehrere Dateien als eine Sitzung: Merger (rein), Worker (Folgen, Rotation, Haltepuffer)
   encoding.rs, platform.rs   Encodings, ANSI; Share-Flags und Datei-Identität je OS
+  report_db.rs               Dashboard (012): SQLite je Sitzung, Builder-Thread, abgesicherte Abfragen, bucket()
   e2e.rs                     nur Debug-Build: Szenario im WebView, siehe scripts/e2e/
 scripts/e2e/                 run.mjs (Harness), scenario.js (läuft im WebView), mock-ipc.js (nur für Screenshots)
 samples/                     Beispiel-Logs
@@ -168,9 +170,24 @@ samples/                     Beispiel-Logs
   (bei neuen Spalten setzt das Frontend den Filter neu), Zeilen-Bedingungen meinen Zeilennummern der aktuellen `epoch`.
 - **Grenzen Felder:** höchstens 32 Regeln je Profil, 40 Zeichen je Name, 4096 je Muster, ausgewertet in den ersten 16 KB
   der Quellspalte; Vorschläge aus höchstens 2000 Köpfen, höchstens 10, ab 5 % Anteil.
+- **Grenzen Dashboard:** 10 000 Zeilen/32 MB je Ergebnis, 10 s je Abfrage, 64 KB SQL, 64 KB je Wert, 50 Spalten, Text-Felder auf
+  1 KB gekürzt, 24 Panels, 24 Reihen je Diagramm, über 5000 Punkte wird ein größeres `bucket` vorgeschlagen. Nur die
+  ganze Datei, nicht die gefilterte Ansicht.
 - **Grenzen:** höchstens 2³² Zeilen je Sitzung (Index dann 64 GB), Anzeige 128 KB je Zeile, Suche 1 MB je Zeile, Zeile ohne
   Ende wird bei 16 MB geteilt, Detail-Panel 1 MiB je Eintrag (Formatieren bis 256 KB). Felder: höchstens 12 Spalten aus JSON-/logfmt-Schlüsseln bzw. FIX-Tags, zerlegt werden 16 KB. Truncation wird über die kleinere Größe erkannt; wird eine Datei geleert und zwischen zwei
   Prüfungen über die alte Größe hinaus neu beschrieben, bleibt das unbemerkt.
+
+- **Dashboard (012):** SQLite (`rusqlite` bundled, +1,8 MiB; DuckDB wäre +43 MiB) in
+  `<app-cache>/reports/<pid>/session-<id>.sqlite`, Ordner per gesperrter `lock`-Datei je Prozess (Reste nach Absturz
+  löscht der Start). Erst beim ersten Öffnen eines Dashboards, vorher weder Datei noch Thread. Tabelle
+  `log(line 1-basiert, ts ms UTC, level, source, Zahlen/angehakte Felder)`, nur Köpfe, nie die Nachricht. Builder auf
+  eigenem Thread mit eigener Verbindung, Sperre nur zum Kopieren eines Stapels; Nachziehen alle 5 s nur bei offenem
+  Dashboard; neue `epoch`/`columnsRevision`/Felder bauen neu. Abfragen: eigene Read-only-Verbindung je Abfrage,
+  `query_only`, `temp_store = MEMORY`, Authorizer (nur Lesen), `readonly()`, eine Anweisung, Limits (64 KB je Wert, 256 Zeichen
+  `LIKE`-Muster, 50 Spalten), 10 s über Progress-Handler, 10 000 Zeilen, höchstens 6 Abfragen zugleich, Schließen
+  unterbricht laufende (`sqlite3_interrupt`), Heap-Limit 768 MiB prozessweit,
+  Extension-Loading per `.cargo/config.toml` nicht gebaut. Neuer Fehlercode `invalid_query`. Rust ≥ 1.89
+  (`File::try_lock`). Details: `prompts/done/012-dashboard-sql-timeline.design.md`.
 
 ## Arbeitsweise
 

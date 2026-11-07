@@ -104,6 +104,20 @@ const SEARCH_DEBOUNCE_MS = 200;
       >
         ▤ Detail
       </button>
+      <button
+        type="button"
+        class="dashboard-toggle"
+        [disabled]="!s"
+        [attr.aria-pressed]="s?.mode() === 'dashboard'"
+        [title]="
+          s?.mode() === 'dashboard'
+            ? 'Zurück zum Log (⌘/Strg+Shift+D)'
+            : 'Dashboard: Diagramme über die Zeit per SQL (⌘/Strg+Shift+D)'
+        "
+        (click)="s && sessions.toggleDashboard(s)"
+      >
+        ▥ Dashboard
+      </button>
     </div>
     <div class="group chips" role="group" [hidden]="!s" aria-label="Log-Level">
       @for (level of visibleLevels(); track level) {

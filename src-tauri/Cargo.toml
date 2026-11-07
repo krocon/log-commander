@@ -6,7 +6,7 @@ authors = ["Marc Kronberg"]
 license = "MIT"
 repository = "https://github.com/krocon/log-commander"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.89"
 
 [lib]
 name = "log_commander_lib"
@@ -24,6 +24,10 @@ memchr = "2"
 notify = "8.2"
 parking_lot = "0.12"
 regex = "1"
+# Dashboard (prompt 012): SQL over a per-session table of entry heads. Bundled, without extension
+# loading (see `.cargo/config.toml`); `hooks` for the authorizer and the time limit, `functions` for
+# `bucket()`, `limits` for length and attach limits.
+rusqlite = { version = "0.41", features = ["bundled", "functions", "hooks", "limits"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri = { version = "2", features = [] }
@@ -32,6 +36,10 @@ tauri-plugin-dialog = "2"
 tauri-plugin-store = "2"
 tauri-plugin-window-state = "2"
 thiserror = "2"
+
+# Free disk space before building the dashboard database (prompt 012).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 # File identity (rotation detection) needs GetFileInformationByHandle on Windows.
 [target.'cfg(windows)'.dependencies]

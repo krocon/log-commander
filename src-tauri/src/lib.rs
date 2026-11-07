@@ -8,6 +8,7 @@
 //! - `fields`, `timestamp`: format detection, fields of a line, timestamps
 //! - `filter`: filtered line list, text search
 //! - `merge`: several files as one session, in time order
+//! - `report_db`: the dashboard database (SQLite) and its guarded queries
 //! - `commands`: the thin Tauri command layer; everything else is free of Tauri
 
 pub mod commands;
@@ -26,13 +27,14 @@ pub mod model;
 pub mod overview;
 pub mod platform;
 pub mod profile;
+pub mod report_db;
 pub mod session;
 pub mod tail;
 pub mod timestamp;
 
 use session::SessionManager;
 use tauri::menu::{Menu, MenuItem, SubmenuBuilder};
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 
 const MENU_OPEN: &str = "open-log";
 const MENU_OPEN_PATH: &str = "open-log-path";
@@ -55,6 +57,22 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .manage(SessionManager::default())
+        .setup(|app| {
+            // Dashboard databases (prompt 012) live in this process's cache folder; what a crashed
+            // process left behind is removed here.
+            match app.path().app_cache_dir() {
+                Ok(cache) => match report_db::ReportDir::prepare(&cache) {
+                    Ok(dir) => {
+                        app.state::<SessionManager>()
+                            .set_report_dir(dir.path.clone());
+                        app.manage(dir);
+                    }
+                    Err(e) => eprintln!("no folder for dashboards: {e}"),
+                },
+                Err(e) => eprintln!("no cache folder: {e}"),
+            }
+            Ok(())
+        })
         .menu(build_menu)
         .on_menu_event(|app, event| {
             if event.id() == MENU_OPEN {
@@ -93,6 +111,10 @@ pub fn run() {
             commands::load_extract_rules,
             commands::suggest_fields,
             commands::preview_extract_rule,
+            commands::open_report,
+            commands::close_report,
+            commands::run_report,
+            commands::get_report_schema,
             #[cfg(debug_assertions)]
             e2e::e2e_report,
         ])

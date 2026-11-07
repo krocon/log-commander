@@ -1,0 +1,5 @@
+# Prompt 012: the bundled SQLite of the dashboard is built without extension loading, so no SQL
+# (`load_extension(...)`) can load native code, whatever the authorizer says. Applies to every cargo
+# call below this folder (npm scripts from the root, `cargo tauri dev` in src-tauri).
+[env]
+LIBSQLITE3_FLAGS = { value = "-DSQLITE_OMIT_LOAD_EXTENSION -DSQLITE_DQS=0", force = true }

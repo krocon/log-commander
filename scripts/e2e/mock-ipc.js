@@ -99,6 +99,7 @@
       fileSize: session.size,
       epoch: 0,
       viewGeneration: session.generation,
+      report: session.report ?? null,
       columnsRevision: session.columnsRevision ?? 1,
       filterPending: false,
       filterProgress: 1,
@@ -241,6 +242,51 @@
       source: lines[first].source ?? 0,
       byteOffset: 0,
     };
+  }
+
+
+  // Dashboard (prompt 012): heads with time and `took` in seconds.
+  function reportHeads(session) {
+    return session.lines
+      .filter((l) => !l.isContinuation)
+      .map((l) => {
+        const iso = l.text.match(/^\d{4}-\d{2}-\d{2}T[\d:.]+(Z|[+-]\d{2}:\d{2})/);
+        const took = l.text.match(/took (\d+(?:\.\d+)?)(ms|s)\b/);
+        return {
+          line: l.line + 1,
+          ts: iso ? Date.parse(iso[0]) : null,
+          level: l.level,
+          took: took ? Number(took[1]) / (took[2] === 'ms' ? 1000 : 1) : null,
+        };
+      });
+  }
+
+  function reportSchema(session) {
+    const column = (name, sqlType, description, extra = {}) => ({
+      name,
+      sqlType,
+      description,
+      column: null,
+      kind: null,
+      unit: null,
+      included: true,
+      ...extra,
+    });
+    const columns = [
+      column('line', 'INTEGER', 'Zeilennummer des Eintrags (wie in der Ansicht)'),
+      column('ts', 'INTEGER', 'Zeit in ms seit 1970 (UTC), NULL ohne Zeit'),
+      column('level', 'TEXT', "Level, z. B. 'ERROR'"),
+      column('source', 'INTEGER', 'Quelle (0 bei einer Datei), Namen in sources'),
+    ];
+    if (reportHeads(session).some((h) => h.took !== null)) {
+      columns.push(column('took', 'REAL', 'took', { column: 'took', kind: 'duration' }));
+    }
+    for (const id of ['thread', 'logger']) {
+      if (session.columns.some((c) => c.id === id)) {
+        columns.push(column(id, 'TEXT', id, { column: id, kind: 'text', included: false }));
+      }
+    }
+    return { table: 'log', columns, sources: ['app.log'], status: session.report ?? null };
   }
 
   const PROFILES = [
@@ -431,14 +477,94 @@
         .lines.slice(first, last + 1)
         .map((l) => `${l.text}\n`)
         .join(''),
+    // Dashboard (prompt 012), enough for the screenshot: the templates' SQL recognised by pattern, over the
+    // entry heads of the mock session (time from the ISO prefix, `took` from the message).
+    open_report({ sessionId }) {
+      const session = sessions.get(sessionId);
+      session.report = { state: 'ready', progress: 1, rows: 0, lines: session.lines.length, generation: 1, reason: null, message: null, lowSpace: false, size: 0 };
+      session.report.rows = reportHeads(session).length;
+      session.report.size = session.report.rows * 44;
+      callbacks.get(session.channel)?.({ message: update(session), index: session.sent++ });
+      return reportSchema(session);
+    },
+    close_report: () => null,
+    get_report_schema: ({ sessionId }) => reportSchema(sessions.get(sessionId)),
+    run_report({ sessionId, sql }) {
+      const heads = reportHeads(sessions.get(sessionId));
+      const minute = (ts) => Math.floor(ts / 60000) * 60000;
+      const timed = heads.filter((h) => h.ts !== null);
+      const groups = (key) => {
+        const map = new Map();
+        for (const h of timed) {
+          const k = key(h);
+          if (!map.has(k)) map.set(k, []);
+          map.get(k).push(h);
+        }
+        return [...map.entries()];
+      };
+      const result = (columns, rows) => ({ columns, rows, truncated: false, elapsedMs: 3 });
+      const range = sql.match(/ts >= (\d+) AND ts < (\d+)/);
+      if (range) {
+        const inRange = timed.filter((h) => h.ts >= Number(range[1]) && h.ts < Number(range[2]));
+        return result(['line'], [[inRange.length ? Math.min(...inRange.map((h) => h.line)) : null]]);
+      }
+      if (/GROUP BY t, level/.test(sql)) {
+        return result(
+          ['t', 'level', 'n'],
+          groups((h) => `${minute(h.ts)}|${h.level}`).map(([k, list]) => {
+            const [t, level] = k.split('|');
+            return [Number(t), level, list.length];
+          }),
+        );
+      }
+      if (/fehlerrate/.test(sql)) {
+        return result(
+          ['t', 'fehlerrate'],
+          groups((h) => minute(h.ts)).map(([t, list]) => [
+            t,
+            Math.round((10000 * list.filter((h) => h.level === 'ERROR' || h.level === 'FATAL').length) / list.length) / 100,
+          ]),
+        );
+      }
+      if (/avg\("?took"?\)/.test(sql)) {
+        return result(
+          ['t', 'mittel', 'maximum'],
+          groups((h) => minute(h.ts))
+            .map(([t, list]) => [t, list.map((h) => h.took).filter((v) => v !== null)])
+            .filter(([, values]) => values.length)
+            .map(([t, values]) => [t, values.reduce((a, b) => a + b, 0) / values.length, Math.max(...values)]),
+        );
+      }
+      if (/GROUP BY level/.test(sql)) {
+        const counts = {};
+        for (const h of heads) counts[h.level] = (counts[h.level] ?? 0) + 1;
+        return result(['level', 'n'], Object.entries(counts).sort((a, b) => b[1] - a[1]));
+      }
+      if (/LIMIT 100/.test(sql)) {
+        const pad = (n) => String(n).padStart(2, '0');
+        const local = (ts) => {
+          const d = new Date(ts);
+          return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+        };
+        return result(
+          ['line', 'zeit', 'level'],
+          heads
+            .filter((h) => h.level === 'ERROR' || h.level === 'FATAL')
+            .reverse()
+            .slice(0, 100)
+            .map((h) => [h.line, h.ts === null ? null : local(h.ts), h.level]),
+        );
+      }
+      return result(['t', 'n'], groups((h) => minute(h.ts)).map(([t, list]) => [t, list.length]));
+    },
     list_profiles: () => PROFILES,
     set_custom_profiles: () => null,
     'plugin:store|load': () => 1,
     'plugin:store|get_store': () => 1,
-    'plugin:store|get': () => [
-      { recentFiles: setupData.recent, ...(setupData.settings ?? {}) },
-      true,
-    ],
+    'plugin:store|get': ({ key }) =>
+      key === 'dashboards'
+        ? [setupData.dashboards ?? null, setupData.dashboards !== undefined]
+        : [{ recentFiles: setupData.recent, ...(setupData.settings ?? {}) }, true],
     'plugin:store|set': () => null,
     'plugin:store|save': () => null,
     'plugin:cli|cli_matches': () => ({

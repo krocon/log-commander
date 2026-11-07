@@ -278,3 +278,50 @@ describe('LogSessionService filter tree (prompt 010)', () => {
     expect(exprOf(setFilter)).toMatchObject({ children: [{ cond: { text: 'x' } }] });
   });
 });
+
+describe('LogSessionService and the dashboard (prompt 012)', () => {
+  function withLines(position: number, lineThere: number) {
+    const setFilter = vi.fn(() => Promise.resolve({ viewGeneration: 1, pending: false }));
+    const ctx = setup(setFilter);
+    const api = TestBed.inject(LogApi) as unknown as Record<string, unknown>;
+    api['getPosition'] = vi.fn(() => Promise.resolve(position));
+    api['getLines'] = vi.fn(() => Promise.resolve([{ line: lineThere }]));
+    return ctx;
+  }
+
+  it('a line from the dashboard: back to the log, scrolled there, the selection stays', async () => {
+    const { service, session } = withLines(7, 41);
+    session.mode.set('dashboard');
+    session.selection.set({ anchor: 3, first: 3, last: 3 });
+    await service.showLine(session, 41);
+    expect(session.mode()).toBe('log');
+    expect(session.jumpMark?.position).toBe(7);
+    expect(session.selection()?.anchor).toBe(3);
+    expect(session.revealHint).toBeNull();
+    expect(session.findMessage()).toBe('Zeile 42');
+  });
+
+  it('a filtered line: next visible one, G shows the line itself in the whole log', async () => {
+    const { service, session, setFilter } = withLines(7, 50);
+    session.levels.set(new Set(['ERROR']));
+    await service.showLine(session, 41);
+    expect(session.findMessage()).toContain('ausgefiltert');
+    expect(session.revealHint?.line).toBe(41);
+    await service.toggleFullLog(session);
+    expect(setFilter).toHaveBeenCalledTimes(1);
+    expect(session.keptFilter()).not.toBeNull();
+    expect(session.revealHint).toBeNull();
+  });
+
+  it('a bar of a level filters on that level, an unknown column does nothing', async () => {
+    const { service, session, setFilter } = setup();
+    session.mode.set('dashboard');
+    expect(await service.filterFromDashboard(session, { sql: 'level', log: null }, 'WARN')).toBe(
+      true,
+    );
+    expect([...session.levels()]).toEqual(['WARN']);
+    expect(session.mode()).toBe('log');
+    expect(setFilter).toHaveBeenCalledTimes(1);
+    expect(await service.filterFromDashboard(session, { sql: 'n', log: null }, 'x')).toBe(false);
+  });
+});

@@ -1176,6 +1176,119 @@
     await report(`PASS live merge in time order: ${inversions} inversions, ${late} late lines`);
     await waitFor('the merge view follows the end', () => pill() === 'Live');
 
+    // Dashboard (prompt 012): no database before a dashboard opens, then a template with the right
+    // numbers (entry heads, not lines), own SQL with the engine's error, refusing writes, the log running on
+    // meanwhile, a table row and a point that jump into the log.
+    for (let id = 1; id < 40; id++) {
+      const s = await invoke('get_stats', { sessionId: id }).catch(() => null);
+      if (s?.report) throw new Error(`session ${id} has a dashboard database without a dashboard`);
+    }
+    await report('PASS no dashboard database dashBefore a dashboard opens');
+    click(button('Pfad'));
+    await waitFor('path dialog for the dashboard file', () => $('app-open-path-dialog dialog')?.open);
+    typePath('~/dash.log').requestSubmit();
+    await waitFor('dash.log is open', () => tabOf('dash.log') && !$('app-open-path-dialog'));
+    let dashId = 0;
+    for (let id = 1; id < 40; id++) {
+      if (await invoke('get_stats', { sessionId: id }).catch(() => null)) dashId = id;
+    }
+    await waitFor('dash.log loaded', () => rowTexts().some((t) => t.includes('Out of memory')));
+    const dashLines = await invoke('get_lines', { sessionId: dashId, view: 'all', start: 0, count: 5000 });
+    const dashHeads = {};
+    for (const line of dashLines) if (!line.isContinuation) dashHeads[line.level] = (dashHeads[line.level] ?? 0) + 1;
+    press('d', { metaKey: true, shiftKey: true });
+    await waitFor('the dashboard opens over the log', () => $('app-dashboard') && $('app-log-table-view'));
+    await waitFor('the log below is hidden and inert', () => $('.log-layer.behind')?.inert === true);
+    await waitFor('the table is built', () => $('app-dashboard .status')?.dataset.state === 'ready', 20000);
+    const dashPanel = (title) =>
+      $$('app-dashboard-panel').find((p) => p.querySelector('h3')?.textContent.trim() === title);
+    const chartOf = (title) => dashPanel(title)?.querySelector('.rc[data-ready="1"]');
+    const sumsOf = (title) => JSON.parse(chartOf(title)?.dataset.sums ?? '{}');
+    const levelsTitle = 'Einträge je Level je Minute';
+    await waitFor('template „Einträge je Level“ is drawn', () => chartOf(levelsTitle));
+    await waitFor('its numbers are the entry heads per level', () => {
+      const sums = sumsOf(levelsTitle);
+      return (
+        Object.keys(dashHeads).every((level) => sums[level] === dashHeads[level]) &&
+        Object.keys(sums).length === Object.keys(dashHeads).length
+      );
+    });
+    if (count('ERROR') <= sumsOf(levelsTitle).ERROR) throw new Error('stack trace lines counted as errors');
+    await report(`PASS heads per level ${JSON.stringify(sumsOf(levelsTitle))}, ERROR lines ${count('ERROR')}`);
+
+    // Own SQL: the engine's message at the panel, writes refused, bars without a time axis.
+    const panelsBefore = $$('app-dashboard-panel').length;
+    click(button('+ Panel'));
+    await waitFor('a new panel', () => $$('app-dashboard-panel').length === panelsBefore + 1);
+    const dashFresh = $$('app-dashboard-panel').at(-1);
+    click(dashFresh.querySelector('button.edit'));
+    await waitFor('editor open', () => dashFresh.querySelector('textarea'));
+    const runSql = (sql) => {
+      const area = dashFresh.querySelector('textarea');
+      area.value = sql;
+      area.dispatchEvent(new Event('input', { bubbles: true }));
+      area.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', metaKey: true, bubbles: true }));
+    };
+    runSql('SELECT nope FROM log');
+    await waitFor('the engine says what is wrong', () =>
+      dashFresh.querySelector('.error')?.textContent.includes('no such column: nope'),
+    );
+    runSql('DELETE FROM log');
+    await waitFor('a write is refused', () =>
+      /Nicht erlaubt|Nur lesende/.test(dashFresh.querySelector('.error')?.textContent ?? ''),
+    );
+    runSql('SELECT level, count(*) AS n FROM log GROUP BY level ORDER BY n DESC');
+    await waitFor(
+      'own SQL without a time axis draws bars',
+      () => !dashFresh.querySelector('.error') && dashFresh.querySelector('.rc[data-ready="1"]')?.dataset.kind === 'bars',
+    );
+    const countRows = async () =>
+      (await invoke('run_report', { sessionId: dashId, sql: 'SELECT count(*) FROM log', slot: 'e2e' })).rows[0][0];
+    const headCount = Object.values(dashHeads).reduce((a, b) => a + b, 0);
+    if ((await countRows()) !== headCount) throw new Error('rows changed');
+    await report('PASS nothing was deleted');
+
+    // The log runs on below the dashboard; the table follows within the catch-up.
+    const dashBefore = await invoke('get_stats', { sessionId: dashId });
+    await act('appenddash 2026-01-15T10:00:10.000+01:00 ERROR 4711 --- [main] c.a.X : dashboard live');
+    const liveStart = Date.now();
+    for (;;) {
+      const s = await invoke('get_stats', { sessionId: dashId });
+      if (s.totalLines === dashBefore.totalLines + 1 && s.report.rows === dashBefore.report.rows + 1) break;
+      if (Date.now() - liveStart > 12000) throw new Error(`no catch-up: ${JSON.stringify(s.report)}`);
+      await sleep(100);
+    }
+    await report(`PASS log read on and the table caught up after ${Date.now() - liveStart} ms`);
+    await waitFor(
+      'the template shows the new error (live refresh)',
+      () => sumsOf(levelsTitle).ERROR === dashHeads.ERROR + 1,
+      15000,
+    );
+
+    // A row of „Letzte Fehler“ jumps to its line.
+    const errorsPanel = dashPanel('Letzte Fehler');
+    await waitFor('table of the last errors', () => errorsPanel.querySelector('tr.link'));
+    errorsPanel.querySelector('button[aria-label="Neu ausführen"]').click();
+    await waitFor('the new error is the first row', () =>
+      errorsPanel.querySelector('tr.link td')?.textContent.trim() === String(dashBefore.totalLines + 1),
+    );
+    const dashTarget = dashBefore.totalLines + 1;
+    click(errorsPanel.querySelector('tr.link'));
+    await waitFor('the row jumps into the log', () =>
+      !$('app-dashboard') && rows().some((c) => Number(c.dataset.line) === dashTarget - 1),
+    );
+
+    // Keyboard on a chart: → picks the first point, Enter jumps to the first line of that minute.
+    press('d', { metaKey: true, shiftKey: true });
+    await waitFor('dashboard again', () => chartOf(levelsTitle));
+    const dashChart = chartOf(levelsTitle);
+    dashChart.focus();
+    dashChart.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    dashChart.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await waitFor('the point jumps to the first line of its minute', () =>
+      !$('app-dashboard') && rows().some((c) => Number(c.dataset.line) === 0),
+    );
+
     await report('DONE');
   } catch (e) {
     await report(`FAIL ${e.message}`);

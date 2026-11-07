@@ -65,3 +65,39 @@ pub fn open_file_id(file: &File) -> io::Result<FileId> {
 pub fn file_id(path: &Path) -> io::Result<FileId> {
     open_file_id(&open_shared(path)?)
 }
+
+/// Bytes free for this user on the volume of `path` (the dashboard database of prompt 012 checks
+/// before it grows). `None` if the OS does not say.
+#[cfg(unix)]
+pub fn free_space(path: &Path) -> Option<u64> {
+    use std::os::unix::ffi::OsStrExt;
+    let name = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
+    let mut stat = std::mem::MaybeUninit::<libc::statvfs>::uninit();
+    // SAFETY: `name` is a valid C string and `stat` is written by statvfs before it is read.
+    let ok = unsafe { libc::statvfs(name.as_ptr(), stat.as_mut_ptr()) } == 0;
+    if !ok {
+        return None;
+    }
+    // SAFETY: statvfs succeeded, so the struct is initialised.
+    let stat = unsafe { stat.assume_init() };
+    #[allow(clippy::unnecessary_cast)]
+    Some(stat.f_bavail as u64 * stat.f_frsize as u64)
+}
+
+#[cfg(windows)]
+pub fn free_space(path: &Path) -> Option<u64> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
+    let mut available = 0u64;
+    // SAFETY: `wide` is NUL-terminated; the other out-pointers may be null.
+    let ok = unsafe {
+        GetDiskFreeSpaceExW(
+            wide.as_ptr(),
+            &mut available,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    } != 0;
+    ok.then_some(available)
+}

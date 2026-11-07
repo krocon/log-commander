@@ -1068,6 +1068,8 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
     const inPanel = !!target.closest?.('.detail, [role=separator], [role=tree], .stats');
     if (inPanel && event.key !== 'd' && event.key !== 'D') return;
     const session = this.session();
+    // Prompt 012: the dashboard lies over the log; its keys are its own.
+    if (session.mode() === 'dashboard') return;
     const mod = event.metaKey || event.ctrlKey;
     if (mod && event.key.toLowerCase() === 'c') {
       if (!window.getSelection()?.toString() && session.selection()) {

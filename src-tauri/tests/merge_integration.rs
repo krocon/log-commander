@@ -701,9 +701,13 @@ fn measure_merge() {
                 i % 977
             );
             ws.write_all(line.as_bytes()).unwrap();
-            if i % 2 == 0 { &mut wa } else { &mut wb }
-                .write_all(line.as_bytes())
-                .unwrap();
+            if i.is_multiple_of(2) {
+                &mut wa
+            } else {
+                &mut wb
+            }
+            .write_all(line.as_bytes())
+            .unwrap();
             written += line.len();
             i += 1;
         }
