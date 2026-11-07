@@ -260,7 +260,8 @@ export class MergeDialogComponent implements OnInit {
   protected readonly openFiles = computed(() =>
     this.sessions
       .sessions()
-      .filter((s) => !s.isMerge)
+      // A file once, also with filter tabs (prompt 013).
+      .filter((s, i, all) => !s.isMerge && all.findIndex((o) => o.path === s.path) === i)
       .map((s) => ({ path: s.path, fileName: s.fileName })),
   );
 

@@ -74,9 +74,29 @@
     return value !== !!expr.negate;
   }
 
+  // Filter tabs (prompt 013): a view inherits everything of its session (prototype) and shows the lines of its
+  // parent view that its own filter lets through.
+  function target(sessionId, viewId) {
+    const session = sessions.get(sessionId);
+    return viewId ? session.views.get(viewId) : session;
+  }
+
+  function send(view) {
+    callbacks.get(view.channel)?.({ message: update(view), index: view.sent++ });
+  }
+
+  /** The view and every open view below it. */
+  function below(view) {
+    const root = view.root ?? view;
+    const out = [view];
+    for (const v of root.views.values()) if (out.includes(v.parentView) && !out.includes(v)) out.push(v);
+    return out;
+  }
+
   function visible(session) {
     const { levels, search, mode, expr } = session.filter;
-    return session.lines.filter(
+    const base = session.parentView ? visible(session.parentView) : session.lines;
+    return base.filter(
       (l) =>
         levels.includes(l.level) &&
         (mode !== 'filter' || !search || l.text.toLowerCase().includes(search.toLowerCase())) &&
@@ -312,6 +332,7 @@
         filter: { levels: LEVELS, search: '', mode: 'filter' },
         channel: onUpdate.id,
         sent: 0,
+        views: new Map(),
       };
       sessions.set(id, session);
       return {
@@ -340,6 +361,7 @@
         channel: onUpdate.id,
         sent: 0,
         sources: infos.map((info, i) => ({ index: i, size: texts[i].length })),
+        views: new Map(),
       };
       sessions.set(id, session);
       return {
@@ -368,28 +390,66 @@
       };
     },
     resort: () => null,
-    get_lines({ sessionId, start, count }) {
-      const session = sessions.get(sessionId);
+    get_lines({ sessionId, start, count, viewId }) {
+      const session = target(sessionId, viewId);
       const search = session.filter.search;
       return visible(session)
         .slice(start, start + count)
         .map((line) => withMatches(line, search));
     },
-    set_filter({ sessionId, levels, search, mode, expr }) {
-      const session = sessions.get(sessionId);
+    set_filter({ sessionId, levels, search, mode, expr, viewId }) {
+      const session = target(sessionId, viewId);
       session.filter = { levels, search, mode, expr: expr ?? null };
-      session.generation++;
-      callbacks.get(session.channel)?.({ message: update(session), index: session.sent++ });
+      // The views below follow (prompt 013).
+      for (const view of below(session)) {
+        view.generation++;
+        send(view);
+      }
       return { viewGeneration: session.generation, pending: false, filteredLines: 0 };
+    },
+    open_view({ sessionId, parentViewId, levels, search, mode, expr, onUpdate }) {
+      const root = sessions.get(sessionId);
+      const view = Object.create(root);
+      Object.assign(view, {
+        root,
+        viewId: (root.nextView = (root.nextView ?? 0) + 1),
+        parentView: target(sessionId, parentViewId),
+        filter: { levels, search, mode, expr: expr ?? null },
+        generation: 0,
+        channel: onUpdate.id,
+        sent: 0,
+      });
+      root.views.set(view.viewId, view);
+      return { viewId: view.viewId, parentViewId, update: update(view) };
+    },
+    close_view({ sessionId, viewId }) {
+      const root = sessions.get(sessionId);
+      const closing = target(sessionId, viewId);
+      // Simplified: the children take the closing view's parent and keep its filter on top of their own.
+      for (const view of root.views.values()) {
+        if (view.parentView === closing) {
+          const own = view.filter;
+          const above = closing.filter;
+          view.parentView = closing.parentView;
+          view.filter = {
+            ...own,
+            levels: own.levels.filter((l) => above.levels.includes(l)),
+            expr: above.expr && own.expr ? { kind: 'group', op: 'and', children: [above.expr, own.expr] } : (above.expr ?? own.expr),
+          };
+        }
+      }
+      if (viewId) root.views.delete(viewId);
+      return null;
     },
     set_frozen({ sessionId, frozen }) {
       const session = sessions.get(sessionId);
       session.frozen = frozen;
-      callbacks.get(session.channel)?.({ message: update(session), index: session.sent++ });
+      send(session);
+      for (const view of session.views.values()) send(view);
       return null;
     },
-    find_next({ sessionId, fromLine, query }) {
-      const session = sessions.get(sessionId);
+    find_next({ sessionId, fromLine, query, viewId }) {
+      const session = target(sessionId, viewId);
       const all = visible(session);
       const hit = all.findIndex(
         (l) =>
@@ -440,8 +500,8 @@
       matched: false,
     }),
     get_position: ({ line }) => line,
-    get_overview({ sessionId, buckets, lines }) {
-      const session = sessions.get(sessionId);
+    get_overview({ sessionId, buckets, lines, viewId }) {
+      const session = target(sessionId, viewId);
       const shown = visible(session);
       const out = new Array(buckets).fill(0);
       // Densities FATAL, ERROR, WARN per bucket like the backend with one line per chunk: the share of the
@@ -473,8 +533,8 @@
         marks,
       };
     },
-    find_level({ sessionId, fromPosition, forward, levels }) {
-      const shown = visible(sessions.get(sessionId));
+    find_level({ sessionId, fromPosition, forward, levels, viewId }) {
+      const shown = visible(target(sessionId, viewId));
       const heads = shown
         .map((l, position) => ({ l, position }))
         .filter(({ l }) => !l.isContinuation && levels.includes(l.level));

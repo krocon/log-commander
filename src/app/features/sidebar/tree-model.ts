@@ -31,10 +31,19 @@ export interface TreeSession {
   treeError?: { nodeId: string | null; message: string } | null;
   /** Column labels for field conditions. */
   columnLabel?: (id: string) => string;
+  /** A filter tab (prompt 013): the tab it filters further, null once that closed. */
+  parentId?: number | null;
+  /** A filter tab: its view of the session (0 is the file's tab). */
+  viewId?: number;
+  /** A filter tab: its name (the chain). */
+  label?: string;
+  /** A filter tab: the whole chain, for the title. */
+  title?: string;
 }
 
 export type TreeNodeKind =
   | 'file'
+  | 'view'
   | 'source'
   | 'active-filter'
   | 'filter-levels'
@@ -68,6 +77,8 @@ export interface TreeNode {
   current: boolean;
   /** A node of the filter tree (prompt 010): its id there. */
   exprId?: string;
+  /** The top group of a tab's filter tree („Bedingungen“). */
+  exprRoot?: boolean;
   /** Switched on (filter tree). */
   enabled?: boolean;
   negate?: boolean;
@@ -180,85 +191,75 @@ export function buildTree(
 ): TreeNode[] {
   const nodes: TreeNode[] = [];
   const active = sessions.find((s) => s.id === activeId) ?? null;
-  sessions.forEach((session, index) => {
+  const ids = new Set(sessions.map((s) => s.id));
+  // Filter tabs (prompt 013) hang below the tab they filter; one whose parent closed stands on its own.
+  const childrenOf = (id: number | null): TreeSession[] =>
+    sessions.filter((s) =>
+      id === null ? !(s.parentId != null && ids.has(s.parentId)) : s.parentId === id,
+    );
+  const roots = childrenOf(null);
+  const pushTab = (
+    session: TreeSession,
+    level: number,
+    parentId: string | null,
+    posInSet: number,
+    setSize: number,
+  ): void => {
     const filtered = hasActiveFilter(session.levels, session.query, session.tree);
-    const sources = session.sources ?? [];
-    const fileId = `file:${session.id}`;
-    const fileOpen = (filtered || sources.length > 0) && !collapsed.has(fileId);
-    const title = sources.length ? sources.map((s) => s.path).join('\n') : session.path;
+    const isView = (session.viewId ?? 0) !== 0 && level > 1;
+    const sources = isView ? [] : (session.sources ?? []);
+    const views = childrenOf(session.id);
+    const fileId = `${isView ? 'view' : 'file'}:${session.id}`;
+    const expandable = filtered || sources.length > 0 || views.length > 0;
+    const fileOpen = expandable && !collapsed.has(fileId);
+    const title = isView
+      ? (session.title ?? session.label ?? '')
+      : sources.length
+        ? sources.map((s) => s.path).join('\n')
+        : (session.title ?? session.path);
     nodes.push({
-      ...base(fileId, 'file', session.fileName, title, 1, null),
-      expandable: filtered || sources.length > 0,
+      ...base(
+        fileId,
+        isView ? 'view' : 'file',
+        session.label ?? session.fileName,
+        title,
+        level,
+        parentId,
+      ),
+      expandable,
       expanded: fileOpen,
-      posInSet: index + 1,
-      setSize: sessions.length + (saved.length ? 1 : 0),
+      posInSet,
+      setSize,
       sessionId: session.id,
       current: session.id === activeId,
     });
     if (!fileOpen) return;
-    const level2 = sources.length + (filtered ? 1 : 0);
+    const below = sources.length + (filtered ? 1 : 0) + views.length;
     sources.forEach((source, i) => {
       nodes.push({
-        ...base(`source:${session.id}:${i}`, 'source', source.fileName, source.path, 2, fileId),
+        ...base(
+          `source:${session.id}:${i}`,
+          'source',
+          source.fileName,
+          source.path,
+          level + 1,
+          fileId,
+        ),
         posInSet: i + 1,
-        setSize: level2,
+        setSize: below,
         sessionId: session.id,
         sourceIndex: i,
       });
     });
-    if (!filtered) return;
-    const filterId = `filter:${session.id}`;
-    const filterOpen = !collapsed.has(filterId);
-    nodes.push({
-      ...base(filterId, 'active-filter', 'Aktiver Filter', 'Filter dieser Datei', 2, fileId),
-      expandable: true,
-      expanded: filterOpen,
-      posInSet: level2,
-      setSize: level2,
-      sessionId: session.id,
+    if (filtered)
+      pushFilter(nodes, session, level + 1, fileId, sources.length + 1, below, collapsed);
+    views.forEach((view, i) => {
+      pushTab(view, level + 1, fileId, below - views.length + i + 1, below);
     });
-    if (!filterOpen) return;
-    const children: TreeNode[] = [];
-    if (!sameLevels(session.levels, ALL_LEVELS)) {
-      const label = describeLevels(session.levels);
-      children.push({
-        ...base(`levels:${session.id}`, 'filter-levels', label, `Level: ${label}`, 3, filterId),
-        sessionId: session.id,
-      });
-    }
-    if (session.query.text) {
-      const label = describeQuery(session.query, session.mode);
-      children.push({
-        ...base(`query:${session.id}`, 'filter-query', label, `Suche: ${label}`, 3, filterId),
-        sessionId: session.id,
-      });
-    }
-    const tree = session.tree;
-    if (tree && tree.children.length) {
-      const rootId = exprNodeId(session.id, tree.id);
-      const count = countConditions(tree);
-      children.push({
-        ...base(
-          rootId,
-          'expr-group',
-          'Bedingungen',
-          `${count} aktive Bedingung${count === 1 ? '' : 'en'}, verknüpft mit ${tree.op === 'and' ? 'UND' : 'ODER'}`,
-          3,
-          filterId,
-        ),
-        ...exprFields(session, tree),
-        expandable: true,
-        expanded: !collapsed.has(rootId),
-        sessionId: session.id,
-      });
-    }
-    children.forEach((child, i) => {
-      nodes.push({ ...child, posInSet: i + 1, setSize: children.length });
-      if (child.kind === 'expr-group' && child.expanded && tree) {
-        pushExprChildren(nodes, session, tree, 4, collapsed);
-      }
-    });
-  });
+  };
+  roots.forEach((session, index) =>
+    pushTab(session, 1, null, index + 1, roots.length + (saved.length ? 1 : 0)),
+  );
   if (saved.length) {
     const groupOpen = !collapsed.has('saved');
     nodes.push({
@@ -272,8 +273,8 @@ export function buildTree(
       ),
       expandable: true,
       expanded: groupOpen,
-      posInSet: sessions.length + 1,
-      setSize: sessions.length + 1,
+      posInSet: roots.length + 1,
+      setSize: roots.length + 1,
     });
     if (groupOpen) {
       const sorted = [...saved].sort((a, b) => collator.compare(a.name, b.name));
@@ -294,6 +295,84 @@ export function buildTree(
     }
   }
   return nodes;
+}
+
+/** The active filter of a tab: levels, search and the conditions, below its file or view node. */
+function pushFilter(
+  nodes: TreeNode[],
+  session: TreeSession,
+  level: number,
+  fileId: string,
+  posInSet: number,
+  setSize: number,
+  collapsed: ReadonlySet<string>,
+): void {
+  const filterId = `filter:${session.id}`;
+  const filterOpen = !collapsed.has(filterId);
+  nodes.push({
+    ...base(
+      filterId,
+      'active-filter',
+      'Aktiver Filter',
+      (session.viewId ?? 0) === 0 ? 'Filter dieser Datei' : 'Eigener Filter dieses Tabs',
+      level,
+      fileId,
+    ),
+    expandable: true,
+    expanded: filterOpen,
+    posInSet,
+    setSize,
+    sessionId: session.id,
+  });
+  if (!filterOpen) return;
+  const children: TreeNode[] = [];
+  if (!sameLevels(session.levels, ALL_LEVELS)) {
+    const label = describeLevels(session.levels);
+    children.push({
+      ...base(
+        `levels:${session.id}`,
+        'filter-levels',
+        label,
+        `Level: ${label}`,
+        level + 1,
+        filterId,
+      ),
+      sessionId: session.id,
+    });
+  }
+  if (session.query.text) {
+    const label = describeQuery(session.query, session.mode);
+    children.push({
+      ...base(`query:${session.id}`, 'filter-query', label, `Suche: ${label}`, level + 1, filterId),
+      sessionId: session.id,
+    });
+  }
+  const tree = session.tree;
+  if (tree && tree.children.length) {
+    const rootId = exprNodeId(session.id, tree.id);
+    const count = countConditions(tree);
+    children.push({
+      ...base(
+        rootId,
+        'expr-group',
+        'Bedingungen',
+        `${count} aktive Bedingung${count === 1 ? '' : 'en'}, verknüpft mit ${tree.op === 'and' ? 'UND' : 'ODER'}`,
+        level + 1,
+        filterId,
+      ),
+      ...exprFields(session, tree),
+      exprRoot: true,
+      expandable: true,
+      expanded: !collapsed.has(rootId),
+      sessionId: session.id,
+    });
+  }
+  children.forEach((child, i) => {
+    nodes.push({ ...child, posInSet: i + 1, setSize: children.length });
+    if (child.kind === 'expr-group' && child.expanded && tree) {
+      pushExprChildren(nodes, session, tree, level + 2, collapsed);
+    }
+  });
 }
 
 function exprFields(session: TreeSession, node: FilterNode): Partial<TreeNode> {

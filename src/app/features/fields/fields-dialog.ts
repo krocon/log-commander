@@ -533,7 +533,7 @@ export class FieldsDialogComponent implements OnInit {
   private async loadSuggestions(): Promise<void> {
     this.suggesting.set(true);
     try {
-      const found: FieldSuggestion[] = await this.api.suggestFields(this.session().id);
+      const found: FieldSuggestion[] = await this.api.suggestFields(this.session().sessionId);
       this.picks.set(picksOf(found, this.rules()));
     } catch (e) {
       this.pickError.set(describeError(toAppError(e)));

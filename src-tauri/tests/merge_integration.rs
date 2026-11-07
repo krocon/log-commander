@@ -876,3 +876,66 @@ fn an_expression_on_a_live_merge_equals_the_job() {
     assert_eq!(incremental, shown(&fx));
     assert_eq!(incremental, vec![1, 2, 3, 5, 7]);
 }
+
+/// Prompt 013: views of a merge. View 0 probes ahead, the others read the text when lines are
+/// written; both give what the filter says, live too.
+#[test]
+fn views_of_a_merge_filter_further_and_follow_live_lines() {
+    use log_commander_lib::views::ViewFilter;
+    let dir = tempfile::tempdir().unwrap();
+    let a = write(
+        dir.path(),
+        "a.log",
+        "2024-01-01 10:00:00.000 INFO a needle 1\n2024-01-01 10:00:02.000 ERROR a other\n",
+    );
+    let b = write(
+        dir.path(),
+        "b.log",
+        "2024-01-01 10:00:01.000 ERROR b needle 2\n2024-01-01 10:00:03.000 INFO b other\n",
+    );
+    let fx = merge(&[&a, &b]);
+    set_filter(&fx, &Level::ALL, "needle", None);
+    let child = ViewFilter {
+        levels: log_commander_lib::filter::LevelMask::from_levels(&[Level::Error]),
+        ..ViewFilter::default()
+    };
+    let view = fx
+        .session
+        .open_view(0, child, Box::new(|_| {}))
+        .unwrap()
+        .view_id;
+    let lines = |v: u32| -> Vec<String> {
+        fx.session
+            .get_lines_of(v, true, 0, 100)
+            .unwrap()
+            .into_iter()
+            .map(|l| l.text)
+            .collect()
+    };
+    let start = Instant::now();
+    while fx.session.stats_of(view).unwrap().filter_pending {
+        assert!(start.elapsed() < TIMEOUT);
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(
+        lines(view),
+        vec!["2024-01-01 10:00:01.000 ERROR b needle 2"]
+    );
+    append(&a, "2024-01-01 10:00:04.000 ERROR a needle 3\n");
+    append(&b, "2024-01-01 10:00:05.000 ERROR b needle 4\n");
+    fx.wait("live", |s| s.total_lines == 6);
+    let start = Instant::now();
+    while fx.session.stats_of(view).unwrap().filtered_lines < 3 {
+        assert!(start.elapsed() < TIMEOUT, "{:?}", lines(view));
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(
+        lines(view),
+        vec![
+            "2024-01-01 10:00:01.000 ERROR b needle 2",
+            "2024-01-01 10:00:04.000 ERROR a needle 3",
+            "2024-01-01 10:00:05.000 ERROR b needle 4",
+        ]
+    );
+    assert_eq!(lines(0).len(), 4);
+}

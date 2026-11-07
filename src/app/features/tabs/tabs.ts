@@ -9,22 +9,30 @@ import { LogSessionService } from '../sessions/log-session.service';
   template: `
     <div class="tabs" role="tablist" aria-label="Geöffnete Dateien">
       @for (session of sessions.sessions(); track session.id) {
-        <div class="tab" [class.active]="session.id === sessions.activeId()">
+        <div
+          class="tab"
+          [class.active]="session.id === sessions.activeId()"
+          [class.view]="session.viewId !== 0"
+        >
           <button
             type="button"
             class="title"
             role="tab"
             [attr.aria-selected]="session.id === sessions.activeId()"
-            [title]="session.title"
+            [title]="session.tabTitle()"
             (click)="sessions.activate(session.id)"
           >
+            @if (session.viewId !== 0) {
+              <!-- A filter tab (prompt 013): it filters the tab to its left further. -->
+              <span class="chain" aria-hidden="true">↳</span>
+            }
             <app-session-marks [session]="session" />
-            {{ session.fileName }}
+            {{ session.tabLabel() }}
           </button>
           <button
             type="button"
             class="close"
-            [attr.aria-label]="session.fileName + ' schließen'"
+            [attr.aria-label]="session.tabLabel() + ' schließen'"
             title="Schließen (⌘/Strg+W)"
             (click)="sessions.close(session.id)"
           >
@@ -74,6 +82,13 @@ import { LogSessionService } from '../sessions/log-session.service';
       flex: none;
       max-width: 240px;
       border-right: 1px solid var(--border);
+      color: var(--text-dim);
+    }
+    .tab.view {
+      max-width: 300px;
+      border-left: 1px dashed var(--text-dim);
+    }
+    .chain {
       color: var(--text-dim);
     }
     .tab.active {

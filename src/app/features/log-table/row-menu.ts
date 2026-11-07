@@ -13,12 +13,17 @@ export interface RowMenuItem {
   label: string;
   /** Key that does the same in the log, shown on the right. */
   key?: string;
+  /** Not possible now; `title` says why. */
+  disabled?: boolean;
+  title?: string;
 }
 
 export type RowMenuAction =
   | 'filter-text'
   | 'exclude-text'
+  | 'filter-text-tab'
   | 'filter-value'
+  | 'filter-value-tab'
   | 'column-from-selection'
   | 'from-here'
   | 'to-here';
@@ -29,6 +34,8 @@ export interface RowMenuContext {
   /** Column label and value of the cell, for a head line in the column view. */
   cell: { label: string; value: string } | null;
   hasLine: boolean;
+  /** Why no filter tab can open (prompt 013: 8 per file), or null. */
+  tabLimit?: string | null;
 }
 
 const short = (text: string): string => (text.length > 30 ? `${text.slice(0, 30)}…` : text);
@@ -40,6 +47,12 @@ export function rowMenuItems(context: RowMenuContext): RowMenuItem[] {
   if (text) {
     items.push({ id: 'filter-text', label: `Filtern auf „${short(text)}“`, key: 'I' });
     items.push({ id: 'exclude-text', label: `Ausschließen: „${short(text)}“`, key: 'Shift+I' });
+    // Prompt 013: the same as a filter tab, the view of this tab stays.
+    items.push({
+      id: 'filter-text-tab',
+      label: `In neuem Tab filtern auf „${short(text)}“`,
+      ...tabState(context),
+    });
     // Prompt 011: the marked value as a column of its own.
     if (context.hasLine) items.push({ id: 'column-from-selection', label: 'Spalte aus Auswahl …' });
   }
@@ -49,12 +62,21 @@ export function rowMenuItems(context: RowMenuContext): RowMenuItem[] {
       id: 'filter-value',
       label: `Filtern nach ${context.cell.label} = „${short(value)}“`,
     });
+    items.push({
+      id: 'filter-value-tab',
+      label: `In neuem Tab: ${context.cell.label} = „${short(value)}“`,
+      ...tabState(context),
+    });
   }
   if (context.hasLine) {
     items.push({ id: 'from-here', label: 'Abschnitt ab hier', key: '>' });
     items.push({ id: 'to-here', label: 'Abschnitt bis hier', key: '<' });
   }
   return items;
+}
+
+function tabState(context: RowMenuContext): Pick<RowMenuItem, 'disabled' | 'title'> {
+  return context.tabLimit ? { disabled: true, title: context.tabLimit } : {};
 }
 
 /**
@@ -74,7 +96,15 @@ export function rowMenuItems(context: RowMenuContext): RowMenuItem[] {
   },
   template: `
     @for (item of items(); track item.id) {
-      <button type="button" role="menuitem" tabindex="-1" (click)="choose.emit(item.id)">
+      <button
+        type="button"
+        role="menuitem"
+        tabindex="-1"
+        [disabled]="item.disabled ?? false"
+        [attr.aria-disabled]="item.disabled ? true : null"
+        [title]="item.title ?? ''"
+        (click)="choose.emit(item.id)"
+      >
         <span class="label">{{ item.label }}</span>
         @if (item.key) {
           <kbd>{{ item.key }}</kbd>
@@ -144,7 +174,9 @@ export class RowMenuComponent {
   }
 
   private buttons(): HTMLButtonElement[] {
-    return [...this.host.nativeElement.querySelectorAll<HTMLButtonElement>('button')];
+    return [
+      ...this.host.nativeElement.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'),
+    ];
   }
 
   protected onKey(event: KeyboardEvent): void {

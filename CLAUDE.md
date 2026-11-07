@@ -38,7 +38,8 @@ src/                         Angular 22 (zoneless, Signals, OnPush, Standalone)
   app/core/settings/         SettingsService (tauri-plugin-store, wendet Theme/Farben an), reine Merge-Logik
   app/features/sessions/     LogSessionService (Tabs, alle Aktionen), SessionState (je Tab), PageCache, filter-logic,
                              filter-tree (Filterbaum: Knoten, Verschieben, zu FilterExpr kompilieren),
-                             format-logic (Spalten, Formattext), navigation-logic (Lesezeichen, Sprung, Gesamtlog)
+                             format-logic (Spalten, Formattext), navigation-logic (Lesezeichen, Sprung, Gesamtlog),
+                             view-chain (Filter-Tabs: Namen der Kette, Grenze 8, Schließen)
   app/features/log-table/    LogTableViewComponent (GuiExpert Table), LogAreaModel, viewport-logic (reines
                              Scroll-Modell), table-logic, highlight (Inline-Tokens, cellSegments), columns-logic
                              (Spaltenansicht: Layout, Breiten, Spannen), column-menu (Spaltenmenü),
@@ -51,7 +52,8 @@ src/                         Angular 22 (zoneless, Signals, OnPush, Standalone)
   app/shared/                splitter (wiederverwendbar), session-marks (Tabs und Baum), format
   app/features/toolbar|statusbar|tabs|start|settings/   UI
 src-tauri/src/               Rust; alles außer commands.rs und lib.rs ist frei von Tauri
-  session.rs                 LogSession, Abfragen, Hintergrund-Jobs (Filter, Level neu), SessionManager
+  session.rs                 LogSession, Ansichten (ViewState), Abfragen, Hintergrund-Jobs (Filter, Level neu), SessionManager
+  views.rs                   Filter-Tabs (013): ViewFilter, Kette zu einem Filter zusammensetzen, MAX_VIEWS
   tail.rs                    Worker je Datei: Blöcke lesen, notify + Polling, Teilzeile, Truncation, Rotation, Updates
   indexer.rs                 LineIndex (16 Byte je Zeile), LineSplitter, LineReader, Segmente
   level.rs, profile.rs       Level-Erkennung, eingebaute und eigene Profile (samt Layouts), Vorschlag
@@ -166,6 +168,20 @@ samples/                     Beispiel-Logs
   (`invalid_rule` mit `nodeId` = Regel-Id, keine Umbenennung). Vorschläge (`suggest_fields`) beim ersten Laden, nur ohne
   Regeln und einmal je Profil (`fieldHints`), als Hinweis in der Statusleiste. Auswertung (012) soll auf
   `FieldParser::field` + `parse_value` im Hintergrund-Job aufsetzen.
+- **Filter-Tabs (Prompt 013):** mehrere Ansichten (`ViewState`) in **einer** `LogSession`, Ansicht 0 gibt es immer (wie
+  früher). Je Ansicht eigener Filter, Liste, `viewGeneration`, Job (eigener Zähler), Checkpoint der provisorischen Zeile und
+  eigener Channel (`open_view`/`close_view`, alle Abfragen mit optionalem `viewId`, Vorgabe 0). Kind = Kette der Eltern UND
+  eigener Filter, in `views.rs` zu einem Filter zusammengesetzt (Level und Quellen geschnitten, Bäume und filternde Suchen
+  der Eltern als ein UND vor dem eigenen Baum); `set_filter` kompiliert zuerst alles darunter und startet dann die Jobs
+  aller Nachfahren. Schließen gibt den Filter an die Kinder weiter (`inherited`), kein Job; Ansicht 0 wird dabei zur
+  versteckten Identität ohne Channel. `ingest` liest den Text einer Zeile höchstens einmal für alle Ansichten (`Fresh`,
+  `TextTest::probe_many`). Updates: nur geänderte Ansichten, eine nur gewachsene Datei höchstens 1×/s je weiterer Ansicht.
+  Neu-Leveln läuft einmal und startet dann alle Ansichten. Freeze, Profil, Spalten, Dashboard und Lesezeichen gelten je
+  Datei. Frontend: `SessionState.id` ist der Tab, `sessionId`/`viewId` gehen ans Backend. Details:
+  `prompts/done/013-filter-tabs-drilldown.design.md`.
+- **Grenzen Filter-Tabs:** höchstens 8 Tabs (Ansichten) je Datei (`too_many_views`), je Ansicht bis 4 Byte je Zeile
+  (500 MB: 7 Ansichten zusammen 32 MB); die Kette zusammen höchstens 64 Bedingungen und 16 Ebenen (+1 für die Kette).
+  Weitere Ansichten eines Merges lesen den Text beim Schreiben unter der Sperre.
 - **Grenzen Merge:** höchstens 16 Quellen, verspätete Zeilen stehen am Ende, bis „Neu sortieren“; keine Zeilennummer der
   Quelldatei (nur Byte-Offset); ohne Zeitzone gilt die lokale Zone; ohne Zeitstempel in den ersten 200 Zeilen
   `no_timestamps`. Truncation einer Quelle, Rotation ohne Behalten oder mehr als 32 Segmente einer Quelle mischen alles neu.

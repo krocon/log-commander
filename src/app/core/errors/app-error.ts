@@ -13,6 +13,8 @@ export type ErrorCode =
   | 'invalid_merge'
   | 'invalid_rule'
   | 'invalid_query'
+  | 'unknown_view'
+  | 'too_many_views'
   | 'backend_unavailable'
   | 'unknown';
 
@@ -48,6 +50,10 @@ export function describeError(error: AppError): string {
       return `Regel ungültig: ${error.message}`;
     case 'invalid_query':
       return `Abfrage nicht ausführbar: ${error.message}`;
+    case 'unknown_view':
+      return 'Dieser Filter-Tab ist nicht mehr offen';
+    case 'too_many_views':
+      return 'Höchstens 8 Tabs je Datei, zuerst einen Filter-Tab schließen';
     case 'backend_unavailable':
       return 'Desktop-Backend nicht verfügbar (läuft die App im Browser?)';
     default:

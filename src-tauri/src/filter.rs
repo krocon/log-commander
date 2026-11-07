@@ -98,6 +98,11 @@ impl LevelMask {
     pub fn contains(self, level: Level) -> bool {
         self.0 & (1 << level as u8) != 0
     }
+
+    /// Levels both masks let through (a chain of views, prompt 013).
+    pub fn intersect(self, other: LevelMask) -> LevelMask {
+        LevelMask(self.0 & other.0)
+    }
 }
 
 /// Bit mask of the visible sources of a merge (bit = source index); a single file is source 0.
@@ -175,6 +180,30 @@ impl TextTest {
         }
         let raw = &raw[..raw.len().min(MAX_SEARCH_BYTES)];
         self.probe_text(&display_text(raw, encoding), head)
+    }
+
+    /// Probes one raw line for several filters (views, prompt 013): the text is decoded at most once.
+    /// Appends one probe per test to `out`.
+    pub fn probe_many(
+        tests: &[TextTest],
+        raw: &[u8],
+        encoding: Encoding,
+        head: bool,
+        out: &mut Vec<Probe>,
+    ) {
+        if tests.iter().all(TextTest::is_empty) {
+            out.extend(std::iter::repeat_n(Probe::default(), tests.len()));
+            return;
+        }
+        let raw = &raw[..raw.len().min(MAX_SEARCH_BYTES)];
+        let text = display_text(raw, encoding);
+        for test in tests {
+            out.push(if test.is_empty() {
+                Probe::default()
+            } else {
+                test.probe_text(&text, head)
+            });
+        }
     }
 
     pub fn probe_text(&self, text: &str, head: bool) -> Probe {

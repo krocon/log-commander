@@ -24,7 +24,7 @@ use crate::level::{LevelDetector, PrevLine};
 use crate::model::{SourceInfo, SourceUpdate, Status};
 use crate::platform::{file_id, open_file_id, open_shared, FileId};
 use crate::profile::{Profile, ProfileRegistry};
-use crate::session::{detection_bytes, SessionData, Shared};
+use crate::session::{detection_bytes, Fresh, SessionData, Shared};
 use crate::tail::{
     suggest, Sample, ACTIVE_FOR, ACTIVE_POLL_INTERVAL, BLOCK_SIZE, EMIT_INTERVAL, MAX_SEGMENTS,
     MIN_TICK, PARTIAL_COMMIT_AFTER, POLL_INTERVAL, SAMPLE_LINES,
@@ -1146,7 +1146,8 @@ impl Runner {
 
     /// A new filter: lines still waiting are checked against it, later ones right away.
     fn refresh_matcher(&mut self) {
-        let now = self.shared.data.read().filter.spec.text_test();
+        // Lines are probed ahead for view 0; other views read the text when written (`Fresh`).
+        let now = self.shared.data.read().views[0].filter.spec.text_test();
         if now.same(&self.test) {
             return;
         }
@@ -1177,31 +1178,17 @@ impl Runner {
                 break;
             }
             let mut data = self.shared.data.write();
-            let now = data.filter.spec.text_test();
-            let same = now.same(&self.test);
-            let mut reader: Option<LineReader> = None;
+            // A filter changed since a line was read, or another view: the text is read again.
+            let mut fresh = Fresh::new(&data, &[0], std::slice::from_ref(&self.test));
             for line in &self.out {
                 let entry = line.entry;
-                let probe = if same && line.matcher == self.matcher_id {
-                    line.probe
-                } else if now.is_empty() {
-                    Probe::default()
+                let prepared = if line.matcher == self.matcher_id {
+                    std::slice::from_ref(&line.probe)
                 } else {
-                    // The filter changed since the line was read: look at the text again.
-                    let reader = reader
-                        .get_or_insert_with(|| LineReader::new(data.segments.clone(), BLOCK_SIZE));
-                    reader.raw(&entry, MAX_SEARCH_BYTES).map_or_else(
-                        |_| Probe::default(),
-                        |(raw, enc)| now.probe_raw(raw, enc, !entry.is_continuation()),
-                    )
+                    &[]
                 };
-                data.filter.append_from(
-                    entry.source(),
-                    entry.level(),
-                    entry.is_continuation(),
-                    || probe,
-                );
-                data.index.push(entry);
+                let mut current = fresh.line(entry);
+                data.push_line(entry, |v| current.probe(v, prepared));
             }
             self.publish(&mut data);
             data.dirty = true;
@@ -1434,27 +1421,22 @@ impl Runner {
         {
             return;
         }
-        let update = {
-            let mut data = self.shared.data.write();
-            self.publish(&mut data);
-            if !data.dirty {
-                return;
-            }
-            data.dirty = false;
-            let update = data.update();
-            data.filter.take_retracted();
+        self.publish(&mut self.shared.data.write());
+        let loading = self.loading;
+        let files = &mut self.files;
+        let sent = self.shared.emit(|data| {
             // One-shot states: the next update says what comes after.
             if matches!(data.status, Status::Truncated | Status::Rotated) {
-                data.status = if self.loading {
+                data.status = if loading {
                     Status::Loading { progress: 0.0 }
                 } else {
                     Status::Live
                 };
                 data.dirty = true;
             }
-            for file in &mut self.files {
+            for file in files.iter_mut() {
                 if matches!(file.status, Status::Truncated | Status::Rotated) {
-                    file.status = if self.loading {
+                    file.status = if loading {
                         Status::Loading { progress: 0.0 }
                     } else {
                         Status::Live
@@ -1462,10 +1444,10 @@ impl Runner {
                     data.dirty = true;
                 }
             }
-            update
-        };
-        self.last_emit = Some(Instant::now());
-        (self.shared.sink)(update);
+        });
+        if sent {
+            self.last_emit = Some(Instant::now());
+        }
     }
 }
 

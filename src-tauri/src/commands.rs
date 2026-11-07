@@ -8,7 +8,7 @@ use crate::level::Level;
 use crate::merge::MergeSource;
 use crate::model::{
     ColumnSet, EntryDetail, EntryRange, FieldPreview, FilterInfo, FindHit, LogLine, MergeCandidate,
-    Overview, ReportResult, ReportSchema, SessionInfo, SessionUpdate, Stats,
+    Overview, ReportResult, ReportSchema, SessionInfo, SessionUpdate, Stats, ViewInfo,
 };
 use crate::profile::Profile;
 use crate::session::{LogSession, OpenOptions, SessionManager};
@@ -117,6 +117,7 @@ pub async fn close_log(app: AppHandle, session_id: u64) -> AppResult<()> {
     blocking(move || app.state::<SessionManager>().close(session_id)).await
 }
 
+/// Lines of a view (`view_id`, default 0 = the tab of the file, prompt 013).
 #[tauri::command]
 pub async fn get_lines(
     state: State<'_, SessionManager>,
@@ -124,9 +125,11 @@ pub async fn get_lines(
     view: LogView,
     start: usize,
     count: usize,
+    view_id: Option<u32>,
 ) -> AppResult<Vec<LogLine>> {
     let session = session(&state, session_id)?;
-    blocking(move || session.get_lines(matches!(view, LogView::Filtered), start, count)).await
+    let filtered = matches!(view, LogView::Filtered);
+    blocking(move || session.get_lines_of(view_id.unwrap_or(0), filtered, start, count)).await
 }
 
 #[tauri::command]
@@ -141,6 +144,7 @@ pub async fn set_filter(
     mode: SearchMode,
     sources: Option<u16>,
     expr: Option<FilterExpr>,
+    view_id: Option<u32>,
 ) -> AppResult<FilterInfo> {
     let session = session(&state, session_id)?;
     let query = SearchQuery {
@@ -148,7 +152,54 @@ pub async fn set_filter(
         is_regex,
         case_sensitive,
     };
-    blocking(move || session.set_filter_expr(&levels, &query, mode, sources, expr.as_ref())).await
+    blocking(move || {
+        let own = session.view_filter(&levels, &query, mode, sources, expr.as_ref());
+        session.set_view_filter(view_id.unwrap_or(0), own)
+    })
+    .await
+}
+
+/// A filter as a tab of its own (prompt 013): a view below `parent_view_id` that shows its result and
+/// filters further with its own filter (same arguments as `set_filter`). Updates go to `on_update`.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn open_view(
+    state: State<'_, SessionManager>,
+    session_id: u64,
+    parent_view_id: u32,
+    levels: Vec<Level>,
+    search: String,
+    is_regex: bool,
+    case_sensitive: bool,
+    mode: SearchMode,
+    sources: Option<u16>,
+    expr: Option<FilterExpr>,
+    on_update: Channel<SessionUpdate>,
+) -> AppResult<ViewInfo> {
+    let session = session(&state, session_id)?;
+    let query = SearchQuery {
+        text: search,
+        is_regex,
+        case_sensitive,
+    };
+    blocking(move || {
+        let own = session.view_filter(&levels, &query, mode, sources, expr.as_ref());
+        let sink = Box::new(move |update: SessionUpdate| {
+            let _ = on_update.send(update);
+        });
+        session.open_view(parent_view_id, own, sink)
+    })
+    .await
+}
+
+/// Closes one view; its children keep their filter. The last tab of a file closes with `close_log`.
+#[tauri::command]
+pub async fn close_view(
+    state: State<'_, SessionManager>,
+    session_id: u64,
+    view_id: u32,
+) -> AppResult<()> {
+    session(&state, session_id)?.close_view(view_id)
 }
 
 #[tauri::command]
@@ -177,8 +228,12 @@ pub async fn preview_fields(profile: Profile, line: String) -> AppResult<FieldPr
 }
 
 #[tauri::command]
-pub async fn get_stats(state: State<'_, SessionManager>, session_id: u64) -> AppResult<Stats> {
-    Ok(session(&state, session_id)?.stats())
+pub async fn get_stats(
+    state: State<'_, SessionManager>,
+    session_id: u64,
+    view_id: Option<u32>,
+) -> AppResult<Stats> {
+    session(&state, session_id)?.stats_of(view_id.unwrap_or(0))
 }
 
 #[tauri::command]
@@ -187,9 +242,10 @@ pub async fn find_next(
     session_id: u64,
     from_line: Option<u32>,
     query: SearchQuery,
+    view_id: Option<u32>,
 ) -> AppResult<Option<FindHit>> {
     let session = session(&state, session_id)?;
-    blocking(move || session.find(from_line, &query, true)).await
+    blocking(move || session.find_in(view_id.unwrap_or(0), from_line, &query, true)).await
 }
 
 #[tauri::command]
@@ -198,9 +254,10 @@ pub async fn find_prev(
     session_id: u64,
     from_line: Option<u32>,
     query: SearchQuery,
+    view_id: Option<u32>,
 ) -> AppResult<Option<FindHit>> {
     let session = session(&state, session_id)?;
-    blocking(move || session.find(from_line, &query, false)).await
+    blocking(move || session.find_in(view_id.unwrap_or(0), from_line, &query, false)).await
 }
 
 #[tauri::command]
@@ -208,8 +265,9 @@ pub async fn get_position(
     state: State<'_, SessionManager>,
     session_id: u64,
     line: u32,
+    view_id: Option<u32>,
 ) -> AppResult<u32> {
-    Ok(session(&state, session_id)?.position_of_line(line))
+    session(&state, session_id)?.position_in(view_id.unwrap_or(0), line)
 }
 
 /// What the overview ruler draws: level bits per pixel bucket and where the given lines are.
@@ -219,8 +277,9 @@ pub async fn get_overview(
     session_id: u64,
     buckets: usize,
     lines: Vec<u32>,
+    view_id: Option<u32>,
 ) -> AppResult<Overview> {
-    session(&state, session_id)?.overview(buckets, &lines)
+    session(&state, session_id)?.overview_of(view_id.unwrap_or(0), buckets, &lines)
 }
 
 /// Next or previous entry of one of `levels` in the view, from the summary, without reading text.
@@ -231,8 +290,14 @@ pub async fn find_level(
     from_position: Option<u32>,
     forward: bool,
     levels: Vec<Level>,
+    view_id: Option<u32>,
 ) -> AppResult<Option<FindHit>> {
-    Ok(session(&state, session_id)?.find_level(from_position, forward, &levels))
+    session(&state, session_id)?.find_level_in(
+        view_id.unwrap_or(0),
+        from_position,
+        forward,
+        &levels,
+    )
 }
 
 #[tauri::command]
@@ -263,11 +328,12 @@ pub async fn copy_lines(
     first: u32,
     last: u32,
     view: Option<LogView>,
+    view_id: Option<u32>,
 ) -> AppResult<String> {
     let session = session(&state, session_id)?;
     blocking(move || match view {
         Some(LogView::All) => session.copy_all_lines(first, last),
-        _ => session.copy_lines(first, last),
+        _ => session.copy_lines_of(view_id.unwrap_or(0), first, last),
     })
     .await
 }
