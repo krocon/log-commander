@@ -96,6 +96,8 @@ fn write_tail_truncate_rotate() {
     fs::write(&path, "2024-01-01 INFO one\n").unwrap();
     let fx = open(&path, false);
     assert_eq!(fx.session.stats().total_lines, 1);
+    // The end of the load shows a partial line at once, so tailing starts after it.
+    fx.wait("loaded", |s| s.status == Status::Live);
 
     // Tail: new lines appear, an incomplete one only when its end arrives.
     append(&path, "2024-01-01 ERROR two\n2024-01-01 WARN thr");
