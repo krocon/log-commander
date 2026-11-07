@@ -8,7 +8,28 @@
   let setupData = { files: {}, recent: [] };
   const sessions = new Map();
 
-  function classify(text) {
+  // The Spring Boot layout of the log4j profile (prompt 008), enough for the column view in the screenshots.
+  const SPRING =
+    /^(?<timestamp>\S+)\s+(?<level>[A-Z]+)\s+(?<pid>\d+)\s+---\s+\[\s*(?<thread>[^\]]*?)\]\s+(?<logger>\S+)\s+:\s(?<message>.*)$/d;
+  const SPRING_COLUMNS = [
+    { id: 'timestamp', label: 'Zeit', kind: 'timestamp' },
+    { id: 'level', label: 'Level', kind: 'level' },
+    { id: 'pid', label: 'pid', kind: 'text' },
+    { id: 'thread', label: 'Thread', kind: 'text' },
+    { id: 'logger', label: 'Logger', kind: 'text' },
+    { id: 'message', label: 'Nachricht', kind: 'text' },
+  ];
+  const MESSAGE_ONLY = [{ id: 'message', label: 'Nachricht', kind: 'text' }];
+
+  function fieldsOf(line, columns, isContinuation) {
+    const whole = columns.map((c) => (c.id === 'message' ? [0, line.length] : [0, 0]));
+    if (columns.length === 1 || isContinuation) return whole;
+    const match = line.match(SPRING);
+    if (!match) return whole;
+    return columns.map((c) => match.indices.groups[c.id] ?? [0, 0]);
+  }
+
+  function classify(text, columns) {
     let level = 'UNKNOWN';
     return text
       .split('\n')
@@ -27,8 +48,7 @@
           isContinuation,
           truncated: false,
           matches: [],
-          // One column (`message`) in this stand-in: the whole line.
-          fields: [[0, line.length]],
+          fields: fieldsOf(line, columns, isContinuation),
         };
       });
   }
@@ -86,9 +106,14 @@
     open_log({ path, onUpdate }) {
       const name = path.split('/').pop();
       const id = sessions.size + 1;
+      const text = setupData.files[name];
+      const columns = SPRING.test(text.slice(0, text.indexOf('\n')))
+        ? SPRING_COLUMNS
+        : MESSAGE_ONLY;
       const session = {
         id,
-        lines: classify(setupData.files[name]),
+        columns,
+        lines: classify(text, columns),
         size: setupData.files[name].length,
         generation: 0,
         filter: { levels: LEVELS, search: '', mode: 'filter' },
@@ -133,13 +158,16 @@
       );
       return hit < 0 ? null : { line: all[hit].line, position: hit, wrapped: false };
     },
-    get_columns: () => ({
-      revision: 1,
-      confidence: 1,
-      profileId: 'log4j',
-      inferredLayout: null,
-      columns: [{ id: 'message', label: 'Nachricht', kind: 'text' }],
-    }),
+    get_columns: ({ sessionId }) => {
+      const columns = sessions.get(sessionId).columns;
+      return {
+        revision: 1,
+        confidence: columns.length > 1 ? 1 : 0,
+        profileId: columns.length > 1 ? 'log4j' : 'python',
+        inferredLayout: null,
+        columns,
+      };
+    },
     preview_fields: ({ line }) => ({
       columns: [{ id: 'message', label: 'Nachricht', kind: 'text' }],
       fields: [[0, line.length]],
@@ -151,7 +179,10 @@
     set_custom_profiles: () => null,
     'plugin:store|load': () => 1,
     'plugin:store|get_store': () => 1,
-    'plugin:store|get': () => [{ recentFiles: setupData.recent, ...(setupData.settings ?? {}) }, true],
+    'plugin:store|get': () => [
+      { recentFiles: setupData.recent, ...(setupData.settings ?? {}) },
+      true,
+    ],
     'plugin:store|set': () => null,
     'plugin:store|save': () => null,
     'plugin:cli|cli_matches': () => ({

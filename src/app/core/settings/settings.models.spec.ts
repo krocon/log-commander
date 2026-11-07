@@ -21,6 +21,30 @@ describe('settings', () => {
     expect(merged).toEqual(DEFAULT_SETTINGS);
   });
 
+  it('defaults the column view and keeps valid layouts per profile', () => {
+    const fresh = mergeSettings({});
+    expect(fresh.columnMode).toBe('columns');
+    expect(fresh.columnLayouts).toEqual({});
+    expect(mergeSettings({ columnMode: 'grid' as never }).columnMode).toBe('columns');
+    expect(mergeSettings({ columnMode: 'raw' }).columnMode).toBe('raw');
+    const layout = { order: ['level', 'message'], widths: { level: 60 }, hidden: ['thread'] };
+    expect(mergeSettings({ columnLayouts: { log4j: layout } }).columnLayouts).toEqual({
+      log4j: layout,
+    });
+  });
+
+  it('repairs broken column layouts', () => {
+    expect(mergeSettings({ columnLayouts: 5 as never }).columnLayouts).toEqual({});
+    expect(mergeSettings({ columnLayouts: [] as never }).columnLayouts).toEqual({});
+    const merged = mergeSettings({
+      columnLayouts: {
+        a: null,
+        b: { order: 'x', widths: { level: 'wide', thread: 120.4, pid: -3 }, hidden: [1] },
+      } as never,
+    });
+    expect(merged.columnLayouts).toEqual({ b: { order: [], widths: { thread: 120 }, hidden: [] } });
+  });
+
   it('limits the font size', () => {
     expect(mergeSettings({ fontSize: 500 }).fontSize).toBe(24);
     expect(mergeSettings({ fontSize: 1 }).fontSize).toBe(9);

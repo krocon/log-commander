@@ -12,6 +12,12 @@
   --ge-table-row-odd-bg: transparent;
   --ge-table-row-even-bg: transparent;
   --ge-table-border: transparent;
+  --ge-table-header-center-bg: var(--bg-panel);
+  --ge-table-header-west-bg: var(--bg-panel);
+  --ge-table-header-center-text: var(--text);
+  --ge-table-header-west-text: var(--text);
+  --ge-table-header-center-vertical-border: var(--border);
+  --ge-table-header-center-horizontal-border: var(--border);
 }
 
 .lt-host .lt-table {
@@ -38,8 +44,10 @@
   cursor: default;
 }
 
-/* The level mark at the start of the text, like .mark in the own viewport. */
-.lt-host .ge-table-col-div.lt-cell::before {
+/* The level mark at the start of the text (column view: of the first shown column). */
+.lt-host .ge-table-col-div.lt-cell:not(.lt-col)::before,
+.lt-host .ge-table-col-div.lt-cell.lt-lead::before,
+.lt-host .ge-table-col-div.lt-cell.lt-span::before {
   content: '';
   position: absolute;
   left: 0;

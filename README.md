@@ -23,8 +23,12 @@ Like <code>tail -f</code> with a GUI: millions of lines, instant filters, no wai
 - **Fields** – each line is split into fields such as time, thread, level, logger and message, without defining a
   format. JSON and logfmt keys and FIX tags become fields; an unknown format is inferred (delimiters or timestamp,
   level, `[thread]`, `logger:`), otherwise the line stays one message. The profile tooltip shows how well the format
-  fits ("Log4j · 97 %"); custom profiles take layouts (regexes with named groups) with a live preview. The columns
-  themselves are drawn by a later step; the log view looks as before.
+  fits ("Log4j · 97 %"); custom profiles take layouts (regexes with named groups) with a live preview.
+- **Columns** – a recognised format is shown as a table with a header: one column per field, stack traces run
+  across the full width. Drag a column edge to resize it (double click fits it to the rows on screen), drag a title
+  to move it; right click on the header or `Shift+F10` opens a menu to show, hide, move and resize columns or reset
+  them. The layout is remembered per format. `T` or the toolbar switch goes back to the raw lines. No sorting: the
+  view stays in file order.
 - **Search** – filter or highlight, regular expressions, case sensitivity, jump between matches.
 - **Follow** – stays at the end while you are there; scroll up and it pauses and counts the new lines.
 - **Freeze** – holds a tab to read in peace: lines, counts and the position stay put while filters and search keep
@@ -55,6 +59,8 @@ log-commander /var/log/app.log /var/log/other.log
 | `End`, `F` | Go to the end and follow |
 | `Space` | Pause or resume following |
 | `P` | Freeze: hold or resume reading the file of this tab |
+| `T` | Columns or raw lines |
+| `Shift+F10` | Column menu (show, hide, move, resize, reset) |
 | `Home`, `PageUp`, `PageDown`, `↑`, `↓` | Move through the file |
 | `Cmd/Ctrl+F` | Search; `Enter` next match, `Shift+Enter` previous, `Esc` clear |
 | Click, `Shift`+click | Select an entry, or a range |

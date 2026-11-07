@@ -11,13 +11,15 @@ Architektur verbaut nichts davon.
   Java GC, FIX, logfmt; Inferenz für Unbekanntes; Layouts und Vorschau in eigenen Profilen; `timestamp.rs` für 006
 - Level-Chips, Volltextsuche mit Regex, Groß-/Kleinschreibung, Match-Highlighting, Farbcodierung nach Level
 - Log-Ansicht auf der GuiExpert Table (Prompt 003), feste Zeilenhöhe, kein Umbruch
+- Spaltenansicht mit Kopfzeile (Prompt 009) auf der GuiExpert Table: Breite ziehen und per Doppelklick anpassen,
+  Reihenfolge ziehen, Spaltenmenü (`Shift+F10`, Rechtsklick), Layout je Profil, Rohansicht per `T`
 
 ## Offen
 
 **Dateien:** Rotierte Archive als durchgehende Timeline, `.gz`/`.zip`/`.zst` lesen, Merge-View nach Zeitstempel, Ordner/Glob
 beobachten, Remote-Logs über SSH, `stdin`/Pipe-Modus.
 
-**Struktur:** Spaltenansicht der Felder (Prompt 009, auf der GuiExpert Table), eigene Felder aus der Nachricht (011),
+**Struktur:** Filtern aus der Kopfzeile (010), fixierte Spalten, eigene Felder aus der Nachricht (011),
 Layout je Quelle beim Merge (006), einklappbare Stacktraces, Zeilenumbruch als Folgezeilen fester Höhe (eine Logzeile belegt
 mehrere Tabellenzeilen; braucht eine Zeilen-zu-Bildschirmzeilen-Liste im Backend, neu je Breite und Schrift).
 

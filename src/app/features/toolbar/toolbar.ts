@@ -23,6 +23,7 @@ import {
 } from '../sessions/filter-logic';
 import { LogSessionService } from '../sessions/log-session.service';
 import { formatSummary } from '../sessions/format-logic';
+import { columnsActive, columnsAvailable } from '../log-table/columns-logic';
 
 const SEARCH_DEBOUNCE_MS = 200;
 
@@ -45,6 +46,22 @@ const SEARCH_DEBOUNCE_MS = 200;
         (click)="toggleFreeze()"
       >
         {{ s?.frozen() ? '▶ Fortsetzen' : '⏸ Freeze' }}
+      </button>
+      <button
+        type="button"
+        class="columns"
+        [disabled]="!columnsAvailable()"
+        [attr.aria-pressed]="columnsOn()"
+        [title]="
+          !columnsAvailable()
+            ? 'Spaltenansicht: Format nicht in Spalten erkannt'
+            : columnsOn()
+              ? 'Rohansicht: ganze Zeilen ohne Spalten (T)'
+              : 'Spaltenansicht mit Kopfzeile (T)'
+        "
+        (click)="toggleColumns()"
+      >
+        ▦ Spalten
       </button>
     </div>
     <div class="group chips" role="group" [hidden]="!s" aria-label="Log-Level">
@@ -237,7 +254,8 @@ const SEARCH_DEBOUNCE_MS = 200;
     .chip-FATAL {
       --chip: var(--lv-error-edge);
     }
-    .freeze {
+    .freeze,
+    .columns {
       white-space: nowrap;
     }
     .find-message {
@@ -268,6 +286,14 @@ export class ToolbarComponent implements OnInit, OnDestroy {
     const summary = formatSummary(this.session()?.columns() ?? null, this.sessions.profiles());
     return summary ? `Format-Profil: ${summary}` : 'Format-Profil';
   });
+
+  protected readonly columnsAvailable = computed(() =>
+    columnsAvailable(this.session()?.columns() ?? null),
+  );
+  /** Column view or raw view (prompt 009); a format without columns is always raw. */
+  protected readonly columnsOn = computed(() =>
+    columnsActive(this.settings().columnMode, this.session()?.columns() ?? null),
+  );
 
   protected readonly themeLabel = computed(() => {
     const theme = this.settings().theme;
@@ -336,6 +362,13 @@ export class ToolbarComponent implements OnInit, OnDestroy {
   protected toggleFreeze(): void {
     const session = this.session();
     if (session) void this.sessions.toggleFreeze(session);
+  }
+
+  protected toggleColumns(): void {
+    if (!this.columnsAvailable()) return;
+    this.settingsService.update({
+      columnMode: this.settings().columnMode === 'columns' ? 'raw' : 'columns',
+    });
   }
 
   protected onSearchInput(text: string): void {

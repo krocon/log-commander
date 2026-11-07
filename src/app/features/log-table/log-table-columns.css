@@ -1,0 +1,56 @@
+/* Not encapsulated, like log-table-view.css. */
+/* Column view (prompt 009): one cell per field, the header of the table above. */
+.lt-host .ge-table-col-div.lt-col {
+  padding-left: 1ch;
+  padding-right: 1ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-shadow: inset -1px 0 var(--border);
+}
+
+.lt-host .ge-table-col-div.lt-col.lt-lead {
+  padding-left: calc(3px + 1ch);
+}
+
+/* A continuation or unsplit line runs from the first column over the full width (colspan). */
+.lt-host .ge-table-col-div.lt-col.lt-span {
+  padding-left: calc(3px + 1ch);
+  text-overflow: clip;
+  box-shadow: none;
+}
+
+.lt-host .ge-table-col-div.lt-col.lt-spanned {
+  visibility: hidden;
+}
+
+.lt-host .ge-table-header .ge-table-col-div.lt-head {
+  line-height: var(--header-h);
+  padding: 0;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+  background: var(--bg-panel);
+  box-shadow:
+    inset -1px 0 var(--border),
+    inset 0 -1px var(--border);
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: grab;
+}
+
+.lt-host .ge-table-header .lt-head .ge-table-label {
+  padding-inline: 8px;
+}
+
+.lt-host .ge-table-header .ge-table-col-div.lt-head-gutter {
+  cursor: default;
+}
+
+.lt-host .ge-table-column-resize-handle:hover {
+  background: var(--accent);
+}

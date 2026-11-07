@@ -3,6 +3,12 @@
 > Start in neuer Sitzung: „Lies `prompts/000-analyse-flackern-freeze-tabelle.md` und führe `prompts/done/003-gui-expert-table.md` aus.“
 > Voraussetzung: 001 ist umgesetzt. **Erst nach dem Sichttest von 001 entscheiden, ob dieser Prompt noch gewollt ist.**
 > Nach Abschluss: Prompt nach `prompts/done/` verschieben.
+>
+> **Stand 2026-11-07:** umgesetzt (Tabelle ist die einzige Ansicht). Die Spaltenansicht ist mit Prompt 009 auf dieser
+> Tabelle erledigt (Kopfzeile, Breite und Reihenfolge ziehen, Ausblenden, Layout je Profil). Nutzen neu bewertet: Die
+> Tabelle trägt Kopfzeile, Spaltenbreiten, Drag & Drop der Spalten und ARIA (`columnheader`, `aria-colindex`) ohne eigenen
+> Code; Sortieren bleibt bewusst aus. Offen für später: fixierte Spalten, Excel-Export (`downloadExcel` liest nur
+> geladene Zeilen), Filtern aus der Kopfzeile (010). Grenzen der Tabelle für Logs: siehe `009-tabellen-header.design.md`.
 
 ## Wozu
 
