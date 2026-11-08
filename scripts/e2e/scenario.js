@@ -1036,6 +1036,13 @@
     await sleep(600);
     await waitFor('line count holds', () => lineCount() === heldLines);
     await waitFor('rows hold', () => rowTexts().join() === heldRows);
+    // Updates keep coming in a freeze (the file grows), but the picture stays: nothing is drawn. Every draw
+    // rebuilds the visible cells, and one between mousedown and mouseup swallows the table's click.
+    const drawsFrozen = window.__lcTable.drawTimes.length;
+    await sleep(800);
+    await waitFor('a freeze draws nothing while the file grows', () =>
+      window.__lcTable.drawTimes.length === drawsFrozen && status().includes('warten'),
+    );
     click(button('ERROR+'));
     await waitFor('a filter finishes during the freeze', () => status().includes(' von ') && $('.lt-cell.lv-ERROR') && !$('.lt-cell.lv-INFO'));
     click(button('Alle'));

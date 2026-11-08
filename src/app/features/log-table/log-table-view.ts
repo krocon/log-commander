@@ -52,6 +52,9 @@ import { COL_NUMBER, COL_TEXT, ID_NUMBER, ID_TEXT, LogAreaModel } from './log-ar
 import {
   contentTop,
   contentTopFromScrollbar,
+  DrawState,
+  drawKey,
+  growsOnlyBehindView,
   holdForSelection,
   isDrag,
   posFromContentTop,
@@ -76,6 +79,8 @@ import {
 } from './columns-logic';
 
 const LINE_HEIGHT_FACTOR = 1.5;
+/** Lines arriving behind the view redraw the scroll bar at most this often. */
+const GROW_DRAW_MS = 1000;
 const WHEEL_LINE_PX = 40;
 /** Width of a digit of the monospaced font relative to its size, roughly. */
 const CHAR_WIDTH_FACTOR = 0.62;
@@ -271,6 +276,14 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
   /** The width the last shown column got to fill the view (not the user's). */
   private filled: { id: string; width: number } | null = null;
   private heldForSelection = false;
+  /** What the table drew last (`drawKey`) and with which model: an equal picture is not drawn again. */
+  private drawnKey = '';
+  private drawnModel: unknown = null;
+  private drawnState: DrawState | null = null;
+  private drawnForcedKey = '';
+  /** When lines arriving behind the view were last drawn (scroll bar only), and the pending catch-up. */
+  private grownAt = -Infinity;
+  private growTimer: ReturnType<typeof setTimeout> | undefined;
   /** A mouse drag in the header (resize or move) is running: drawing waits, the table owns the columns. */
   private headerBusy = false;
   private holds = 0;
@@ -366,13 +379,15 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
         pos: session.scroll(),
         left: session.scrollLeft(),
         revision: session.cache.revision(),
-        marks: `${JSON.stringify(session.selection())}|${session.currentHitLine()}|${session.update().totalLines}|${session.bookmarks().size}|${session.notes().size}`,
+        total: session.update().totalLines,
+        marks: `${JSON.stringify(session.selection())}|${session.currentHitLine()}|${session.bookmarks().size}|${session.notes().size}`,
         follow: session.follow(),
       };
-      void [this.viewportW(), this.bodyH(), this.redraw()];
+      const forced = [this.viewportW(), this.bodyH(), this.redraw()];
       // Between a new build and the table's answer the api is still the old table's.
       if (api.getTableModel() !== this.config().model) return;
-      untracked(() => this.draw(api, state));
+      const key = drawKey(state, forced);
+      untracked(() => this.draw(api, state, key, forced.join('|')));
     });
   }
 
@@ -401,6 +416,7 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    if (this.growTimer !== undefined) clearTimeout(this.growTimer);
     this.resizeObserver?.disconnect();
     window.removeEventListener('mouseup', this.onMouseUp, { capture: true });
     document.removeEventListener('mousedown', this.onOutsideMouseDown, { capture: true });
@@ -519,10 +535,39 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
       pos: { top: number; subPx: number };
       left: number;
       revision: number;
+      total: number;
       marks: string;
       follow: boolean;
     },
+    key: string,
+    forcedKey: string,
   ): void {
+    // Every backend update re-runs the effect (also in a freeze, where filter jobs report through tick()),
+    // but log lines never change: only a new picture is drawn. Each render rebuilds the visible cells, and a
+    // render between mousedown and mouseup swallows the table's click.
+    const model = api.getTableModel();
+    if (key === this.drawnKey && model === this.drawnModel) return;
+    // Reading in the middle while lines arrive behind the view: only the scroll bar would change. Draw that at
+    // most once a second instead of rebuilding the cells on every update.
+    const grows =
+      model === this.drawnModel &&
+      growsOnlyBehindView(
+        this.drawnState,
+        state,
+        this.drawnForcedKey,
+        forcedKey,
+        this.session().visibleRows(),
+      );
+    const wait = grows ? GROW_DRAW_MS - (performance.now() - this.grownAt) : 0;
+    if (wait > 0) {
+      if (this.growTimer === undefined) {
+        this.growTimer = setTimeout(() => {
+          this.growTimer = undefined;
+          this.redraw.update((r) => r + 1);
+        }, wait);
+      }
+      return;
+    }
     const dragging = this.dragged || this.dragSelected;
     if (this.headerBusy || holdForSelection(state.follow, this.selectionInTable(), dragging)) {
       this.heldForSelection = true;
@@ -530,6 +575,11 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
       return;
     }
     this.heldForSelection = false;
+    this.drawnKey = key;
+    this.drawnModel = model;
+    this.drawnState = state;
+    this.drawnForcedKey = forcedKey;
+    if (grows) this.grownAt = performance.now();
     const start = performance.now();
     const area = this.config().area;
     // A new height or width (window, detail panel, sidebar) as well: the table follows its host only
