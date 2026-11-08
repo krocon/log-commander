@@ -14,6 +14,7 @@ import {
 } from '@angular/core';
 import { LogApi } from '../../core/log/log-api';
 import { Overview } from '../../core/log/log.models';
+import { ActionService } from '../../core/actions/action.service';
 import { LogSessionService } from '../sessions/log-session.service';
 import { SessionState } from '../sessions/session-state';
 import {
@@ -83,7 +84,7 @@ interface Loaded extends Overview {
       type="button"
       class="to-end"
       aria-label="Ans Ende"
-      title="Ans Ende springen und neuen Zeilen folgen (End, F)"
+      [title]="'Ans Ende springen und neuen Zeilen folgen' + actions.hint('FOLLOW_END')"
       [attr.aria-pressed]="session().follow()"
       (click)="toEnd()"
     >
@@ -138,6 +139,7 @@ export class OverviewRulerComponent implements OnInit, OnDestroy {
 
   private readonly api = inject(LogApi);
   private readonly sessions = inject(LogSessionService);
+  protected readonly actions = inject(ActionService);
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   private readonly track = viewChild.required<ElementRef<HTMLElement>>('track');
   private readonly canvas = viewChild.required<ElementRef<HTMLCanvasElement>>('canvas');

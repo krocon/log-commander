@@ -47,6 +47,12 @@ import { draftFromInference, parseLayouts } from '../sessions/format-logic';
               Farbschema wählen …
             </button>
           </div>
+          <div class="scheme-row">
+            <span>Tastenkürzel ansehen und neu belegen</span>
+            <button type="button" aria-haspopup="dialog" (click)="openShortcuts.emit()">
+              Tastenkürzel …
+            </button>
+          </div>
           <label>
             Schriftgröße
             <input
@@ -379,6 +385,8 @@ export class SettingsDialogComponent implements OnInit {
   private readonly dialog = viewChild.required<ElementRef<HTMLDialogElement>>('dialog');
 
   readonly closed = output<void>();
+  /** Prompt 021: the shortcut editor. */
+  readonly openShortcuts = output<void>();
 
   protected readonly colorTokens = COLOR_TOKENS;
   protected readonly minFont = MIN_FONT_SIZE;

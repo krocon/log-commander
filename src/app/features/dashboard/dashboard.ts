@@ -13,6 +13,7 @@ import {
 import { toAppError } from '../../core/errors/app-error';
 import { LogApi } from '../../core/log/log-api';
 import { ReportSchema } from '../../core/log/log.models';
+import { ActionService } from '../../core/actions/action.service';
 import { formatBytes, formatCount } from '../../shared/format';
 import { LogSessionService } from '../sessions/log-session.service';
 import { SessionState } from '../sessions/session-state';
@@ -89,7 +90,7 @@ const REASONS: Record<string, string> = {
         type="button"
         class="back"
         (click)="sessions.setMode(session(), 'log')"
-        title="Zurück zum Log (⌘/Strg+Shift+D)"
+        [title]="'Zurück zum Log' + actions.hint('TOGGLE_DASHBOARD')"
       >
         ☰ Log
       </button>
@@ -316,6 +317,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
   private readonly api = inject(LogApi);
   private readonly store = inject(DashboardStore);
   protected readonly sessions = inject(LogSessionService);
+  protected readonly actions = inject(ActionService);
 
   readonly session = input.required<SessionState>();
 

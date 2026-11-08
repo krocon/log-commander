@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, inject, output } from '@angular/cor
 import { SessionMarksComponent } from '../../shared/session-marks';
 import { LogSessionService } from '../sessions/log-session.service';
 import { WorkspaceService } from '../workspace/workspace.service';
+import { ActionService } from '../../core/actions/action.service';
 
 @Component({
   selector: 'app-tabs',
@@ -63,7 +64,7 @@ import { WorkspaceService } from '../workspace/workspace.service';
             type="button"
             class="close"
             [attr.aria-label]="session.tabLabel() + ' schließen'"
-            title="Schließen (⌘/Strg+W)"
+            [title]="'Schließen' + actions.hint('CLOSE_TAB')"
             (click)="sessions.close(session.id)"
           >
             ×
@@ -71,13 +72,18 @@ import { WorkspaceService } from '../workspace/workspace.service';
         </div>
       }
     </div>
-    <button type="button" class="open" title="Datei öffnen (⌘/Strg+O)" (click)="openFile.emit()">
+    <button
+      type="button"
+      class="open"
+      [title]="'Datei öffnen' + actions.hint('OPEN_FILE')"
+      (click)="openFile.emit()"
+    >
       ＋
     </button>
     <button
       type="button"
       class="open"
-      title="Pfad eingeben und öffnen (⌘/Strg+⇧+O)"
+      [title]="'Pfad eingeben und öffnen' + actions.hint('OPEN_PATH')"
       (click)="openPath.emit()"
     >
       Pfad …
@@ -85,7 +91,7 @@ import { WorkspaceService } from '../workspace/workspace.service';
     <button
       type="button"
       class="open"
-      title="Mehrere Dateien nach Zeit zusammenführen (⌘/Strg+⇧+M)"
+      [title]="'Mehrere Dateien nach Zeit zusammenführen' + actions.hint('MERGE_FILES')"
       (click)="merge.emit()"
     >
       Zusammenführen …
@@ -93,7 +99,7 @@ import { WorkspaceService } from '../workspace/workspace.service';
     <button
       type="button"
       class="open"
-      title="Syslog über UDP/TCP empfangen (⌘/Strg+⇧+L)"
+      [title]="'Syslog über UDP/TCP empfangen' + actions.hint('OPEN_SOURCE')"
       (click)="openSource.emit()"
     >
       Quelle …
@@ -101,7 +107,9 @@ import { WorkspaceService } from '../workspace/workspace.service';
     <button
       type="button"
       class="open"
-      title="Logdatei auf einem Server über SSH/SFTP live verfolgen (⌘/Strg+⇧+H)"
+      [title]="
+        'Logdatei auf einem Server über SSH/SFTP live verfolgen' + actions.hint('OPEN_REMOTE')
+      "
       (click)="openRemote.emit()"
     >
       Remote …
@@ -181,6 +189,7 @@ import { WorkspaceService } from '../workspace/workspace.service';
 export class TabsComponent {
   protected readonly sessions = inject(LogSessionService);
   protected readonly workspace = inject(WorkspaceService);
+  protected readonly actions = inject(ActionService);
   readonly openFile = output<void>();
   readonly openPath = output<void>();
   readonly merge = output<void>();

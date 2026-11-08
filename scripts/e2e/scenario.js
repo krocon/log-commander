@@ -935,6 +935,69 @@
     press('End');
     await waitFor('following again', () => pill() === 'Live');
 
+    // Prompt 021: shortcuts are actions of a keymap. `?` shows them, Cmd/Ctrl+Shift+K edits them: Freeze from P to K,
+    // stored in the settings (survives a restart), reset brings P back. Menu accelerators are not covered here.
+    const scDialog = () => $('app-shortcut-dialog dialog[open]');
+    const scRow = (id) => $(`app-shortcut-dialog li[data-action="${id}"]`);
+    const scKeys = (id) => [...scRow(id).querySelectorAll('kbd')].map((k) => k.textContent.trim()).join(',');
+    const scButton = (id, text) => [...scRow(id).querySelectorAll('button')].find((b) => b.textContent.trim() === text);
+    const scKey = (key, options = {}) =>
+      scDialog().dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...options }));
+    press('?', { shiftKey: true });
+    await waitFor('? shows the shortcuts as an overview', () =>
+      scDialog() && $$('app-shortcut-dialog li[data-action]').length >= 45 && scKeys('TOGGLE_FREEZE') === 'P' &&
+      !scButton('TOGGLE_FREEZE', 'Aufnehmen') && button('Bearbeiten'));
+    scKey('p');
+    await sleep(200);
+    await waitFor('P in the overview does not freeze the log behind it', () => pill() === 'Live');
+    scDialog().close();
+    await waitFor('overview closed', () => !scDialog());
+    press('k', { metaKey: true, shiftKey: true });
+    await waitFor('Cmd/Ctrl+Shift+K opens the editor', () => scDialog() && scButton('TOGGLE_FREEZE', 'Aufnehmen'));
+    click(scButton('TOGGLE_FREEZE', 'Aufnehmen'));
+    await waitFor('recording', () => scRow('TOGGLE_FREEZE').textContent.includes('Tasten drücken'));
+    scKey('t', { code: 'KeyT' });
+    await waitFor('T is taken: the editor asks', () =>
+      $('app-shortcut-dialog .ask')?.textContent.includes('belegt durch „Spalten oder Rohzeilen“'));
+    click($$('app-shortcut-dialog .ask button').find((b) => b.textContent.trim() === 'Abbrechen'));
+    await waitFor('cancelled: Freeze keeps P', () => !$('app-shortcut-dialog .ask') && scKeys('TOGGLE_FREEZE') === 'P');
+    click(scButton('TOGGLE_FREEZE', 'Aufnehmen'));
+    scKey('Escape');
+    await waitFor('Esc stops recording, the dialog stays', () =>
+      scDialog() && !scRow('TOGGLE_FREEZE').textContent.includes('Tasten drücken'));
+    click(scButton('TOGGLE_FREEZE', 'Aufnehmen'));
+    scKey('k', { code: 'KeyK' });
+    await waitFor('K recorded for Freeze', () =>
+      scKeys('TOGGLE_FREEZE') === 'K' && scButton('TOGGLE_FREEZE', 'Zurücksetzen'));
+    scDialog().close();
+    await waitFor('editor closed', () => !scDialog());
+    press('p');
+    await sleep(300);
+    await waitFor('P does nothing any more', () => pill() === 'Live');
+    press('k');
+    await waitFor('K freezes', () => pill() === 'Eingefroren');
+    press('k');
+    await waitFor('K resumes', () => pill() !== 'Eingefroren');
+    await sleep(800);
+    await act('expectsettings "keymap"|"TOGGLE_FREEZE"|"K"');
+    press('k', { metaKey: true, shiftKey: true });
+    await waitFor('editor open again', () => scDialog() && scButton('TOGGLE_FREEZE', 'Zurücksetzen'));
+    click(scButton('TOGGLE_FREEZE', 'Zurücksetzen'));
+    await waitFor('reset brings P back', () =>
+      scKeys('TOGGLE_FREEZE') === 'P' && !scButton('TOGGLE_FREEZE', 'Zurücksetzen'));
+    scDialog().close();
+    await waitFor('editor closed again', () => !scDialog());
+    press('p');
+    await waitFor('P freezes again', () => pill() === 'Eingefroren');
+    press('p');
+    await waitFor('P resumes again', () => pill() !== 'Eingefroren');
+    press('End');
+    await waitFor('following after the shortcuts', () => pill() === 'Live');
+    search('typed');
+    keyOn($('input[type=search]'), 'Escape');
+    await waitFor('Esc in the search field clears it (a field action)', () => searchValue() === '');
+    await sleep(400);
+
     // The column view comes back with its layout.
     press('t');
     await waitFor('T switches back to the columns', () =>
@@ -1690,7 +1753,7 @@
       el.value = value;
       el.dispatchEvent(new Event(el.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true }));
     };
-    press('l', { metaKey: true, ctrlKey: true, shiftKey: true });
+    press('l', { metaKey: true, shiftKey: true });
     await waitFor('„Quelle öffnen“ with Cmd/Ctrl+Shift+L', () => srcDialog()?.open);
     // Prompt 018: Windows event logs only where they exist; elsewhere invisible and refused by the backend.
     const winSupported = await invoke('winevent_supported');
@@ -1786,7 +1849,7 @@
     }
     await report('PASS the multi-line message is one line with \\n');
     // The same port for UDP and TCP again: in use, said in the dialog with the port.
-    press('l', { metaKey: true, ctrlKey: true, shiftKey: true });
+    press('l', { metaKey: true, shiftKey: true });
     await waitFor('dialog again', () => srcDialog()?.open);
     click($('input[name=protocol][value=both]'));
     setSrcField('#source-port', String(srcPort));
@@ -1814,7 +1877,7 @@
       el.value = value;
       el.dispatchEvent(new Event(el.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true }));
     };
-    press('l', { metaKey: true, ctrlKey: true, shiftKey: true });
+    press('l', { metaKey: true, shiftKey: true });
     await waitFor('„Quelle öffnen“ again', () => srcDialog()?.open);
     setDbField('#source-kind', 'database');
     await waitFor('the kind „Datenbank“ opens its own dialog', () => dbDialog()?.open && !srcDialog());
@@ -1925,7 +1988,7 @@
       el.dispatchEvent(new Event('input', { bubbles: true }));
     };
     const remSubmit = () => $('#remote-connect').closest('form').requestSubmit();
-    press('h', { metaKey: true, ctrlKey: true, shiftKey: true });
+    press('h', { metaKey: true, shiftKey: true });
     await waitFor('„Remote-Datei“ with Cmd/Ctrl+Shift+H', () => remDialog()?.open);
     await waitFor(
       'defaults: agent, last 50 MB, 500 ms',
@@ -1988,7 +2051,7 @@
     // Another server on the same address and port (another host key): refused, no button to go on.
     await invoke('e2e_sftp_stop', { port: sftpPort });
     await invoke('e2e_sftp_server', { root: remoteRoot, seed: 8, port: sftpPort });
-    press('h', { metaKey: true, ctrlKey: true, shiftKey: true });
+    press('h', { metaKey: true, shiftKey: true });
     await waitFor(
       'dialog again, the connection remembered',
       () => remDialog()?.open && $$('app-remote-dialog .chip').some((c) => c.textContent.includes(remLabel)),
@@ -2018,7 +2081,7 @@
     const schemeBefore = rootStyle().getPropertyValue('--bg-app').trim();
     const openPicker = () =>
       document.body.dispatchEvent(
-        new KeyboardEvent('keydown', { key: 't', code: 'KeyT', altKey: true, metaKey: true, ctrlKey: true, bubbles: true }),
+        new KeyboardEvent('keydown', { key: 't', code: 'KeyT', altKey: true, metaKey: true, bubbles: true }),
       );
     openPicker();
     await waitFor(

@@ -14,6 +14,7 @@ import { describeError, toAppError } from '../../core/errors/app-error';
 import { LogApi } from '../../core/log/log-api';
 import { EntryDetail } from '../../core/log/log.models';
 import { SettingsService } from '../../core/settings/settings.service';
+import { ActionService } from '../../core/actions/action.service';
 import { formatBytes, formatCount } from '../../shared/format';
 import { sourceColor } from '../merge/merge-logic';
 import { TextSegment } from '../log-table/highlight';
@@ -87,7 +88,7 @@ import { EntryKey, lineRangeLabel, needsReload } from './detail-logic';
         <button
           type="button"
           class="full-log"
-          title="Zurück zum gemerkten Filter (G)"
+          [title]="'Zurück zum gemerkten Filter' + actions.hint('TOGGLE_FULL_LOG')"
           (click)="toggleFullLog()"
         >
           ↩ Zurück zum Filter
@@ -96,7 +97,10 @@ import { EntryKey, lineRangeLabel, needsReload } from './detail-logic';
         <button
           type="button"
           class="full-log"
-          title="Diese Zeile im ungefilterten Log zeigen, der Filter wird gemerkt (G)"
+          [title]="
+            'Diese Zeile im ungefilterten Log zeigen, der Filter wird gemerkt' +
+            actions.hint('TOGGLE_FULL_LOG')
+          "
           (click)="toggleFullLog()"
         >
           ⇱ Im Gesamtlog
@@ -108,8 +112,8 @@ import { EntryKey, lineRangeLabel, needsReload } from './detail-logic';
       <button
         type="button"
         class="close"
-        aria-label="Detail schließen (D)"
-        title="Schließen (D)"
+        aria-label="Detail schließen"
+        [title]="'Schließen' + actions.hint('TOGGLE_DETAIL')"
         (click)="close()"
       >
         ×
@@ -124,7 +128,11 @@ import { EntryKey, lineRangeLabel, needsReload } from './detail-logic';
         <span class="note-icon" aria-hidden="true">✎</span>
         <span class="sr-only">Notiz:</span>
         <span class="note-text">{{ text }}</span>
-        <button type="button" title="Notiz bearbeiten (Shift+M)" (click)="editNote()">
+        <button
+          type="button"
+          [title]="'Notiz bearbeiten' + actions.hint('EDIT_NOTE')"
+          (click)="editNote()"
+        >
           Bearbeiten
         </button>
       </div>
@@ -315,6 +323,7 @@ export class DetailPanelComponent {
   private readonly api = inject(LogApi);
   private readonly sessions = inject(LogSessionService);
   private readonly settingsService = inject(SettingsService);
+  protected readonly actions = inject(ActionService);
   private readonly body = viewChild.required<ElementRef<HTMLPreElement>>('body');
 
   /** The line whose entry is shown: the anchor of the selection, nothing else. */

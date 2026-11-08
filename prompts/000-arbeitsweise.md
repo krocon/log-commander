@@ -63,10 +63,13 @@ Kleine Features legen Phasen zusammen. Reine Frontend-Features lassen Phase 2 au
   `SettingsService` (neue Felder mit Vorgabe in `mergeSettings`, damit alte Dateien weiter laden).
 - **Reine Logik in eigene Dateien mit Spec** (wie `viewport-logic.ts`, `displayed-lines.ts`, `filter-logic.ts`), Komponenten
   zeichnen nur.
-- Tastatur: Ist Prompt 021 umgesetzt (`src/app/core/actions/`), kommen neue Kürzel nur als Aktion im Katalog mit
-  Default in den Keymaps je OS, nie als eigener `keydown`-Handler. Davor: `onKey` in `log-table-view.ts` hängt am `document`, neue
-  fokussierbare Bereiche mit eigenen Pfeiltasten dort ausnehmen, neue Kürzel gegen die vorhandenen prüfen (`README.md`,
-  `log-table-view.ts`, `app.ts`, `toolbar.ts`).
+- **Tastatur (verbindlich, Prompt 021 ist umgesetzt):** Neue Kürzel kommen nur als Aktion in
+  `src/app/core/actions/action-catalog.ts` (Id `SCREAMING_SNAKE`, nie umbenennen, Geltungsbereich `global`/`view`/`field`) mit
+  Default in `keymaps/{macos,windows,linux}.json`, Handler per `ActionService.register` – nie als eigener `keydown`-Handler am
+  `document`. Danach `node scripts/keymap-table.mjs` (README-Tabelle, sonst wird `npm run check` rot) und im Englischtext
+  `README_TEXT` des Skripts ergänzen. Ein neuer fokussierbarer Bereich mit eigenen Pfeiltasten (lokale Tasten am Element)
+  kommt in `OWN_KEYS` in `keyboard-dispatcher.ts`, damit `view`-Aktionen dort nicht greifen. Menüeinträge mit Kürzel:
+  `menu: true` im Katalog und in `menu_accel::MENU_ACTIONS` (ein Rust-Test vergleicht beides).
 - **Barrierefreiheit:** sichtbarer Fokus, jede Funktion per Tastatur, Dialoge mit `role="dialog"`/`aria-modal`, Fokus
   zurückgeben, Zustände mit `aria-pressed`/`aria-expanded`, Information nie nur über Farbe.
 - Texte der Oberfläche auf Deutsch, Code und Kommentare auf Englisch. Logdaten sind Fremddaten: nie per `innerHTML`.

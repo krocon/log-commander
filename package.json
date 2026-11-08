@@ -25,7 +25,7 @@
     "demo:log": "node scripts/gen-log.mjs /tmp/app.log --rate 5000 --rotate-every 100000",
     "demo:app": "tauri dev -- -- /tmp/app.log",
     "demo:clean": "rm -f /tmp/app.log /tmp/app.log.[1-5]",
-    "scripts:test": "node --test \"scripts/*.test.mjs\"",
+    "scripts:test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test \"scripts/*.test.mjs\"",
     "e2e": "node scripts/e2e/run.mjs",
     "check": "npm run contrast && npm run scripts:test && npm run format:check && npm run lint && npm test && npm run build && npm run rust:fmt && npm run rust:lint && npm run rust:test"
   },

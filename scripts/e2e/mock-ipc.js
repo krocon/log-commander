@@ -1195,6 +1195,8 @@
     'plugin:window|set_title': () => null,
     // Prompt 020: the native window frame.
     set_window_chrome: () => null,
+    // Prompt 021: the menu accelerators follow the keymap.
+    set_menu_accelerators: () => null,
   };
 
   window.isTauri = true;

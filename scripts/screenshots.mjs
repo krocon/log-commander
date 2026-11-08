@@ -185,6 +185,19 @@ await shot(dark, 'settings');
 await dark.keyboard.press('Escape');
 await dark.waitForTimeout(150);
 
+// Prompt 021: the shortcut editor with one shortcut changed (Freeze on K).
+await dark.keyboard.press('Meta+Shift+K');
+await dark.waitForSelector('app-shortcut-dialog dialog[open]');
+await dark.click('app-shortcut-dialog li[data-action=TOGGLE_FREEZE] button:text-is("Aufnehmen")');
+await dark.keyboard.press('k');
+await dark.waitForTimeout(150);
+await shot(dark, 'shortcuts');
+await dark.click(
+  'app-shortcut-dialog li[data-action=TOGGLE_FREEZE] button:text-is("Zurücksetzen")',
+);
+await dark.keyboard.press('Escape');
+await dark.waitForTimeout(150);
+
 // Merge (prompt 006): both open files ticked in the dialog, then one tab in time order, the source in the gutter.
 await dark.keyboard.press('Meta+Shift+M');
 await dark.waitForSelector('app-merge-dialog dialog[open]');

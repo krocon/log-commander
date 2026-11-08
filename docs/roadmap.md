@@ -72,8 +72,16 @@ Architektur verbaut nichts davon.
   Amber, Solarized Light, Mystico – C64, Crimson, fünf Rainglow), Picker mit Vorschaubildern, Filter und Live-Vorschau
   (`Cmd/Ctrl+Alt+T`, Toolbar, Ansicht-Menü, Einstellungen), „System folgen“ mit wählbarem Paar, Fensterrahmen passend,
   Start ohne Blitz, Kontrastprüfung aller Schemata (`npm run contrast`, Vitest)
+- Aktionen, Keymaps und Kürzel-Editor (Prompt 021): 50 Aktionen mit stabilen Ids, Default-Keymap je OS, ein Dispatcher
+  (Geltungsbereich global/Ansicht/Suchfeld), Editor mit Suche, Aufnehmen, Konflikt- und Reserviert-Hinweis, Zurücksetzen
+  (`Cmd/Ctrl+Shift+K`, `?` als Übersicht, Hilfe-Menü, Einstellungen); eigene Belegung im Settings-Store; Menü-Kürzel folgen
+  der Keymap; Tooltips zeigen die aktuelle Belegung; README-Tabelle aus den Keymaps erzeugt und geprüft
 
 ## Offen
+
+**Nach Prompt 021:** Befehlspalette (der Katalog bringt Namen, Gruppen und Kürzel schon mit), Import/Export einer Keymap
+(zu 015; streng prüfen, wie `mergeKeymap` + `resolveKeymap`), Kürzel für Profile und gespeicherte Filter, Keymap-Vorlagen
+(„VS Code“, „less“), Akkorde im Editor aufnehmen (der Dispatcher kann sie schon).
 
 **Farbschemata, Phase 2 von Prompt 020:** eigene Schemata bearbeiten (Editor mit Gruppen aus `tokens.ts`, Live-Vorschau,
 Kontrast-Hinweise je Paar, Speichern nur der Abweichungen über `diffTokens`), im Store unter `themes` (höchstens 50

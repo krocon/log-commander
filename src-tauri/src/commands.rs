@@ -822,6 +822,64 @@ pub fn set_window_chrome(app: AppHandle, color: String, dark: Option<bool>) -> A
     Ok(())
 }
 
+/// One menu entry (an action id of `MENU_ACTIONS`) and its shortcut in the keymap notation, `None` = none.
+#[derive(Debug, Clone, Deserialize)]
+pub struct MenuAccelerator {
+    pub id: String,
+    pub shortcut: Option<String>,
+}
+
+/// Prompt 021: the accelerators of the menu entries follow the keymap. Shortcuts a menu cannot carry (chords,
+/// plain keys) leave the entry without one; the page handles them. Unknown ids are refused.
+#[tauri::command]
+pub fn set_menu_accelerators(app: AppHandle, items: Vec<MenuAccelerator>) -> AppResult<()> {
+    use crate::menu_accel::{native_accelerator, MENU_ACTIONS};
+    if items.len() > MENU_ACTIONS.len() {
+        return Err(AppError::new(
+            ErrorCode::Unsupported,
+            "too many menu entries",
+        ));
+    }
+    let Some(menu) = app.menu() else {
+        return Ok(());
+    };
+    let macos = cfg!(target_os = "macos");
+    for item in items {
+        if !MENU_ACTIONS.contains(&item.id.as_str()) {
+            return Err(AppError::new(ErrorCode::Unsupported, "not a menu entry"));
+        }
+        let accelerator = item
+            .shortcut
+            .as_deref()
+            .and_then(|s| native_accelerator(s, macos));
+        if let Some(entry) = find_menu_item(&menu.items().unwrap_or_default(), &item.id) {
+            entry
+                .set_accelerator(accelerator)
+                .map_err(|e| AppError::new(ErrorCode::Io, e.to_string()))?;
+        }
+    }
+    Ok(())
+}
+
+/// A menu item by id, in submenus too (`Menu::get` only looks at the top level).
+fn find_menu_item<R: tauri::Runtime>(
+    items: &[tauri::menu::MenuItemKind<R>],
+    id: &str,
+) -> Option<tauri::menu::MenuItem<R>> {
+    for item in items {
+        if let Some(plain) = item.as_menuitem() {
+            if plain.id() == id {
+                return Some(plain.clone());
+            }
+        } else if let Some(sub) = item.as_submenu() {
+            if let Some(found) = find_menu_item(&sub.items().unwrap_or_default(), id) {
+                return Some(found);
+            }
+        }
+    }
+    None
+}
+
 /// Shows the main window if it is still hidden (after the first scheme, or after a time limit).
 pub fn show_main(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
