@@ -25,6 +25,14 @@ import { inheritOnClose, insertIndex, viewLimitReason } from './view-chain';
 import { AppError, describeError, toAppError } from '../../core/errors/app-error';
 import { SettingsService } from '../../core/settings/settings.service';
 import { SessionState } from './session-state';
+import {
+  Direction,
+  extendSelection,
+  headLine,
+  neighbourQuery,
+  neighbourRow,
+  steppedSelection,
+} from './selection-logic';
 import { fullLogOf, nextBookmark, toggleBookmark } from './navigation-logic';
 import { ShareKind, shareText } from '../share/share-format';
 import { MAX_NOTE_LENGTH, isWorkspacePath } from '../workspace/workspace-model';
@@ -959,18 +967,65 @@ export class LogSessionService {
 
   async selectEntry(session: SessionState, line: number, extend: boolean): Promise<void> {
     try {
-      const range = await this.api.getEntryRange(session.sessionId, line);
       const current = session.selection();
+      const range = await this.api.getEntryRange(session.sessionId, line);
       if (extend && current) {
-        const anchorStart = Math.min(current.anchor, range.first);
-        const end = Math.max(current.anchor, range.last);
-        session.selection.set({ anchor: current.anchor, first: anchorStart, last: end });
+        // The anchor's entry stays whole, also when the range lies above it.
+        const anchorEntry = await this.api.getEntryRange(session.sessionId, current.anchor);
+        session.selection.set(extendSelection(current.anchor, anchorEntry, range));
       } else {
         session.selection.set({ anchor: range.first, first: range.first, last: range.last });
       }
       session.currentHitLine.set(null);
     } catch (e) {
       this.showError(toAppError(e));
+    }
+  }
+
+  /**
+   * ↑/↓ (Shift: extend): the selection to the previous or next entry of the view, a stack trace is one entry.
+   * Works on view positions, so filtered views and merges step over hidden lines. Returns the rows of the new
+   * entry in the view (for scrolling it into view), or null when nothing moved (end of the view, no selection,
+   * the selection changed meanwhile).
+   */
+  async stepSelection(
+    session: SessionState,
+    direction: Direction,
+    extend: boolean,
+  ): Promise<{ first: number; last: number } | null> {
+    const selection = session.selection();
+    if (!selection) return null;
+    const id = session.sessionId;
+    try {
+      const from = extend
+        ? await this.api.getEntryRange(id, headLine(selection))
+        : { first: selection.first, last: selection.last };
+      const query = neighbourQuery(from, direction);
+      const position = await this.api.getPosition(id, query.line, session.viewId);
+      const row = neighbourRow(position, query.offset, session.filteredLines());
+      if (row === null) return null;
+      const line =
+        session.cache.line(row) ??
+        (await this.api.getLines(id, 'filtered', row, 1, session.viewId))[0];
+      if (!line) return null;
+      const target = await this.api.getEntryRange(id, line.line);
+      const anchorEntry = extend ? await this.api.getEntryRange(id, selection.anchor) : null;
+      if (session.selection() !== selection) return null;
+      session.selection.set(steppedSelection(selection, target, extend, anchorEntry));
+      session.currentHitLine.set(null);
+      // The rows of the whole target entry, as far as the view shows it.
+      const first =
+        target.first < line.line
+          ? await this.api.getPosition(id, target.first, session.viewId)
+          : row;
+      const last =
+        target.last > line.line
+          ? (await this.api.getPosition(id, target.last + 1, session.viewId)) - 1
+          : row;
+      return { first: Math.min(first, row), last: Math.max(last, row) };
+    } catch (e) {
+      this.showError(toAppError(e));
+      return null;
     }
   }
 

@@ -4,6 +4,7 @@ import {
   contentTop,
   contentTopFromScrollbar,
   holdForSelection,
+  isDrag,
   posFromContentTop,
   rowClasses,
   textColumnWidth,
@@ -63,10 +64,28 @@ describe('content pixels', () => {
 });
 
 describe('holdForSelection', () => {
-  it('holds only a selection while reading', () => {
-    expect(holdForSelection(false, true)).toBe(true);
-    expect(holdForSelection(true, true)).toBe(false);
-    expect(holdForSelection(false, false)).toBe(false);
+  it('holds only a selection the user dragged while reading', () => {
+    expect(holdForSelection(false, true, true)).toBe(true);
+    expect(holdForSelection(true, true, true)).toBe(false);
+    expect(holdForSelection(false, false, true)).toBe(false);
+  });
+
+  it('never holds for a stale selection (double click, script)', () => {
+    expect(holdForSelection(false, true, false)).toBe(false);
+  });
+});
+
+describe('isDrag', () => {
+  it('is a click while the pointer stays within 4 px', () => {
+    expect(isDrag(0, 0)).toBe(false);
+    expect(isDrag(2, 2)).toBe(false);
+    expect(isDrag(-3, 0)).toBe(false);
+  });
+
+  it('is a drag from 4 px on, in any direction', () => {
+    expect(isDrag(4, 0)).toBe(true);
+    expect(isDrag(0, -30)).toBe(true);
+    expect(isDrag(3, 3)).toBe(true);
   });
 });
 

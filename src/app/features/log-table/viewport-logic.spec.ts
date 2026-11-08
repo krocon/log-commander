@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   revealBelow,
+  revealRows,
   MAX_SCROLL_RANGE,
   bottomAnchor,
   maxTop,
@@ -79,6 +80,39 @@ describe('viewport logic', () => {
     expect(revealBelow({ top: 100, subPx: 0 }, 130, { ...m, viewportH: 190 })).toEqual({
       top: 121,
       subPx: 10,
+    });
+  });
+});
+
+describe('revealRows', () => {
+  // 10 rows of 20 px in view.
+  const m = { count: 1000, viewportH: 200, rowH: 20 };
+  const at = { top: 100, subPx: 0 };
+
+  it('leaves visible rows alone', () => {
+    expect(revealRows(at, 100, 100, m)).toBeNull();
+    expect(revealRows(at, 105, 109, m)).toBeNull();
+  });
+
+  it('scrolls up just to the first row', () => {
+    expect(revealRows(at, 99, 99, m)).toEqual({ top: 99, subPx: 0 });
+    expect(revealRows({ top: 100, subPx: 7 }, 100, 100, m)).toEqual({ top: 100, subPx: 0 });
+  });
+
+  it('scrolls down just so the last row is at the bottom edge', () => {
+    expect(revealRows(at, 110, 110, m)).toEqual({ top: 101, subPx: 0 });
+    expect(revealRows(at, 110, 112, m)).toEqual({ top: 103, subPx: 0 });
+  });
+
+  it('shows the start of an entry taller than the view', () => {
+    expect(revealRows(at, 108, 130, m)).toEqual({ top: 108, subPx: 0 });
+  });
+
+  it('respects a partly visible last row', () => {
+    expect(revealRows({ top: 100, subPx: 5 }, 110, 110, m)).toEqual({ top: 101, subPx: 0 });
+    expect(revealRows({ top: 100, subPx: 0 }, 0, 0, { ...m, viewportH: 190 })).toEqual({
+      top: 0,
+      subPx: 0,
     });
   });
 });

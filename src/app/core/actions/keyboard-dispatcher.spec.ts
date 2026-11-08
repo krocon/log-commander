@@ -102,7 +102,17 @@ describe('KeyboardDispatcher', () => {
     expect(d.handle(key('f', search, { metaKey: true }))).toBe('FOCUS_SEARCH');
     // Esc in the log is the selection's
     expect(d.handle(key('Escape'))).toBe('CLEAR_SELECTION');
-    expect(d.handle(key('Enter'))).toBeNull();
+    // Enter in the log opens the details of the selection, the search field's Enter stays FIND_NEXT
+    expect(d.handle(key('Enter'))).toBe('OPEN_DETAIL');
+  });
+
+  it('Enter without a selection passes on (OPEN_DETAIL disabled)', () => {
+    const h = host();
+    h.disabled.add('OPEN_DETAIL');
+    const d = new KeyboardDispatcher(h);
+    const e = key('Enter');
+    expect(d.handle(e)).toBeNull();
+    expect(e.prevented).toBe(false);
   });
 
   it('a dialog owns all its keys, global ones too', () => {

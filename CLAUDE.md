@@ -234,6 +234,13 @@ samples/                     Beispiel-Logs
   Wiederverbinden 1, 2, 4 … 60 s; abgelehnte Anmeldung, Host-Schlüssel-Fehler: kein neuer Versuch. Ein Arbeitsstand
   verbindet nie selbst (Eintrag ungehakt, Fragen im Dialog), speichert keine Schlüsseldatei. e2e-Läufe: Schlüsselbund im
   Speicher, known_hosts im Temp-Ordner.
+- **Klick oder Ziehen in der Tabelle:** Über die Maus-Events der GuiExpert Table, nicht über `getSelection()`:
+  `mouseDragging` (draggingX/Y ab 4 px, `isDrag`) kommt vor dem Klick, `mouseDraggingEnded` danach, `clickCount` 2 ist
+  der Doppelklick. Ein Klick wählt immer den Eintrag und verwirft markierten Text, ein Ziehen markiert Text und lässt den
+  Eintrag; nach einem Ziehen wird das Repaint der Tabelle (Fokuszelle) abgesagt, sonst wäre der Text weg. Das Zeichnen wartet nur auf eine vom Nutzer gezogene Markierung in der Tabelle
+  (`holdForSelection`), sonst blockierte das Wort eines Doppelklicks Klicks und Ansicht. `↑`/`↓` sind weiter
+  `SCROLL_LINE_*` (Keymap erlaubt je Ort nur eine Aktion je Taste): mit Auswahl Schritt zum nächsten Eintrag der Ansicht
+  über `get_position` (filter- und merge-fest), ohne Auswahl scrollen. Pos1/Ende/Bild bleiben reines Scrollen.
 - **Datei-Identität unter Windows** über `GetFileInformationByHandle`, nicht Erstellzeit (File Tunneling).
 - **CSP:** `dangerousDisableAssetCspModification: ["style-src"]` ist nötig. Sonst ergänzt Tauri Nonces, `'unsafe-inline'`
   gilt nicht mehr und Angulars Komponenten-Styles fehlen.
