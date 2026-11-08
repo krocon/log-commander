@@ -28,7 +28,16 @@ import { WorkspaceService } from '../workspace/workspace.service';
               <span class="chain" aria-hidden="true">↳</span>
             }
             @if (session.isSource && session.viewId === 0) {
-              @if (session.source?.kind === 'sftp') {
+              @if (session.source?.kind === 'winevent') {
+                <!-- Prompt 018: a Windows event log channel, read into a spool. -->
+                <span
+                  class="src"
+                  role="img"
+                  aria-label="Windows-Ereignisse"
+                  title="Windows-Ereignisprotokoll (Spool)"
+                  >⊞</span
+                >
+              } @else if (session.source?.kind === 'sftp') {
                 <!-- Prompt 017: a file on a server, pulled over SFTP into a spool. -->
                 <span class="src" role="img" aria-label="Remote-Datei" title="Über SSH/SFTP (Spool)"
                   >⇅</span

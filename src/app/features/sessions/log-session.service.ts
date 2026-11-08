@@ -15,6 +15,7 @@ import {
   SourceConfig,
   RemoteCredentials,
   SftpConfig,
+  WinEventConfig,
 } from '../../core/log/log.models';
 import { addSavedSource, sourceKey } from '../sources/source-logic';
 import { ALL_SOURCES, mergeKey, maskForBackend } from '../merge/merge-logic';
@@ -93,6 +94,15 @@ export class LogSessionService {
   readonly remoteRequest = signal<{ config: SftpConfig | null; error?: AppError | null } | null>(
     null,
   );
+  /**
+   * Prompt 018: Windows event logs can be read here (asked once at start; false on macOS and Linux, where the kind
+   * stays invisible), and the dialog „Windows-Ereignisse“, maybe prefilled and with the error that opened it.
+   */
+  readonly wineventSupported = signal(false);
+  readonly wineventRequest = signal<{
+    config: WinEventConfig | null;
+    error?: AppError | null;
+  } | null>(null);
   /**
    * Opens a workspace (`.lcw`) given as a path, wherever a path is opened (dialog, path field, drop, command line,
    * recent files). Set by the workspace service, which needs this service itself.
@@ -177,7 +187,7 @@ export class LogSessionService {
       this.sessions().filter((s) => s.source !== null && sourceKey(s.source.config) === key),
     );
     // Port 0: chosen by the system (syslog), nothing to open again; for SFTP it means „from ~/.ssh/config“.
-    const lasting = config.kind === 'sftp' || config.port !== 0;
+    const lasting = config.kind !== 'syslog' || config.port !== 0;
     if (open && lasting) {
       this.activate(open.id);
       return null;
@@ -193,6 +203,15 @@ export class LogSessionService {
       return null;
     } catch (e) {
       return toAppError(e);
+    }
+  }
+
+  /** Prompt 018: asks the backend once whether Windows event logs can be read here. */
+  async loadWineventSupport(): Promise<void> {
+    try {
+      this.wineventSupported.set((await this.api.wineventSupported()) === true);
+    } catch {
+      this.wineventSupported.set(false);
     }
   }
 

@@ -222,7 +222,19 @@ impl FieldParser {
             Structure::W3c => Self::w3c(sample),
         };
         parser.detect_numbers(sample);
+        if profile.id == crate::profile::WINEVENT_PROFILE {
+            parser.relabel(&WINEVENT_LABELS);
+        }
         Ok(parser)
+    }
+
+    /// German names for known keys of a profile (Windows events, prompt 018).
+    fn relabel(&mut self, labels: &[(&str, &str)]) {
+        for column in &mut self.columns {
+            if let Some((_, label)) = labels.iter().find(|(id, _)| *id == column.id) {
+                column.label = (*label).into();
+            }
+        }
     }
 
     pub fn columns(&self) -> &[Column] {
@@ -703,6 +715,18 @@ pub fn compile_layouts(profile: &Profile) -> AppResult<Vec<Regex>> {
 // ---------------------------------------------------------------------------------------------
 // JSON and logfmt
 
+/// Column names of the Windows events (prompt 018, `sources/winevent/line.rs`).
+const WINEVENT_LABELS: [(&str, &str); 8] = [
+    ("provider", "Provider"),
+    ("eventId", "Event-ID"),
+    ("channel", "Kanal"),
+    ("computer", "Computer"),
+    ("task", "Aufgabe"),
+    ("user", "Benutzer"),
+    ("recordId", "Datensatz"),
+    ("xml", "XML"),
+];
+
 const TIMESTAMP_KEYS: [&str; 5] = ["timestamp", "@timestamp", "time", "ts", "@t"];
 const LEVEL_KEYS: [&str; 4] = ["level", "severity", "lvl", "@l"];
 const MESSAGE_KEYS: [&str; 4] = ["message", "msg", "@m", "@mt"];
@@ -1035,7 +1059,8 @@ pub fn confidence(parser: &FieldParser, detector: &LevelDetector, sample: &[&str
 pub fn detect_format(sample: &[&str], profiles: &[Profile]) -> FormatGuess {
     let mut best = FormatGuess::none();
     for profile in profiles {
-        if profile.id == GENERIC_PROFILE {
+        // Windows events (prompt 018) are JSON Lines the source picks; never guessed for a file.
+        if profile.id == GENERIC_PROFILE || profile.id == crate::profile::WINEVENT_PROFILE {
             continue;
         }
         let guess = format_of(profile, sample);
@@ -1785,7 +1810,10 @@ mod tests {
             );
             println!("{file}: {id} {:.0} %", guess.confidence * 100.0);
             for other in &profiles {
-                if other.id == id || other.id == GENERIC_PROFILE {
+                if other.id == id
+                    || other.id == GENERIC_PROFILE
+                    || other.id == crate::profile::WINEVENT_PROFILE
+                {
                     continue;
                 }
                 let theirs = format_of(other, &lines).confidence;

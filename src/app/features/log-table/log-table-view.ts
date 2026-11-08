@@ -12,6 +12,7 @@ import {
   signal,
   untracked,
 } from '@angular/core';
+import { WINEVENT_PROFILE, defaultColumnLayout } from '../winevent/winevent-logic';
 import { TableSignalComponent } from '@guiexpert/angular-table';
 import {
   ColumnDef,
@@ -445,7 +446,8 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
     }
     const columns = resolveColumns(
       set.columns,
-      this.settings().columnLayouts[set.profileId],
+      // Prompt 018: Windows events start with time, level, provider, event ID and message.
+      this.settings().columnLayouts[set.profileId] ?? defaultColumnLayout(set.profileId),
       this.charWidth(),
     );
     const area = new LogAreaModel(
@@ -756,7 +758,10 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
     const layouts = { ...this.settings().columnLayouts };
     delete layouts[profileId];
     this.settingsService.update({ columnLayouts: layouts });
-    this.applyColumns(resolveColumns(set.columns, undefined, this.charWidth()), false);
+    this.applyColumns(
+      resolveColumns(set.columns, defaultColumnLayout(profileId), this.charWidth()),
+      false,
+    );
   }
 
   /** Double click on a column's edge: as wide as its content in the rows on screen (no file scan). */
@@ -839,6 +844,7 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
       }
     }
     const items = rowMenuItems({
+      eventId: line && !line.isContinuation ? this.eventIdOf(line) : null,
       selectedText: text,
       cell: cell ? { label: cellLabel, value: cell.value } : null,
       hasLine: !!line,
@@ -864,6 +870,15 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
     });
   }
 
+  /** Prompt 018: the event ID of a Windows event line (column `eventId` of the profile `winevent`). */
+  private eventIdOf(line: LogLine): string | null {
+    const set = this.session().columns();
+    if (set?.profileId !== WINEVENT_PROFILE) return null;
+    const index = set.columns.findIndex((c) => c.id === 'eventId');
+    const span = index >= 0 ? line.fields[index] : undefined;
+    return span && span[1] > span[0] ? line.text.slice(span[0], span[1]) : null;
+  }
+
   protected closeRowMenu(): void {
     const menu = this.rowMenu();
     if (!menu) return;
@@ -884,6 +899,11 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
       case 'filter-value':
         if (menu.cell) this.sessions.filterByValue(session, menu.cell.column, menu.cell.value);
         break;
+      case 'same-event-id': {
+        const id = menu.logLine ? this.eventIdOf(menu.logLine) : null;
+        if (id) this.sessions.filterByValue(session, 'eventId', id);
+        break;
+      }
       case 'filter-text-tab': {
         // Prompt 013: like `I`, but as a tab below this one.
         const first = menu.text.split(/\r?\n/).find((l) => l.trim()) ?? '';

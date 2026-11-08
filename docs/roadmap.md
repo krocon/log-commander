@@ -56,6 +56,11 @@ Architektur verbaut nichts davon.
   eine Verbindung je Server, Ordner-Browser, Hosts aus `~/.ssh/config`; Host-Schlüssel gegen `known_hosts` mit
   Bestätigung des Fingerabdrucks, geänderter Schlüssel = Abbruch; Agent, Schlüssel mit Passphrase, Passwort,
   Geheimnisse nur auf Wunsch im Schlüsselbund; im Arbeitsstand ohne Geheimnis und ohne Auto-Verbinden
+- Windows-Ereignisprotokolle (Prompt 018, nur Windows): Kanal lokal oder remote (`EvtOpenSession`, angemeldete
+  Identität oder Passwort aus Dialog/Schlüsselbund) als JSON Lines in den Spool, Bestand des Zeitraums, dann Abonnement
+  ab Bookmark, Wiederverbinden ohne Lücke/Doppel, Level-Tabelle inkl. Audit, Provider-Metadaten-Cache, Spalten-Vorgabe,
+  „Gleiche Event-ID“; auf macOS/Linux unsichtbar. **Ungeprüft auf echtem Windows** (siehe
+  `prompts/done/018-windows-ereignisse.design.md`)
 
 ## Offen
 
@@ -66,6 +71,11 @@ beobachten, `stdin`/Pipe-Modus.
 Ordner mit Glob auf dem Server beobachten, FTP/FTPS als eigene Quelle, SCP-Erstabruf (heute über SFTP), mehrere
 Schlüsseldateien nacheinander probieren, Sichttest gegen echte Server (Linux-Distributionen, Windows-OpenSSH) und
 Windows-Build samt Pageant/OpenSSH-Agent von Hand prüfen.
+
+**Windows-Ereignisse (Nachfragen zu 018):** Handtest und Windows-CI (Lesen von Application, `eventcreate` live,
+Bookmark nach Neustart, Security ohne Rechte, Remote mit Passwort), e2e auf Windows, `.evtx` direkt öffnen (eigener
+Parser), SIDs in Namen auflösen (`LookupAccountSid`), Bookmark über einen App-Neustart (behaltener Spool), Kanal-Abfrage
+mit eigener XPath, mehrere Kanäle als eine Abfrage (`QueryList`).
 
 **Merge (Nachfragen zu 006):** Zeitversatz je Datei für Hosts mit abweichender Uhr, Zeitzone je Datei (heute gilt ohne
 Angabe die lokale Zone), Zeilennummer in der Quelldatei (bräuchte eine Spalte im Index), Merge speichern, exportieren und
@@ -112,7 +122,7 @@ Zeitzone/Versatz je Datei beim Merge, Ausfälle innerhalb eines Abschnitts genau
 
 **Export und Arbeitsstand (Nachfragen zu 015):** PDF, Export als Excel-Datei, Notizen mit Markdown, Arbeitsstand
 automatisch beim Beenden, Filter geschlossener Eltern-Tabs im Arbeitsstand (das Frontend kennt nur ihre Beschriftung),
-Zoom des Zeitstrahls im Arbeitsstand, Quellen aus 018–019 im Arbeitsstand (016: Syslog, 017: SFTP sind drin), Spalten-Layout nur für den Arbeitsstand
+Zoom des Zeitstrahls im Arbeitsstand, Quellen aus 019 im Arbeitsstand (016: Syslog, 017: SFTP, 018: Windows-Ereignisse sind drin), Spalten-Layout nur für den Arbeitsstand
 statt in den Settings, Plugin-Schnittstelle.
 
 **Quellen (Nachfragen zu 016):** Syslog über TLS (RFC 5425), GELF, Fluentd/Forward, Weiterleiten an andere Server,

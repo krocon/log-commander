@@ -65,13 +65,18 @@ pub enum SecretKind {
 /// The keychain account of a secret: `sftp:password:<hash>`; `subject` is `user@host:port` for a
 /// password and the key file's path for a passphrase.
 pub fn account(kind: SecretKind, subject: &str) -> String {
+    scoped_account("sftp", kind, subject)
+}
+
+/// The keychain account of a secret of another source (`winevent:password:<hash>`, prompt 018).
+pub fn scoped_account(scope: &str, kind: SecretKind, subject: &str) -> String {
     let hash = Sha256::digest(subject.as_bytes());
     let hex: String = hash[..8].iter().map(|b| format!("{b:02x}")).collect();
     let tag = match kind {
         SecretKind::Password => "password",
         SecretKind::Passphrase => "passphrase",
     };
-    format!("sftp:{tag}:{hex}")
+    format!("{scope}:{tag}:{hex}")
 }
 
 /// Why the keychain could not be used; never contains the secret.

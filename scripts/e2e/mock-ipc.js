@@ -34,6 +34,83 @@
   ];
   const SEVERITY = ['FATAL', 'FATAL', 'FATAL', 'ERROR', 'WARN', 'INFO', 'INFO', 'DEBUG'];
 
+  // Windows events (prompt 018), MOCK ONLY: the real source exists only on Windows. These lines imitate what
+  // sources/winevent/line.rs writes, so that the dialog and the tab can be photographed on macOS. Enabled with
+  // `setup({ windows: true })`; without it `winevent_supported` is false as on macOS and Linux.
+  const WINEVENT_KEYS = ['timestamp', 'level', 'provider', 'eventId', 'message', 'channel', 'computer', 'task', 'user', 'recordId'];
+  const WINEVENT_LABELS = {
+    timestamp: 'Zeit',
+    level: 'Level',
+    provider: 'Provider',
+    eventId: 'Event-ID',
+    message: 'Nachricht',
+    channel: 'Kanal',
+    computer: 'Computer',
+    task: 'Aufgabe',
+    user: 'Benutzer',
+    recordId: 'Datensatz',
+  };
+  const WINEVENT_COLUMNS = WINEVENT_KEYS.map((id) => ({
+    id,
+    label: WINEVENT_LABELS[id],
+    kind: id === 'timestamp' ? 'timestamp' : id === 'level' ? 'level' : id === 'eventId' || id === 'recordId' ? 'number' : 'text',
+  }));
+  const WINEVENT_SAMPLES = [
+    ['info', 'Service Control Manager', 7036, 'Der Dienst „Windows Update“ befindet sich jetzt im Status „Ausgeführt“.', 'System', 'None', 'SYSTEM'],
+    ['info', 'Microsoft-Windows-Security-Auditing', 4624, 'Ein Konto wurde erfolgreich angemeldet. Antragsteller: WS01$ Anmeldetyp: 5', 'Security', 'Logon', 'SYSTEM'],
+    ['warn', 'Microsoft-Windows-Time-Service', 129, 'NtpClient konnte keine Domänenpeers als Zeitquelle festlegen. Neuer Versuch in 15 Minuten.', 'System', 'None', 'LOCAL SERVICE'],
+    ['error', 'Application Error', 1000, 'Name der fehlerhaften Anwendung: backup-agent.exe, Version: 4.2.1.0, Ausnahmecode: 0xc0000005', 'Application', '100', ''],
+    ['error', 'Microsoft-Windows-Security-Auditing', 4625, 'Fehler beim Anmelden eines Kontos. Kontoname: admin Fehlerursache: Unbekannter Benutzername oder falsches Kennwort.', 'Security', 'Logon', 'SYSTEM'],
+    ['info', 'MsiInstaller', 11707, 'Produkt: Log Commander -- Installation erfolgreich abgeschlossen.', 'Application', 'None', 'S-1-5-21-3623811015-3361044348-30300820-1013'],
+    ['fatal', 'Microsoft-Windows-Kernel-Power', 41, 'Das System wurde neu gestartet, ohne dass es zuvor ordnungsgemäß heruntergefahren wurde.', 'System', '63', 'SYSTEM'],
+    ['warn', 'Microsoft-Windows-DNS-Client', 1014, 'Timeout bei der Namensauflösung für den Namen updates.example.com, nachdem keiner der konfigurierten DNS-Server geantwortet hat.', 'System', '1014', 'NETWORK SERVICE'],
+    ['debug', 'Microsoft-Windows-PowerShell', 4104, 'Remotebefehl wird erstellt: Get-WinEvent -LogName Application -MaxEvents 10', 'Microsoft-Windows-PowerShell/Operational', 'Ausführen eines Remotebefehls', 'S-1-5-21-3623811015-3361044348-30300820-1013'],
+  ];
+  const WINEVENT_LEVEL = { fatal: 'FATAL', error: 'ERROR', warn: 'WARN', info: 'INFO', debug: 'DEBUG' };
+
+  function wineventLines(channel) {
+    const lines = [];
+    const start = Date.UTC(2026, 10, 8, 7, 30, 0);
+    for (let i = 0; i < 160; i++) {
+      const [level, provider, eventId, message, own, task, user] = WINEVENT_SAMPLES[(i * 7 + (i >> 2)) % WINEVENT_SAMPLES.length];
+      const values = {
+        timestamp: new Date(start + i * 23_417).toISOString().replace('Z', '+00:00'),
+        level,
+        provider,
+        eventId,
+        message,
+        channel: channel === 'Application' ? own : channel,
+        computer: 'WS01.corp.example',
+        task,
+        user,
+        recordId: 884_200 + i,
+      };
+      let text = '{';
+      const fields = [];
+      WINEVENT_KEYS.forEach((key, k) => {
+        text += `${k ? ',' : ''}"${key}":`;
+        const value = values[key];
+        const raw = typeof value === 'number' ? String(value) : JSON.stringify(value);
+        const quoted = typeof value !== 'number';
+        const from = text.length + (quoted ? 1 : 0);
+        text += raw;
+        fields.push([from, text.length - (quoted ? 1 : 0)]);
+      });
+      text += '}';
+      lines.push({
+        line: i,
+        level: WINEVENT_LEVEL[level],
+        source: 0,
+        text,
+        isContinuation: false,
+        truncated: false,
+        matches: [],
+        fields,
+      });
+    }
+    return lines;
+  }
+
   function fieldsOf(line, columns, isContinuation) {
     const whole = columns.map((c) => (c.id === 'message' ? [0, line.length] : [0, 0]));
     if (columns.length === 1 || isContinuation) return whole;
@@ -354,6 +431,7 @@
     { id: 'log4j', name: 'Log4j / Logback / Spring Boot', builtin: true, patterns: [] },
     { id: 'python', name: 'Python logging', builtin: true, patterns: [] },
     { id: 'syslog-received', name: 'Syslog (empfangen)', builtin: true, patterns: [] },
+    { id: 'winevent', name: 'Windows-Ereignisse', builtin: true, patterns: [] },
   ];
 
   const handlers = {
@@ -416,6 +494,48 @@
     },
     open_source({ config, keep, onUpdate, credentials }) {
       const id = sessions.size + 1;
+      if (config.kind === 'winevent') {
+        if (!setupData.windows) throw { code: 'unsupported', message: 'Windows-Ereignisprotokolle gibt es nur unter Windows' };
+        const label = config.computer ? `Ereignisse ${config.computer}: ${config.channel}` : `Ereignisse: ${config.channel}`;
+        const lines = wineventLines(config.channel);
+        const session = {
+          id,
+          columns: WINEVENT_COLUMNS,
+          lines,
+          size: lines.reduce((sum, l) => sum + l.text.length + 1, 0),
+          generation: 0,
+          filter: { levels: LEVELS, search: '', mode: 'filter' },
+          channel: onUpdate.id,
+          sent: 0,
+          views: new Map(),
+          profileId: 'winevent',
+          sourceStatus: {
+            state: { kind: 'listening' },
+            received: lines.length,
+            dropped: 0,
+            truncated: 0,
+            rejected: 0,
+            connections: 0,
+            spooled: lines.length,
+            spoolError: null,
+            bytes: 0,
+            latencyMs: null,
+            pendingBytes: 0,
+            gaps: 0,
+          },
+        };
+        sessions.set(id, session);
+        const spoolPath = `C:\\Users\\me\\AppData\\Local\\io.github.krocon.logcommander\\spool\\4711\\source-${id}\\spool.log`;
+        return {
+          sessionId: id,
+          path: spoolPath,
+          fileName: label,
+          suggestedProfileId: 'winevent',
+          update: update(session),
+          sources: [],
+          source: { kind: 'winevent', label, spoolPath, keep: !!keep, config },
+        };
+      }
       if (config.kind === 'sftp') {
         // Prompt 017: the first connect shows the host-key confirmation, the next one opens.
         if (!credentials?.trustFingerprint && setupData.remoteTrust !== true) {
@@ -533,6 +653,25 @@
       truncated: false,
     }),
     forget_remote_secret: () => null,
+    // Prompt 018 (mock only, see WINEVENT_KEYS).
+    winevent_supported: () => setupData.windows === true,
+    winevent_channels: () => {
+      if (!setupData.windows) throw { code: 'unsupported', message: 'Windows-Ereignisprotokolle gibt es nur unter Windows' };
+      return [
+        'Application',
+        'System',
+        'Security',
+        'Setup',
+        'ForwardedEvents',
+        'HardwareEvents',
+        'Microsoft-Windows-PowerShell/Operational',
+        'Microsoft-Windows-TaskScheduler/Operational',
+        'Microsoft-Windows-TerminalServices-LocalSessionManager/Operational',
+        'Microsoft-Windows-Windows Defender/Operational',
+        'Windows PowerShell',
+      ];
+    },
+    forget_winevent_secret: () => null,
     set_spool_keep: () => null,
     set_spool_limit: () => null,
     kept_spools: () => ({ count: 1, bytes: 3_145_728 }),
@@ -918,7 +1057,7 @@
         groups((h) => minute(h.ts)).map(([t, list]) => [t, list.length]),
       );
     },
-    list_profiles: () => PROFILES,
+    list_profiles: () => PROFILES.filter((p) => p.id !== 'winevent' || setupData.windows === true),
     set_custom_profiles: () => null,
     'plugin:store|load': () => 1,
     'plugin:store|get_store': () => 1,

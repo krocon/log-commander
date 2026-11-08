@@ -1692,6 +1692,35 @@
     };
     press('l', { metaKey: true, ctrlKey: true, shiftKey: true });
     await waitFor('„Quelle öffnen“ with Cmd/Ctrl+Shift+L', () => srcDialog()?.open);
+    // Prompt 018: Windows event logs only where they exist; elsewhere invisible and refused by the backend.
+    const winSupported = await invoke('winevent_supported');
+    const kindOptions = [...$('#source-kind').options].map((o) => o.value);
+    if (winSupported !== kindOptions.includes('winevent')) {
+      throw new Error(`Windows events offered ${kindOptions.includes('winevent')}, supported ${winSupported}`);
+    }
+    if (!winSupported) {
+      const refused = await invoke('open_source', {
+        config: { kind: 'winevent', channel: 'Application' },
+        keep: false,
+        credentials: null,
+        onUpdate: `__CHANNEL__:${window.__TAURI_INTERNALS__.transformCallback(() => {})}`,
+      }).then(
+        () => null,
+        (e) => e,
+      );
+      if (refused?.code !== 'unsupported' || !refused.message.includes('nur unter Windows')) {
+        throw new Error(`Windows events not refused here: ${JSON.stringify(refused)}`);
+      }
+      const channels = await invoke('winevent_channels', { target: { computer: '' }, credentials: null }).then(
+        () => null,
+        (e) => e,
+      );
+      if (channels?.code !== 'unsupported') throw new Error(`channel list not refused: ${JSON.stringify(channels)}`);
+      if (document.body.textContent.includes('Windows-Ereignisse')) {
+        throw new Error('„Windows-Ereignisse“ shows on a system without them');
+      }
+    }
+    await report(`PASS Windows events ${winSupported ? 'offered' : 'invisible and refused'} on this system`);
     await waitFor(
       'the source listens on this computer only by default',
       () => $('#source-address').value === '127.0.0.1' && $('#source-port').value === '5514' && !$('#source-start').disabled,

@@ -23,6 +23,7 @@
 | Messung Feld-Regeln | `cd src-tauri && cargo test --release --test extract_integration -- --ignored --nocapture measure_` |
 | Messung Syslog-Empfang | `cd src-tauri && cargo test --release --test syslog_integration -- --ignored --nocapture measure_` (Meldungen/s ohne Verlust, Verzögerung bis zum Index) |
 | SFTP gegen OpenSSH (Docker) | `src-tauri/tests/sshd/start.sh`, dann `cd src-tauri && LC_SSHD_TEST=127.0.0.1:2222 cargo test --test sftp_integration -- --ignored --nocapture`, danach `tests/sshd/stop.sh` (Wegwerf-Schlüssel); der normale Test läuft gegen einen SFTP-Server im Prozess |
+| Windows-Code prüfen (macOS/Linux) | `npm run rust:check-windows` (clippy für x86_64-pc-windows-msvc und -gnu; nur Rust, C-Teile und Ressourcen durch Platzhalter, nichts gelinkt; vorher `rustup target add x86_64-pc-windows-msvc x86_64-pc-windows-gnu`) |
 | Syslog von Hand senden | `logger -n 127.0.0.1 -P 5514 -d "Hallo"` (UDP; macOS: `logger` kann kein `-n`, dann `echo '<11>test' \| nc -u -w0 127.0.0.1 5514`) |
 | Messung Merge 2 × 500 MB | `cd src-tauri && cargo test --release --test merge_integration -- --ignored --nocapture measure_merge` |
 | Kontrast WCAG AA | `npm run contrast` (prüft `src/styles.css`) |
@@ -62,6 +63,8 @@ src/                         Angular 22 (zoneless, Signals, OnPush, Standalone)
                              gespeicherte Quellen, Status-Texte; auch für Settings und Arbeitsstand)
   app/features/remote/       Remote-Datei über SSH/SFTP (017): remote-dialog (lazy; Host-Schlüssel bestätigen, Passwort,
                              Ordner-Browser), remote-logic (Prüfen, Labels, nächster Schritt nach einem Fehler)
+  app/features/winevent/     Windows-Ereignisse (018, nur Windows): winevent-dialog (lazy), winevent-logic (Prüfen,
+                             Labels, Zähler, Spalten-Vorgabe des Profils `winevent`)
 src-tauri/src/               Rust; alles außer commands.rs und lib.rs ist frei von Tauri
   session.rs                 LogSession, Ansichten (ViewState), Abfragen, Hintergrund-Jobs (Filter, Level neu), SessionManager
   views.rs                   Filter-Tabs (013): ViewFilter, Kette zu einem Filter zusammensetzen, MAX_VIEWS
@@ -87,6 +90,10 @@ src-tauri/src/               Rust; alles außer commands.rs und lib.rs ist frei 
   remote/                    SSH (017, russh): Hub (Pool je user@host:port, Ordner listen), trust.rs (known_hosts),
                              secrets.rs (Secret, Schlüsselbund), ssh_config.rs (Teilmenge), watch.rs (rein: Rotation aus
                              stat-Folgen), testserver.rs (nur Debug: SFTP-Server im Prozess für Tests und e2e)
+  sources/winevent/          Windows-Ereignisse (018): mod.rs (Konfiguration, Passwort/Schlüsselbund, Fehlertexte),
+                             follow.rs (Bestand → Abo, Bookmark, Wiederverbinden), event.rs (Event-XML lesen),
+                             line.rs (JSON-Zeile, Level-Tabelle, Escapes), cache.rs (Provider-Metadaten), backend.rs
+                             (Trait EventLog, Win32-Codes), api.rs (nur Windows: Evt*-API), fake.rs (nur Tests)
   sources/syslog.rs          Syslog UDP/TCP: Binden (nur Loopback ohne allowRemote), Absender-Filter, TCP-Framing
                              (RFC 6587), Spool-Zeile (Empfangszeit, Absender, Meldung escaped)
   e2e.rs                     nur Debug-Build: Szenario im WebView (Fenster im Hintergrund), siehe scripts/e2e/
@@ -252,6 +259,18 @@ samples/                     Beispiel-Logs
   Rotationen im Freeze: Zwischenstände fehlen in der Ansicht (der Spool hat sie, bis er sie löscht). Ein Merge mit einem Spool
   hält von ihm höchstens so viele Dateien wie der Spool (`MergeWorker::limit_segments` über die Datei-Identität), dann
   mischt er neu. Schließt der Tab der Quelle, fehlt dem Merge die Datei (Status „Datei fehlt“). Kein TLS.
+- **Windows-Ereignisse (Prompt 018):** nur Windows, auf macOS/Linux unsichtbar (`winevent_supported` = false,
+  `open_source` → `unsupported`, Profil `winevent` nicht angeboten und nie geraten). Alles außer `api.rs` ist plattformfrei
+  und läuft gegen den Trait `EventLog` (Tests mit `fake.rs`); `api.rs` prüft `npm run rust:check-windows` nur auf
+  Kompilierbarkeit. Ablauf: `EvtQuery` des Zeitraums (XPath `timediff`), dann `EvtSubscribe` nach dem Bookmark des
+  letzten Ereignisses (leerer Zeitraum: nach dem neuesten, leerer Kanal: ab dem ältesten), Pull-Modell mit Signal-Event,
+  höchstens 200 ms Warten je Runde; Fehler → 1 … 60 s, neue Sitzung, weiter ab Bookmark (Record-IDs schon geschrieben
+  werden übersprungen; Bookmark weg = Lücke gezählt). Zugriff verweigert/Kanal fehlt/Anmeldung abgelehnt = Fehler, kein
+  neuer Versuch. Schließen: `EvtCancel` der Remote-Sitzung aus einem Wächter-Thread. Eine Zeile je Ereignis als JSON
+  (eigenes Escaping: C0, DEL, C1, Bidi, U+2028/9 als `\uXXXX`), Meldung ≤ 32 000, XML ≤ 64 000 Zeichen. Ohne Meldungsdatei:
+  „(keine Meldung) “ + Insertion-Strings. Provider-Metadaten im LRU-Cache (512, fehlende nach 5 min erneut). Passwort nur
+  aus dem Dialog oder dem Schlüsselbund (Konto `winevent:password:<Hash>`), dieser Rechner immer mit der eigenen Identität.
+  `SourceState::Loading`, `SourceStatus.gaps` neu. Je Kanal eine Quelle (höchstens 8), Mehrfachwahl optional als Merge.
 - **Grenzen SFTP (017):** je Runde höchstens 8 MB, Zeile 1 MiB, Intervall 200 ms bis 60 s, Erstabruf 1–10 000 MB oder
   ganz, Aufruf-Zeitgrenze 20 s, Keepalive 15 s × 3, Ordnerliste 10 000 Einträge. Kein ProxyJump, keine Zertifikate
   (`@cert-authority`), kein Kerberos; nur die erste vorhandene Schlüsseldatei. Rotation während einer Unterbrechung

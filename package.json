@@ -19,6 +19,7 @@
     "rust:fmt": "cargo fmt --manifest-path src-tauri/Cargo.toml --check",
     "rust:lint": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
     "rust:test": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "rust:check-windows": "sh scripts/check-windows.sh",
     "contrast": "node scripts/check-contrast.mjs",
     "gen-log": "node scripts/gen-log.mjs",
     "demo:log": "node scripts/gen-log.mjs /tmp/app.log --rate 5000 --rotate-every 100000",

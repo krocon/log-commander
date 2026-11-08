@@ -39,6 +39,7 @@ import {
   Timeline,
   ViewFilterSpec,
   ViewInfo,
+  WinTarget,
 } from './log.models';
 
 @Injectable({ providedIn: 'root' })
@@ -96,6 +97,21 @@ export class LogApi {
   /** Prompt 017: removes the stored password and passphrase of a target from the keychain. */
   forgetRemoteSecret(target: RemoteTarget): Promise<void> {
     return call('forget_remote_secret', { target });
+  }
+
+  /** Prompt 018: Windows event logs can be read here (false on macOS and Linux). */
+  wineventSupported(): Promise<boolean> {
+    return call('winevent_supported');
+  }
+
+  /** Prompt 018: the event log channels of this or another computer; connects like `openSource`. */
+  wineventChannels(target: WinTarget, credentials: RemoteCredentials | null): Promise<string[]> {
+    return call('winevent_channels', { target, credentials });
+  }
+
+  /** Prompt 018: removes the stored password of a remote computer from the keychain. */
+  forgetWineventSecret(target: WinTarget): Promise<void> {
+    return call('forget_winevent_secret', { target });
   }
 
   /** Keep the spool of a source when its tab closes. */

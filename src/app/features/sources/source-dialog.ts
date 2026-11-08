@@ -61,6 +61,10 @@ const OTHER = 'other';
           <select id="source-kind" (change)="chooseKind($event)">
             <option value="syslog" selected>Syslog (UDP/TCP)</option>
             <option value="sftp">Remote-Datei (SSH/SFTP) …</option>
+            @if (sessions.wineventSupported()) {
+              <!-- Prompt 018: only on Windows; elsewhere the kind does not show. -->
+              <option value="winevent">Windows-Ereignisse …</option>
+            }
           </select>
         </label>
         <fieldset>
@@ -318,7 +322,7 @@ const OTHER = 'other';
   `,
 })
 export class SourceDialogComponent implements OnInit {
-  private readonly sessions = inject(LogSessionService);
+  protected readonly sessions = inject(LogSessionService);
   private readonly settings = inject(SettingsService);
   private readonly dialog = viewChild.required<ElementRef<HTMLDialogElement>>('dialog');
 
@@ -376,11 +380,16 @@ export class SourceDialogComponent implements OnInit {
     this.error.set(null);
   }
 
-  /** Prompt 017: a remote file has a dialog of its own. */
+  /** Prompt 017: a remote file has a dialog of its own; 018: Windows events too. */
   protected chooseKind(event: Event): void {
-    if ((event.target as HTMLSelectElement).value !== 'sftp') return;
-    this.dialog().nativeElement.close();
-    this.sessions.remoteRequest.set({ config: null });
+    const kind = (event.target as HTMLSelectElement).value;
+    if (kind === 'sftp') {
+      this.dialog().nativeElement.close();
+      this.sessions.remoteRequest.set({ config: null });
+    } else if (kind === 'winevent' && this.sessions.wineventSupported()) {
+      this.dialog().nativeElement.close();
+      this.sessions.wineventRequest.set({ config: null });
+    }
   }
 
   protected useSaved(config: SourceConfig, keep: boolean): void {

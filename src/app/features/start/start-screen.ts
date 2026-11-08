@@ -1,10 +1,11 @@
-import { ChangeDetectionStrategy, Component, inject, output } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, output } from '@angular/core';
 import { SettingsService } from '../../core/settings/settings.service';
 import { baseName } from '../../shared/format';
 import { LogSessionService } from '../sessions/log-session.service';
 import { isWorkspacePath } from '../workspace/workspace-model';
 import { sourceLabel } from '../sources/source-logic';
 import { sftpAddress } from '../remote/remote-logic';
+import { wineventWhere } from '../winevent/winevent-logic';
 
 @Component({
   selector: 'app-start-screen',
@@ -29,52 +30,69 @@ import { sftpAddress } from '../remote/remote-logic';
         oder Datei ins Fenster ziehen · ⌘/Strg+O · Pfad: ⌘/Strg+⇧+O · Zusammenführen: ⌘/Strg+⇧+M ·
         Quelle (Syslog): ⌘/Strg+⇧+L · Remote (SSH/SFTP): ⌘/Strg+⇧+H
       </p>
-      @if (settings().savedSources.length) {
+      @if (sourcesShown()) {
         <h2>Quellen</h2>
         <ul>
           @for (s of settings().savedSources; track $index) {
-            <li>
-              @if (s.config.kind === 'sftp') {
-                <!-- Prompt 017: opens the dialog prefilled, connects only from there. -->
+            @if (s.config.kind !== 'winevent' || sessions.wineventSupported()) {
+              <li>
+                @if (s.config.kind === 'sftp') {
+                  <!-- Prompt 017: opens the dialog prefilled, connects only from there. -->
+                  <button
+                    type="button"
+                    class="recent"
+                    title="Im Dialog „Remote-Datei“ prüfen und verbinden"
+                    (click)="sessions.remoteRequest.set({ config: s.config })"
+                  >
+                    <span class="name"
+                      ><span class="ws" aria-hidden="true">⇅</span
+                      ><span class="sr-only">Remote-Datei: </span>{{ sourceLabel(s.config) }}</span
+                    >
+                    <span class="dir">{{ address(s.config) }} · SSH/SFTP</span>
+                  </button>
+                } @else if (s.config.kind === 'winevent') {
+                  <!-- Prompt 018: opens the dialog prefilled; only listed on Windows. -->
+                  <button
+                    type="button"
+                    class="recent"
+                    title="Im Dialog „Windows-Ereignisse“ prüfen und öffnen"
+                    (click)="sessions.wineventRequest.set({ config: s.config })"
+                  >
+                    <span class="name"
+                      ><span class="ws" aria-hidden="true">⊞</span
+                      ><span class="sr-only">Windows-Ereignisse: </span
+                      >{{ sourceLabel(s.config) }}</span
+                    >
+                    <span class="dir">{{ where(s.config) }}</span>
+                  </button>
+                } @else {
+                  <button
+                    type="button"
+                    class="recent"
+                    title="Im Dialog „Quelle öffnen“ prüfen und starten"
+                    (click)="sessions.sourceRequest.set({ config: s.config })"
+                  >
+                    <span class="name"
+                      ><span class="ws" aria-hidden="true">⇣</span
+                      ><span class="sr-only">Quelle: </span>{{ sourceLabel(s.config) }}</span
+                    >
+                    <span class="dir"
+                      >{{ s.config.address
+                      }}{{ s.config.allow.length ? ' · mit Absender-Filter' : '' }}</span
+                    >
+                  </button>
+                }
                 <button
                   type="button"
-                  class="recent"
-                  title="Im Dialog „Remote-Datei“ prüfen und verbinden"
-                  (click)="sessions.remoteRequest.set({ config: s.config })"
+                  class="forget"
+                  [attr.aria-label]="sourceLabel(s.config) + ' aus der Liste entfernen'"
+                  title="Aus der Liste entfernen"
+                  (click)="forgetSource($index)"
                 >
-                  <span class="name"
-                    ><span class="ws" aria-hidden="true">⇅</span
-                    ><span class="sr-only">Remote-Datei: </span>{{ sourceLabel(s.config) }}</span
-                  >
-                  <span class="dir">{{ address(s.config) }} · SSH/SFTP</span>
+                  ×
                 </button>
-              } @else {
-                <button
-                  type="button"
-                  class="recent"
-                  title="Im Dialog „Quelle öffnen“ prüfen und starten"
-                  (click)="sessions.sourceRequest.set({ config: s.config })"
-                >
-                  <span class="name"
-                    ><span class="ws" aria-hidden="true">⇣</span
-                    ><span class="sr-only">Quelle: </span>{{ sourceLabel(s.config) }}</span
-                  >
-                  <span class="dir"
-                    >{{ s.config.address
-                    }}{{ s.config.allow.length ? ' · mit Absender-Filter' : '' }}</span
-                  >
-                </button>
-              }
-              <button
-                type="button"
-                class="forget"
-                [attr.aria-label]="sourceLabel(s.config) + ' aus der Liste entfernen'"
-                title="Aus der Liste entfernen"
-                (click)="forgetSource($index)"
-              >
-                ×
-              </button>
-            </li>
+              </li>
+            }
           }
         </ul>
       }
@@ -204,6 +222,12 @@ export class StartScreenComponent {
   private readonly settingsService = inject(SettingsService);
   protected readonly settings = this.settingsService.settings;
   protected readonly sessions = inject(LogSessionService);
+  /** Prompt 018: Windows event sources only where they can be opened. */
+  protected readonly sourcesShown = computed(() =>
+    this.settings().savedSources.some(
+      (s) => s.config.kind !== 'winevent' || this.sessions.wineventSupported(),
+    ),
+  );
   protected readonly baseName = baseName;
   readonly openFile = output<void>();
   readonly openPath = output<void>();
@@ -214,6 +238,7 @@ export class StartScreenComponent {
   protected readonly isWorkspace = isWorkspacePath;
   protected readonly sourceLabel = sourceLabel;
   protected readonly address = sftpAddress;
+  protected readonly where = wineventWhere;
 
   protected forget(path: string): void {
     this.settingsService.removeRecentFile(path);

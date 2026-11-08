@@ -121,6 +121,41 @@ pub async fn forget_remote_secret(
     blocking(move || hub.forget(&target)).await
 }
 
+/// Windows event logs can be read here (prompt 018): the dialog offers the kind only then.
+#[tauri::command]
+pub fn winevent_supported() -> bool {
+    crate::sources::winevent::SUPPORTED
+}
+
+/// The event log channels of this or another computer (prompt 018); connects like `open_source`
+/// (same errors for passwords and rights).
+#[tauri::command]
+pub async fn winevent_channels(
+    state: State<'_, SessionManager>,
+    target: crate::sources::winevent::WinTarget,
+    credentials: Option<crate::remote::Credentials>,
+) -> AppResult<Vec<String>> {
+    let store = state.remote().ok().map(|hub| hub.secret_store());
+    blocking(move || {
+        crate::sources::winevent::channels(
+            &target,
+            &credentials.unwrap_or_default(),
+            store.as_deref(),
+        )
+    })
+    .await
+}
+
+/// Removes the stored password of a remote computer for Windows events from the keychain.
+#[tauri::command]
+pub async fn forget_winevent_secret(
+    state: State<'_, SessionManager>,
+    target: crate::sources::winevent::WinTarget,
+) -> AppResult<()> {
+    let store = state.remote()?.secret_store();
+    blocking(move || crate::sources::winevent::forget(&target, store.as_ref())).await
+}
+
 /// Keep the spool of a source when its tab closes (prompt 016).
 #[tauri::command]
 pub async fn set_spool_keep(
