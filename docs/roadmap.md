@@ -61,6 +61,13 @@ Architektur verbaut nichts davon.
   ab Bookmark, Wiederverbinden ohne Lücke/Doppel, Level-Tabelle inkl. Audit, Provider-Metadaten-Cache, Spalten-Vorgabe,
   „Gleiche Event-ID“; auf macOS/Linux unsichtbar. **Ungeprüft auf echtem Windows** (siehe
   `prompts/done/018-windows-ereignisse.design.md`)
+- Logs aus Datenbanken (Prompt 019): PostgreSQL, MySQL/MariaDB (`sqlx`), SQL Server (`tiberius`), SQLite
+  (`rusqlite`, schreibgeschützt) als JSON Lines in den Spool; ein geprüftes `SELECT`, von der App als Unterabfrage mit
+  Schlüssel, Ordnung und Stapel (10 000) umhüllt; Polling `key >= letzter` mit gemerkten Zeilen am Rand (gleiche Zeiten
+  ohne Verlust/Doppel); lesend auf allen Datenbanken (Read-only-Sitzung/-Transaktion, SQL Server immer Rollback);
+  Zeitlimit 30 s; TLS mit Prüfung als Vorgabe; „Tabelle wählen“, Vorschau 20 Zeilen, Tab `db:schema.tabelle`, letzte
+  Abfrage und Dauer in der Statusleiste; Wiederverbinden 1–60 s ab letztem Schlüssel; Passwort wie 017; im Arbeitsstand
+  ohne Passwort/CA-Datei und ohne Auto-Verbinden
 
 ## Offen
 
@@ -122,11 +129,16 @@ Zeitzone/Versatz je Datei beim Merge, Ausfälle innerhalb eines Abschnitts genau
 
 **Export und Arbeitsstand (Nachfragen zu 015):** PDF, Export als Excel-Datei, Notizen mit Markdown, Arbeitsstand
 automatisch beim Beenden, Filter geschlossener Eltern-Tabs im Arbeitsstand (das Frontend kennt nur ihre Beschriftung),
-Zoom des Zeitstrahls im Arbeitsstand, Quellen aus 019 im Arbeitsstand (016: Syslog, 017: SFTP, 018: Windows-Ereignisse sind drin), Spalten-Layout nur für den Arbeitsstand
+Zoom des Zeitstrahls im Arbeitsstand, Spalten-Layout nur für den Arbeitsstand
 statt in den Settings, Plugin-Schnittstelle.
 
 **Quellen (Nachfragen zu 016):** Syslog über TLS (RFC 5425), GELF, Fluentd/Forward, Weiterleiten an andere Server,
 Empfang im Hintergrund ohne offenes Fenster, Rate-Grenze je Absender, Ansicht beim Überlauf des Spools ohne
 Neubeginn (bräuchte ein Verwerfen der ältesten Segmente im Index), behaltene Spools im Start-Bildschirm.
+
+**Datenbanken (Nachfragen zu 019):** Oracle (Instant Client), ODBC/OLEDB, `LISTEN`/Change-Streams statt Polling,
+Windows-Anmeldung an SQL Server (Kerberos/NTLM), Client-Zertifikate, Abfragen über mehrere Datenbanken, Textschlüssel mit
+Groß-/Kleinschreibung-unabhängiger Sortierung genau (heute können Zeilen, die sich nur darin unterscheiden, am Rand doppelt
+kommen), Sichttest gegen echte Server und Windows-/Linux-Build von Hand.
 
 **Plattform:** Signierung einrichten (Secrets, siehe `.github/workflows/release.yml`), UI-Sprachen.

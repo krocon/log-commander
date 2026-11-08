@@ -37,6 +37,15 @@ import { WorkspaceService } from '../workspace/workspace.service';
                   title="Windows-Ereignisprotokoll (Spool)"
                   >⊞</span
                 >
+              } @else if (session.source?.kind === 'database') {
+                <!-- Prompt 019: a query on a database table, polled into a spool. -->
+                <span
+                  class="src"
+                  role="img"
+                  aria-label="Datenbank"
+                  title="Datenbank-Abfrage (Spool)"
+                  >⛁</span
+                >
               } @else if (session.source?.kind === 'sftp') {
                 <!-- Prompt 017: a file on a server, pulled over SFTP into a spool. -->
                 <span class="src" role="img" aria-label="Remote-Datei" title="Über SSH/SFTP (Spool)"

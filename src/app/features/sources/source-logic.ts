@@ -6,6 +6,7 @@ import {
   SyslogProtocol,
 } from '../../core/log/log.models';
 import { formatCount } from '../../shared/format';
+import { databaseCounters, dbKey, dbLabel, parseDbConfig } from '../database/database-logic';
 import { parseSftpConfig, remoteCounters, sftpKey, sftpLabel } from '../remote/remote-logic';
 import {
   parseWinEventConfig,
@@ -175,6 +176,8 @@ export function parseSourceConfig(v: unknown, fromWorkspace = false): SourceConf
   if (isObj(v) && v['kind'] === 'sftp') return parseSftpConfig(v, !fromWorkspace);
   // Prompt 018: a Windows event log channel (never a password in it).
   if (isObj(v) && v['kind'] === 'winevent') return parseWinEventConfig(v);
+  // Prompt 019: a database query (never a password in it; a workspace keeps no CA file).
+  if (isObj(v) && v['kind'] === 'database') return parseDbConfig(v, fromWorkspace);
   if (!isObj(v) || v['kind'] !== 'syslog') return null;
   const protocol = v['protocol'];
   const address = v['address'];
@@ -208,6 +211,7 @@ export function isRemoteSource(config: SourceConfig): boolean {
 export function sourceKey(config: SourceConfig): string {
   if (config.kind === 'sftp') return sftpKey(config);
   if (config.kind === 'winevent') return wineventKey(config);
+  if (config.kind === 'database') return dbKey(config);
   return `${config.kind}|${config.protocol}|${stripBrackets(config.address).toLowerCase()}|${config.port}`;
 }
 
@@ -215,6 +219,7 @@ export function sourceKey(config: SourceConfig): string {
 export function sourceLabel(config: SourceConfig): string {
   if (config.kind === 'sftp') return sftpLabel(config);
   if (config.kind === 'winevent') return wineventLabel(config);
+  if (config.kind === 'database') return dbLabel(config);
   const proto = config.protocol === 'tcp' ? ' TCP' : config.protocol === 'both' ? ' UDP+TCP' : '';
   if (isLoopbackAddress(config.address)) return `Syslog${proto} :${config.port}`;
   const addr = stripBrackets(config.address);
@@ -278,6 +283,7 @@ export function sourceCounters(
 ): string {
   if (kind === 'sftp') return remoteCounters(status);
   if (kind === 'winevent') return wineventCounters(status);
+  if (kind === 'database') return databaseCounters(status);
   const parts = [`${formatCount(status.received)} empfangen`];
   if (status.dropped) parts.push(`${formatCount(status.dropped)} verworfen`);
   if (status.truncated) parts.push(`${formatCount(status.truncated)} gekürzt`);

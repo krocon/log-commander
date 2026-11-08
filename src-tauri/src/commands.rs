@@ -156,6 +156,53 @@ pub async fn forget_winevent_secret(
     blocking(move || crate::sources::winevent::forget(&target, store.as_ref())).await
 }
 
+/// The first rows of a database query as they will be spooled (prompt 019): connects, checks the
+/// query and the columns like `open_source` (same errors for passwords and TLS), nothing is kept.
+#[tauri::command]
+pub async fn db_preview(
+    state: State<'_, SessionManager>,
+    config: crate::sources::database::DbConfig,
+    credentials: Option<crate::remote::Credentials>,
+) -> AppResult<crate::sources::database::DbPreview> {
+    let store = state.remote().ok().map(|hub| hub.secret_store());
+    blocking(move || {
+        crate::sources::database::preview(
+            &config,
+            &credentials.unwrap_or_default(),
+            store.as_deref(),
+        )
+    })
+    .await
+}
+
+/// Tables and views for „Tabelle wählen“ (prompt 019); only the connection settings count.
+#[tauri::command]
+pub async fn db_tables(
+    state: State<'_, SessionManager>,
+    config: crate::sources::database::DbConfig,
+    credentials: Option<crate::remote::Credentials>,
+) -> AppResult<Vec<crate::sources::database::driver::TableName>> {
+    let store = state.remote().ok().map(|hub| hub.secret_store());
+    blocking(move || {
+        crate::sources::database::tables(
+            &config,
+            &credentials.unwrap_or_default(),
+            store.as_deref(),
+        )
+    })
+    .await
+}
+
+/// Removes the stored password of a database server from the keychain.
+#[tauri::command]
+pub async fn forget_db_secret(
+    state: State<'_, SessionManager>,
+    config: crate::sources::database::DbConfig,
+) -> AppResult<()> {
+    let store = state.remote()?.secret_store();
+    blocking(move || crate::sources::database::forget(&config, store.as_ref())).await
+}
+
 /// Keep the spool of a source when its tab closes (prompt 016).
 #[tauri::command]
 pub async fn set_spool_keep(

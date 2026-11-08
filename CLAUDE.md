@@ -23,6 +23,7 @@
 | Messung Feld-Regeln | `cd src-tauri && cargo test --release --test extract_integration -- --ignored --nocapture measure_` |
 | Messung Syslog-Empfang | `cd src-tauri && cargo test --release --test syslog_integration -- --ignored --nocapture measure_` (Meldungen/s ohne Verlust, Verzögerung bis zum Index) |
 | SFTP gegen OpenSSH (Docker) | `src-tauri/tests/sshd/start.sh`, dann `cd src-tauri && LC_SSHD_TEST=127.0.0.1:2222 cargo test --test sftp_integration -- --ignored --nocapture`, danach `tests/sshd/stop.sh` (Wegwerf-Schlüssel); der normale Test läuft gegen einen SFTP-Server im Prozess |
+| Datenbanken gegen echte Server (Docker) | `sh scripts/db-test-servers.sh up` (PostgreSQL, MySQL, MariaDB, SQL Server mit TLS und Test-CA), dann `cd src-tauri && LC_DB_TEST_DIR=${TMPDIR:-/tmp}/lc-db-test cargo test --test db_integration -- --ignored --test-threads=1`, danach `sh scripts/db-test-servers.sh down`; SQLite läuft in den normalen Tests |
 | Windows-Code prüfen (macOS/Linux) | `npm run rust:check-windows` (clippy für x86_64-pc-windows-msvc und -gnu; nur Rust, C-Teile und Ressourcen durch Platzhalter, nichts gelinkt; vorher `rustup target add x86_64-pc-windows-msvc x86_64-pc-windows-gnu`) |
 | Syslog von Hand senden | `logger -n 127.0.0.1 -P 5514 -d "Hallo"` (UDP; macOS: `logger` kann kein `-n`, dann `echo '<11>test' \| nc -u -w0 127.0.0.1 5514`) |
 | Messung Merge 2 × 500 MB | `cd src-tauri && cargo test --release --test merge_integration -- --ignored --nocapture measure_merge` |
@@ -65,6 +66,8 @@ src/                         Angular 22 (zoneless, Signals, OnPush, Standalone)
                              Ordner-Browser), remote-logic (Prüfen, Labels, nächster Schritt nach einem Fehler)
   app/features/winevent/     Windows-Ereignisse (018, nur Windows): winevent-dialog (lazy), winevent-logic (Prüfen,
                              Labels, Zähler, Spalten-Vorgabe des Profils `winevent`)
+  app/features/database/     Datenbanken (019): database-dialog (lazy: Verbindung, Tabelle wählen, Vorschau),
+                             database-logic (Prüfen, Arbeitsstand, Labels, Zähler, Vorschau-Tabelle)
 src-tauri/src/               Rust; alles außer commands.rs und lib.rs ist frei von Tauri
   session.rs                 LogSession, Ansichten (ViewState), Abfragen, Hintergrund-Jobs (Filter, Level neu), SessionManager
   views.rs                   Filter-Tabs (013): ViewFilter, Kette zu einem Filter zusammensetzen, MAX_VIEWS
@@ -94,6 +97,10 @@ src-tauri/src/               Rust; alles außer commands.rs und lib.rs ist frei 
                              follow.rs (Bestand → Abo, Bookmark, Wiederverbinden), event.rs (Event-XML lesen),
                              line.rs (JSON-Zeile, Level-Tabelle, Escapes), cache.rs (Provider-Metadaten), backend.rs
                              (Trait EventLog, Win32-Codes), api.rs (nur Windows: Evt*-API), fake.rs (nur Tests)
+  sources/database/          Datenbanken (019): mod.rs (Konfiguration, Prüfen der Spalten, Passwort, Fehlertexte),
+                             sql.rs (SELECT-Prüfung je Dialekt, Umhüllen), value.rs (Werte → JSON-Zeile, Rand-Logik
+                             `Edge`), follow.rs (Polling, Wiederverbinden), driver.rs (Trait, Zeitlimit), pg.rs,
+                             mysql.rs (sqlx), mssql.rs (tiberius), sqlite.rs (rusqlite read-only), fake.rs (nur Tests)
   sources/syslog.rs          Syslog UDP/TCP: Binden (nur Loopback ohne allowRemote), Absender-Filter, TCP-Framing
                              (RFC 6587), Spool-Zeile (Empfangszeit, Absender, Meldung escaped)
   e2e.rs                     nur Debug-Build: Szenario im WebView (Fenster im Hintergrund), siehe scripts/e2e/
@@ -271,6 +278,25 @@ samples/                     Beispiel-Logs
   „(keine Meldung) “ + Insertion-Strings. Provider-Metadaten im LRU-Cache (512, fehlende nach 5 min erneut). Passwort nur
   aus dem Dialog oder dem Schlüsselbund (Konto `winevent:password:<Hash>`), dieser Rechner immer mit der eigenen Identität.
   `SourceState::Loading`, `SourceStatus.gaps` neu. Je Kanal eine Quelle (höchstens 8), Mehrfachwahl optional als Merge.
+- **Datenbanken (Prompt 019):** Spike und Treiberwahl in `prompts/done/019-datenbank-logs.design.md`. Die
+  `sqlx`-Unter-Crates (`sqlx-core`, `-postgres`, `-mysql`) statt der Fassade `sqlx`: die nennt `sqlx-sqlite` (eigenes
+  `libsqlite3-sys`) auch ungenutzt, und zwei `links = "sqlite3"` gehen nicht neben `rusqlite`; SQLite daher über
+  `rusqlite` mit `SQLITE_OPEN_READ_ONLY`, `query_only` und dem Authorizer von `report_db.rs`. `tiberius` 0.13 zieht
+  aws-lc-rs in rustls; `driver::install_crypto` setzt ring als Prozess-Provider. Abfrage: `sql::check_select` (ein
+  SELECT/WITH, Tokenizer je Dialekt mit Strings, Namen, Kommentaren, `$$`, `#`; verbotene Wörter, kein `;`, kein
+  ORDER BY/LIMIT/TOP oben), dann als `SELECT * FROM (<q>) lc WHERE lc.key >= ? ORDER BY lc.key LIMIT n` umhüllt.
+  Lesend auf dem Server: PostgreSQL `default_transaction_read_only` + `BEGIN READ ONLY` je Anfrage, MySQL Sitzung und
+  `START TRANSACTION READ ONLY` (sql_mode ohne ANSI_QUOTES/NO_BACKSLASH_ESCAPES, Zeitzone UTC), SQL Server immer in
+  `BEGIN TRANSACTION … ROLLBACK` (ApplicationIntent wirkt nur auf Replikate). Prüfung vor dem Start über die Spalten
+  (`Probe`: prepare bzw. `WHERE 1 = 0`). Gleiche Schlüssel: `value::Edge` merkt Hashes der geschriebenen Zeilen am Rand
+  (Multimenge), Limit = 10 000 + Randgröße; über 100 000 Zeilen mit einem Schlüssel → einmal `>` und Lücke gezählt.
+  Profil `jsonl` fest, Zeit-/Level-Spalte heißen `timestamp`/`level`. Passwort wie 017 (Konto `db:password:<Hash>`,
+  TLS-Modus im Hash: nie an eine schwächere Verbindung). Read-only-Transaktionen stoppen `INTO OUTFILE`/`lo_export`
+  nicht (Docker-Test): Empfehlung Nur-Lese-Konto, der Prüfer ist die Wand der App.
+- **Grenzen Datenbanken (019):** Stapel 10 000 Zeilen bzw. 32 MB, Abfrage 30 s, Verbinden 20 s, 200 Spalten, Text
+  32 000 Zeichen, Zeile 256 KB, Abfrage 64 KB, Abstand 0,5 s–1 h, Start letzte 1–1 000 000 Zeilen oder alle, Tabellenliste
+  2000. Zeilen mit NULL im Schlüssel kommen nie. Textschlüssel mit Kollation ohne Groß-/Kleinschreibung können am Rand
+  doppeln. SQL Server nur mit SQL-Anmeldung (keine Windows-Anmeldung), kein Oracle/ODBC.
 - **Grenzen SFTP (017):** je Runde höchstens 8 MB, Zeile 1 MiB, Intervall 200 ms bis 60 s, Erstabruf 1–10 000 MB oder
   ganz, Aufruf-Zeitgrenze 20 s, Keepalive 15 s × 3, Ordnerliste 10 000 Einträge. Kein ProxyJump, keine Zertifikate
   (`@cert-authority`), kein Kerberos; nur die erste vorhandene Schlüsseldatei. Rotation während einer Unterbrechung

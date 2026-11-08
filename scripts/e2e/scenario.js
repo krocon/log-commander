@@ -1806,6 +1806,114 @@
     if ($('[role=alert]')?.textContent.trim()) throw new Error(`error shown: ${$('[role=alert]').textContent}`);
 
 
+    // ---- Prompt 019: a SQLite database as a source: table template, preview, live rows with equal times,
+    // writing queries refused, the file never written (checked by the harness).
+    const dbDialog = () => $('app-database-dialog dialog');
+    const setDbField = (selector, value) => {
+      const el = $(selector);
+      el.value = value;
+      el.dispatchEvent(new Event(el.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true }));
+    };
+    press('l', { metaKey: true, ctrlKey: true, shiftKey: true });
+    await waitFor('„Quelle öffnen“ again', () => srcDialog()?.open);
+    setDbField('#source-kind', 'database');
+    await waitFor('the kind „Datenbank“ opens its own dialog', () => dbDialog()?.open && !srcDialog());
+    await waitFor(
+      'TLS with certificate check by default, no warning',
+      () => $('#db-tls').value === 'verify' && !$('#db-tls-warning'),
+    );
+    setDbField('#db-tls', 'noVerify');
+    await waitFor('switching the check off shows a warning', () =>
+      $('#db-tls-warning')?.textContent.includes('Zertifikatsprüfung'),
+    );
+    setDbField('#db-tls', 'verify');
+    setDbField('#db-engine', 'sqlite');
+    const dbPath = `${wsDir}${wsSep}logs.db`;
+    await waitFor('SQLite asks for a file, not a server', () => $('#db-path') && !$('#db-host'));
+    setDbField('#db-path', dbPath);
+    await sleep(50);
+    click($('#db-tables'));
+    await waitFor('„Tabelle wählen“ lists the tables', () => $('#db-table')?.options.length === 2);
+    setDbField('#db-table', '0');
+    await waitFor('the template writes the query', () => $('#db-query').value === 'SELECT * FROM "logs"');
+    // Writing queries never reach the database: refused in the dialog and by the backend.
+    setDbField('#db-query', 'DELETE FROM logs');
+    await waitFor(
+      'a DELETE cannot be previewed or opened',
+      () => $('#db-preview-button').disabled && $('#db-start').disabled,
+    );
+    setDbField('#db-query', 'SELECT * FROM logs; DELETE FROM logs');
+    await sleep(50);
+    click($('#db-preview-button'));
+    await waitFor('a second statement is refused by the backend', () =>
+      $('#db-error')?.textContent.includes('Nur eine Anweisung'),
+    );
+    const refusedWrite = await invoke('db_preview', {
+      config: {
+        kind: 'database',
+        engine: 'sqlite',
+        path: dbPath,
+        query: 'SELECT * INTO hacked FROM logs',
+        keyColumn: 'id',
+      },
+      credentials: null,
+    }).then(
+      () => null,
+      (e) => e,
+    );
+    if (refusedWrite?.code !== 'invalid_query') {
+      throw new Error(`SELECT … INTO not refused: ${JSON.stringify(refusedWrite)}`);
+    }
+    await report('PASS SELECT … INTO refused by the backend');
+    setDbField('#db-query', 'SELECT * FROM logs');
+    setDbField('#db-key', 'ts');
+    setDbField('#db-time', '');
+    setDbField('#db-level', '');
+    await sleep(50);
+    click($('#db-preview-button'));
+    await waitFor('the preview shows the first rows, binary as a hint', () => {
+      const cells = $$('#db-preview tbody td').map((td) => td.textContent);
+      return (
+        $$('#db-preview tbody tr').length === 3 && cells.includes('(binär, 2 Byte)') && cells.includes('db Grüße 😀')
+      );
+    });
+    await waitFor(
+      'time and level columns guessed from the result',
+      () => $('#db-time').value === 'ts' && $('#db-level').value === 'level',
+    );
+    click($('#db-start-all'));
+    setDbField('#db-interval', '0,5');
+    await sleep(50);
+    click($('#db-start'));
+    await waitFor('opened: the dialog closed', () => !dbDialog(), 15000);
+    await waitFor('the tab is db:logs with the database symbol', () => {
+      const tab = tabs().find((t) => t.textContent.includes('db:logs'));
+      return tab?.querySelector('.src')?.textContent.includes('⛁');
+    });
+    await waitFor(
+      'status bar: three rows and the last query',
+      () => status().includes('3 Zeilen') && status().includes('letzte Abfrage'),
+      15000,
+    );
+    await waitFor(
+      'levels from the level column',
+      () => count('ERROR') === 1 && count('WARN') === 1 && count('INFO') === 1,
+    );
+    // New rows, one with the time of the last ones (the edge): none lost, none doubled.
+    await act('dbinsert 2026-11-08T10:00:01|DEBUG|db same time again');
+    await act('dbinsert 2026-11-08T10:00:02|ERROR|db later');
+    await waitFor('new rows arrive live', () => status().includes('5 Zeilen'), 15000);
+    await sleep(1500);
+    if (!status().includes('5 Zeilen') || count('ERROR') !== 2) {
+      throw new Error(`rows doubled or lost: ${status()}`);
+    }
+    await report('PASS equal times neither lost nor doubled');
+    await act('expectdbcount 5');
+    const dbTab = () => tabs().find((t) => t.textContent.includes('db:logs'));
+    click(dbTab());
+    click(dbTab().closest('.tab').querySelector('.close'));
+    await waitFor('the database tab is closed', () => !dbTab());
+
     // ---- Prompt 017: a remote file over SFTP (server in the app, debug builds only): host key confirmation,
     // password, folder browser, live lines, rotation; a changed host key is refused with no way around it.
     const remoteRoot = `${wsDir}${wsSep}remote`;

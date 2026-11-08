@@ -52,9 +52,9 @@ export interface SessionUpdate {
 
 /**
  * Kinds of sources without a file (prompt 016); 017: a file on a server over SSH/SFTP; 018: a Windows event log
- * channel (only on Windows).
+ * channel (only on Windows); 019: a query on a database table.
  */
-export type SourceKind = 'syslog' | 'sftp' | 'winevent';
+export type SourceKind = 'syslog' | 'sftp' | 'winevent' | 'database';
 
 export type SyslogProtocol = 'udp' | 'tcp' | 'both';
 
@@ -156,8 +156,62 @@ export interface WinEventConfig extends WinTarget {
   xml: boolean;
 }
 
+/** Database engines of prompt 019 (mirrors `Dialect` in sources/database/sql.rs). */
+export type DbEngine = 'postgres' | 'mysql' | 'mssql' | 'sqlite';
+/** `password`: user and password (dialog or keychain); `none`: without password. */
+export type DbAuth = 'password' | 'none';
+/** `verify`: TLS with certificate check (default); `noVerify`: TLS without it; `off`: no TLS. */
+export type TlsMode = 'verify' | 'noVerify' | 'off';
+
+/** A query on a database table as a source (mirrors `DbConfig` in sources/database/mod.rs); never a secret. */
+export interface DbConfig {
+  kind: 'database';
+  engine: DbEngine;
+  host: string;
+  /** 0: the engine's default port. */
+  port: number;
+  database: string;
+  user: string;
+  auth: DbAuth;
+  tls: TlsMode;
+  /** A PEM file with the server's CA (TLS `verify`); empty: the system's roots only. */
+  caFile: string;
+  /** SQLite: the database file. */
+  path: string;
+  /** One `SELECT` without ORDER BY/LIMIT; the app adds the key condition, order and batches. */
+  query: string;
+  keyColumn: string;
+  /** Becomes `timestamp` in the line; empty: none. */
+  timeColumn: string;
+  /** Becomes `level` in the line; empty: none. */
+  levelColumn: string;
+  intervalMs: number;
+  /** Start with the last N rows; null: all rows. */
+  startLast: number | null;
+}
+
+/** A column of a query's result (prompt 019). */
+export interface DbColumn {
+  name: string;
+  typeName: string;
+  kind: string;
+}
+
+/** What `db_preview` returns: the first rows as the spool will hold them (JSON lines). */
+export interface DbPreview {
+  columns: DbColumn[];
+  lines: string[];
+  keyType: string;
+}
+
+/** A table or view for „Tabelle wählen“. */
+export interface DbTable {
+  schema: string | null;
+  name: string;
+}
+
 /** What `open_source` takes; never holds secrets (those come from the dialog or the keychain). */
-export type SourceConfig = SyslogConfig | SftpConfig | WinEventConfig;
+export type SourceConfig = SyslogConfig | SftpConfig | WinEventConfig | DbConfig;
 
 /** Shown instead of the spool path. */
 export interface SourceDescriptor {
@@ -205,6 +259,8 @@ export interface SourceStatus {
   pendingBytes: number;
   /** Places where events may be missing: log cleared or overwritten while away (Windows events). */
   gaps?: number;
+  /** When the last query ended (databases, Unix ms); its duration is `latencyMs`. */
+  polledAtMs?: number | null;
 }
 
 /** Live state of one source of a merge. */

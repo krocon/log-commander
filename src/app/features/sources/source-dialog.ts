@@ -61,6 +61,7 @@ const OTHER = 'other';
           <select id="source-kind" (change)="chooseKind($event)">
             <option value="syslog" selected>Syslog (UDP/TCP)</option>
             <option value="sftp">Remote-Datei (SSH/SFTP) …</option>
+            <option value="database">Datenbank (PostgreSQL, MySQL, SQL Server, SQLite) …</option>
             @if (sessions.wineventSupported()) {
               <!-- Prompt 018: only on Windows; elsewhere the kind does not show. -->
               <option value="winevent">Windows-Ereignisse …</option>
@@ -380,12 +381,16 @@ export class SourceDialogComponent implements OnInit {
     this.error.set(null);
   }
 
-  /** Prompt 017: a remote file has a dialog of its own; 018: Windows events too. */
+  /** Prompt 017: a remote file has a dialog of its own; 018: Windows events too; 019: databases. */
   protected chooseKind(event: Event): void {
     const kind = (event.target as HTMLSelectElement).value;
     if (kind === 'sftp') {
       this.dialog().nativeElement.close();
       this.sessions.remoteRequest.set({ config: null });
+    } else if (kind === 'database') {
+      // Prompt 019: a query on a database table.
+      this.dialog().nativeElement.close();
+      this.sessions.databaseRequest.set({ config: null });
     } else if (kind === 'winevent' && this.sessions.wineventSupported()) {
       this.dialog().nativeElement.close();
       this.sessions.wineventRequest.set({ config: null });

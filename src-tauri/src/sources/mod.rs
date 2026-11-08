@@ -1,6 +1,6 @@
 //! Sources without a file of their own (prompt 016): each writes into a spool (`spool.rs`) on a
 //! thread of its own, and the session follows the spool like a file. Syslog is the first; SFTP (017),
-//! Windows events (018) and databases (019) plug in the same way:
+//! Windows events (018) and databases (019, `database/`) plug in the same way:
 //!
 //! 1. a config variant in `SourceConfig` (no secrets in it: those come from the keychain),
 //! 2. `prepare` checks it and does what can fail visibly (bind a port, connect, authenticate), so
@@ -12,6 +12,7 @@
 //! `RunningSource` owns the thread and the spool: stopping the source flushes the spool, dropping it
 //! deletes the spool unless it is kept.
 
+pub mod database;
 pub mod sftp;
 pub mod syslog;
 pub mod winevent;
@@ -44,6 +45,8 @@ pub enum SourceConfig {
     Sftp(sftp::SftpConfig),
     /// A Windows event log channel (prompt 018); elsewhere `prepare` refuses it.
     Winevent(winevent::WinEventConfig),
+    /// A query on a database table (prompt 019).
+    Database(database::DbConfig),
 }
 
 /// What preparing may need besides the configuration (prompt 017): the SSH hub and what the dialog
@@ -98,6 +101,14 @@ pub fn prepare(config: SourceConfig, ctx: PrepareContext) -> AppResult<Box<dyn S
                 store.as_deref(),
             )?))
         }
+        SourceConfig::Database(config) => {
+            let store = ctx.remote.as_ref().map(|hub| hub.secret_store());
+            Ok(Box::new(database::prepare(
+                config,
+                &ctx.credentials,
+                store.as_deref(),
+            )?))
+        }
     }
 }
 
@@ -118,6 +129,8 @@ pub struct SourceMonitor {
     pub pending_bytes: AtomicU64,
     /// Possible gaps (Windows events: log cleared while away).
     pub gaps: AtomicU64,
+    /// When the last query ended (databases, Unix ms; 0 = none yet).
+    pub polled_at_ms: AtomicU64,
     spool: Arc<SpoolStats>,
     notify: Mutex<Option<Notify>>,
     /// Milliseconds since `created` of the last notification by a counter.
@@ -148,6 +161,7 @@ impl SourceMonitor {
             latency_ms: AtomicU32::new(u32::MAX),
             pending_bytes: AtomicU64::new(0),
             gaps: AtomicU64::new(0),
+            polled_at_ms: AtomicU64::new(0),
             spool,
             notify: Mutex::new(None),
             last_notify: AtomicU64::new(0),
@@ -235,6 +249,7 @@ impl SourceMonitor {
             latency_ms: Some(self.latency_ms.load(Ordering::Relaxed)).filter(|&l| l != u32::MAX),
             pending_bytes: self.pending_bytes.load(Ordering::Relaxed),
             gaps: self.gaps.load(Ordering::Relaxed),
+            polled_at_ms: Some(self.polled_at_ms.load(Ordering::Relaxed)).filter(|&t| t != 0),
         }
     }
 }

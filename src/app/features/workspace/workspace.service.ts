@@ -12,6 +12,7 @@ import { LostMark, SessionState } from '../sessions/session-state';
 import { sourceKey, sourceLabel } from '../sources/source-logic';
 import { sftpAddress } from '../remote/remote-logic';
 import { wineventWhere } from '../winevent/winevent-logic';
+import { dbWhere, tlsWarning, workspaceQuery } from '../database/database-logic';
 import {
   WORKSPACE_EXTENSION,
   WORKSPACE_FORMAT,
@@ -213,11 +214,14 @@ export class WorkspaceService {
         files.push({
           kind: 'source',
           sources: [],
-          // Prompt 017: host, user, port, path and start only; never a secret, no local key file.
+          // Prompt 017: host, user, port, path and start only; never a secret, no local key file. Prompt 019: no
+          // local CA file either.
           source:
             first.source.config.kind === 'sftp'
               ? { ...first.source.config, keyFile: null }
-              : { ...first.source.config },
+              : first.source.config.kind === 'database'
+                ? { ...first.source.config, caFile: '' }
+                : { ...first.source.config },
           profileId: profileId === first.suggestedProfileId ? null : profileId,
           tabs: wsTabs.map((t) => ({ ...t, top: null, selection: null })).slice(0, 8),
           bookmarks: [],
@@ -415,6 +419,23 @@ export class WorkspaceService {
             checked: false,
           };
         }
+        if (f.kind === 'source' && f.source?.kind === 'database') {
+          // Prompt 019: connecting to a database is a side effect: only when ticked here.
+          const warning = tlsWarning(f.source);
+          return {
+            file,
+            label: `${sourceLabel(f.source)} (Datenbank)`,
+            // Review 019 #2: the query of someone else's workspace is shown before anything connects.
+            paths: [
+              `fragt ${dbWhere(f.source)} ab (erst nach Häkchen)`,
+              `Abfrage: ${workspaceQuery(f.source.query)}`,
+              ...(warning ? [`Achtung: ${warning}`] : []),
+            ],
+            network: false,
+            reason: null,
+            checked: false,
+          };
+        }
         if (f.kind === 'source' && f.source?.kind === 'winevent') {
           // Prompt 018: reading an event log (maybe of another computer) only when ticked, only on Windows.
           const here = this.sessions.wineventSupported();
@@ -524,6 +545,14 @@ export class WorkspaceService {
       if (config.kind === 'sftp' && interactive && !this.sessions.remoteRequest()) {
         this.sessions.remoteRequest.set({ config, error });
         report.skipped.push(`${label}: im Dialog „Remote-Datei“ bestätigen`);
+      } else if (
+        config.kind === 'database' &&
+        ['secret_required', 'connection_failed', 'invalid_query'].includes(error.code) &&
+        !this.sessions.databaseRequest()
+      ) {
+        // Prompt 019: password, certificate or query are settled in the dialog, never taken from the workspace.
+        this.sessions.databaseRequest.set({ config, error });
+        report.skipped.push(`${label}: im Dialog „Datenbank“ prüfen`);
       } else if (
         config.kind === 'winevent' &&
         error.code === 'secret_required' &&

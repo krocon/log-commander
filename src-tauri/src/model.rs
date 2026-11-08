@@ -97,6 +97,8 @@ pub enum SourceKind {
     Sftp,
     /// A Windows event log channel (prompt 018), only on Windows.
     Winevent,
+    /// A query on a database table (prompt 019).
+    Database,
 }
 
 /// What a tab of a source shows instead of the spool path.
@@ -168,8 +170,11 @@ pub struct SourceStatus {
     /// Bytes of the remote file not fetched yet (first fetch, catching up; SFTP).
     pub pending_bytes: u64,
     /// Places where events may be missing: the log was cleared or overwritten while the source
-    /// was away (Windows events, prompt 018).
+    /// was away (Windows events, prompt 018); databases: more rows with one key than could be
+    /// remembered at the edge (prompt 019).
     pub gaps: u64,
+    /// When the last query ended (databases, Unix ms), with its duration in `latency_ms`.
+    pub polled_at_ms: Option<u64>,
 }
 
 /// Live state of one source of a merge.

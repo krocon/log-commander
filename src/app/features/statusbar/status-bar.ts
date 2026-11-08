@@ -10,6 +10,7 @@ import { ExportService } from '../export/export.service';
 import { progressText } from '../export/export-logic';
 import { COUNTER_TITLE, sourceCounters, sourcePill } from '../sources/source-logic';
 import { WINEVENT_COUNTER_TITLE } from '../winevent/winevent-logic';
+import { DATABASE_COUNTER_TITLE } from '../database/database-logic';
 import { REMOTE_COUNTER_TITLE } from '../remote/remote-logic';
 
 @Component({
@@ -229,7 +230,9 @@ export class StatusBarComponent {
       ? REMOTE_COUNTER_TITLE
       : this.session()?.source?.kind === 'winevent'
         ? WINEVENT_COUNTER_TITLE
-        : COUNTER_TITLE,
+        : this.session()?.source?.kind === 'database'
+          ? DATABASE_COUNTER_TITLE
+          : COUNTER_TITLE,
   );
 
   protected readonly partly = computed(() => partlyRecognised(this.session()?.columns() ?? null));
