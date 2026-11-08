@@ -14,6 +14,7 @@
 
 pub mod sftp;
 pub mod syslog;
+pub mod winevent;
 
 use crate::error::{AppError, AppResult, ErrorCode};
 use crate::model::{SourceDescriptor, SourceKind, SourceState, SourceStatus};
@@ -41,6 +42,8 @@ pub enum SourceConfig {
     Syslog(syslog::SyslogConfig),
     /// A file on a server over SSH/SFTP (prompt 017).
     Sftp(sftp::SftpConfig),
+    /// A Windows event log channel (prompt 018); elsewhere `prepare` refuses it.
+    Winevent(winevent::WinEventConfig),
 }
 
 /// What preparing may need besides the configuration (prompt 017): the SSH hub and what the dialog
@@ -87,6 +90,14 @@ pub fn prepare(config: SourceConfig, ctx: PrepareContext) -> AppResult<Box<dyn S
                 &ctx.credentials,
             )?))
         }
+        SourceConfig::Winevent(config) => {
+            let store = ctx.remote.as_ref().map(|hub| hub.secret_store());
+            Ok(Box::new(winevent::prepare(
+                config,
+                &ctx.credentials,
+                store.as_deref(),
+            )?))
+        }
     }
 }
 
@@ -105,6 +116,8 @@ pub struct SourceMonitor {
     pub latency_ms: AtomicU32,
     /// Remote bytes not fetched yet.
     pub pending_bytes: AtomicU64,
+    /// Possible gaps (Windows events: log cleared while away).
+    pub gaps: AtomicU64,
     spool: Arc<SpoolStats>,
     notify: Mutex<Option<Notify>>,
     /// Milliseconds since `created` of the last notification by a counter.
@@ -134,6 +147,7 @@ impl SourceMonitor {
             bytes: AtomicU64::new(0),
             latency_ms: AtomicU32::new(u32::MAX),
             pending_bytes: AtomicU64::new(0),
+            gaps: AtomicU64::new(0),
             spool,
             notify: Mutex::new(None),
             last_notify: AtomicU64::new(0),
@@ -220,6 +234,7 @@ impl SourceMonitor {
             bytes: self.bytes.load(Ordering::Relaxed),
             latency_ms: Some(self.latency_ms.load(Ordering::Relaxed)).filter(|&l| l != u32::MAX),
             pending_bytes: self.pending_bytes.load(Ordering::Relaxed),
+            gaps: self.gaps.load(Ordering::Relaxed),
         }
     }
 }

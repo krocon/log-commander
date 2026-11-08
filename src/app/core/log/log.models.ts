@@ -50,8 +50,11 @@ export interface SessionUpdate {
   sourceStatus?: SourceStatus | null;
 }
 
-/** Kinds of sources without a file (prompt 016); 017: a file on a server over SSH/SFTP. */
-export type SourceKind = 'syslog' | 'sftp';
+/**
+ * Kinds of sources without a file (prompt 016); 017: a file on a server over SSH/SFTP; 018: a Windows event log
+ * channel (only on Windows).
+ */
+export type SourceKind = 'syslog' | 'sftp' | 'winevent';
 
 export type SyslogProtocol = 'udp' | 'tcp' | 'both';
 
@@ -130,8 +133,31 @@ export interface RemoteListing {
   truncated: boolean;
 }
 
+/** How a remote computer is logged on to for Windows events (prompt 018). */
+export type WinAuth = 'current' | 'password';
+
+/** Where Windows events come from (mirrors `WinTarget` in sources/winevent/mod.rs); never a secret. */
+export interface WinTarget {
+  /** Empty: this computer. */
+  computer: string;
+  auth: WinAuth;
+  /** `DOMAIN\user`, `user@domain` or `user` (auth `password`). */
+  user: string;
+}
+
+/** One event log channel as a source (mirrors `WinEventConfig`); never a secret. */
+export interface WinEventConfig extends WinTarget {
+  kind: 'winevent';
+  /** `Application`, `System`, `Security`, `Microsoft-Windows-PowerShell/Operational` … */
+  channel: string;
+  /** The backlog reaches this many hours back; null: everything. */
+  hours: number | null;
+  /** Attach the whole event XML (field `xml`). */
+  xml: boolean;
+}
+
 /** What `open_source` takes; never holds secrets (those come from the dialog or the keychain). */
-export type SourceConfig = SyslogConfig | SftpConfig;
+export type SourceConfig = SyslogConfig | SftpConfig | WinEventConfig;
 
 /** Shown instead of the spool path. */
 export interface SourceDescriptor {
@@ -148,6 +174,8 @@ export interface SourceDescriptor {
 
 export type SourceState =
   | { kind: 'connecting' }
+  /** Prompt 018: reading the backlog of the period. */
+  | { kind: 'loading' }
   | { kind: 'listening' }
   | { kind: 'connected' }
   | { kind: 'error'; message: string }
@@ -175,6 +203,8 @@ export interface SourceStatus {
   latencyMs: number | null;
   /** Remote bytes not fetched yet (SFTP). */
   pendingBytes: number;
+  /** Places where events may be missing: log cleared or overwritten while away (Windows events). */
+  gaps?: number;
 }
 
 /** Live state of one source of a merge. */

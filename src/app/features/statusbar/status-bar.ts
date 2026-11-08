@@ -9,6 +9,7 @@ import { hintText } from '../fields/fields-logic';
 import { ExportService } from '../export/export.service';
 import { progressText } from '../export/export-logic';
 import { COUNTER_TITLE, sourceCounters, sourcePill } from '../sources/source-logic';
+import { WINEVENT_COUNTER_TITLE } from '../winevent/winevent-logic';
 import { REMOTE_COUNTER_TITLE } from '../remote/remote-logic';
 
 @Component({
@@ -57,9 +58,9 @@ import { REMOTE_COUNTER_TITLE } from '../remote/remote-logic';
           type="button"
           class="link"
           [title]="
-            src.kind === 'sftp'
-              ? 'Gelesenes als lokale Datei speichern (Export)'
-              : 'Empfangenes als Datei speichern (Export)'
+            src.kind === 'syslog'
+              ? 'Empfangenes als Datei speichern (Export)'
+              : 'Gelesenes als lokale Datei speichern (Export)'
           "
           (click)="sessions.exportRequest.set(s)"
         >
@@ -224,7 +225,11 @@ export class StatusBarComponent {
     return status ? sourceCounters(status, session?.source?.kind ?? 'syslog') : '';
   });
   protected readonly counterTitle = computed(() =>
-    this.session()?.source?.kind === 'sftp' ? REMOTE_COUNTER_TITLE : COUNTER_TITLE,
+    this.session()?.source?.kind === 'sftp'
+      ? REMOTE_COUNTER_TITLE
+      : this.session()?.source?.kind === 'winevent'
+        ? WINEVENT_COUNTER_TITLE
+        : COUNTER_TITLE,
   );
 
   protected readonly partly = computed(() => partlyRecognised(this.session()?.columns() ?? null));

@@ -112,7 +112,9 @@ describe('source logic', () => {
     let saved = addSavedSource([], { config: a, keep: false });
     saved = addSavedSource(saved, { config: b, keep: true });
     saved = addSavedSource(saved, { config: { ...a }, keep: true });
-    expect(saved.map((s) => s.config.port)).toEqual([5514, 6000]);
+    expect(saved.map((s) => (s.config.kind === 'syslog' ? s.config.port : 0))).toEqual([
+      5514, 6000,
+    ]);
     expect(saved[0].keep).toBe(true);
     expect(sourceKey(a)).toBe(sourceKey({ ...a, allow: ['10.0.0.1'] }));
     const many = Array.from({ length: 30 }, (_, i) => ({ config: { ...a, port: 7000 + i } }));

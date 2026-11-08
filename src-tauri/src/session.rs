@@ -2464,8 +2464,11 @@ impl SessionManager {
             .ok_or_else(|| AppError::unknown_session(id))
     }
 
+    /// The profiles to choose from (Windows events only on Windows, prompt 018).
     pub fn profiles(&self) -> Vec<Profile> {
-        self.profiles.read().list()
+        let mut all = self.profiles.read().list();
+        all.retain(crate::profile::offered_here);
+        all
     }
 
     pub fn profile(&self, id: &str) -> AppResult<Profile> {

@@ -9,6 +9,8 @@ use std::collections::HashMap;
 pub const GENERIC_PROFILE: &str = "generic";
 /// Lines of a syslog spool (prompt 016): time of receipt, sender, message as received.
 pub const SYSLOG_RECEIVED_PROFILE: &str = "syslog-received";
+/// Windows events as JSON lines (prompt 018): the source picks it; listed for choice only on Windows.
+pub const WINEVENT_PROFILE: &str = "winevent";
 /// The prefix of a spool line: time of receipt with milliseconds and zone, the sender's address.
 const RECEIVED: &str = r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}(?:Z|[+-]\d{2}:\d{2})";
 const SENDER: &str = r"(?:\d{1,3}(?:\.\d{1,3}){3}|[0-9A-Fa-f]*:[0-9A-Fa-f:.]*)";
@@ -298,10 +300,22 @@ pub fn builtin_profiles() -> Vec<Profile> {
     logfmt.head = Some(r"(?-u)^[\w.@-]+=".into());
     logfmt.structure = Structure::Logfmt;
 
+    // Windows events (prompt 018): JSON Lines with German column names. Last, so that a JSON
+    // file is suggested `jsonl` (a tie goes to the earlier profile).
+    let mut winevent = Profile::builtin(WINEVENT_PROFILE, "Windows-Ereignisse", &[]);
+    winevent.json = true;
+    winevent.head = None;
+    winevent.structure = Structure::Json;
+
     vec![
         generic, log4j, python, serilog, syslog, webserver, jsonl, access, w3c, nlog, gc, fix,
-        logfmt, received,
+        logfmt, received, winevent,
     ]
+}
+
+/// Profiles offered for choice on this system: Windows events only on Windows (prompt 018).
+pub fn offered_here(profile: &Profile) -> bool {
+    cfg!(windows) || profile.id != WINEVENT_PROFILE
 }
 
 /// Picks the format most of the first lines fit; `generic` if none stands out. Lines must already
@@ -316,7 +330,7 @@ pub fn suggest_profile<'a>(lines: impl Iterator<Item = &'a [u8]>) -> String {
     }
     let mut best: Option<(String, usize)> = None;
     for profile in builtin_profiles() {
-        if profile.id == GENERIC_PROFILE {
+        if profile.id == GENERIC_PROFILE || profile.id == WINEVENT_PROFILE {
             continue;
         }
         // The suggestion needs positive evidence: a head-only match of the shared timestamp

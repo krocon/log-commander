@@ -11,6 +11,7 @@ import { LogSessionService } from '../sessions/log-session.service';
 import { LostMark, SessionState } from '../sessions/session-state';
 import { sourceKey, sourceLabel } from '../sources/source-logic';
 import { sftpAddress } from '../remote/remote-logic';
+import { wineventWhere } from '../winevent/winevent-logic';
 import {
   WORKSPACE_EXTENSION,
   WORKSPACE_FORMAT,
@@ -414,6 +415,20 @@ export class WorkspaceService {
             checked: false,
           };
         }
+        if (f.kind === 'source' && f.source?.kind === 'winevent') {
+          // Prompt 018: reading an event log (maybe of another computer) only when ticked, only on Windows.
+          const here = this.sessions.wineventSupported();
+          return {
+            file,
+            label: `${sourceLabel(f.source)} (Windows-Ereignisse)`,
+            paths: [
+              `liest „${f.source.channel}“ von ${wineventWhere(f.source)} (erst nach Häkchen)`,
+            ],
+            network: !here,
+            reason: here ? null : 'nicht geöffnet (nur unter Windows)',
+            checked: false,
+          };
+        }
         if (f.kind === 'source' && f.source?.kind === 'syslog') {
           // Prompt 016: starting a listener is a side effect; one beyond this computer never from a file.
           const remote = isRemoteSourceFile(f);
@@ -509,6 +524,14 @@ export class WorkspaceService {
       if (config.kind === 'sftp' && interactive && !this.sessions.remoteRequest()) {
         this.sessions.remoteRequest.set({ config, error });
         report.skipped.push(`${label}: im Dialog „Remote-Datei“ bestätigen`);
+      } else if (
+        config.kind === 'winevent' &&
+        error.code === 'secret_required' &&
+        !this.sessions.wineventRequest()
+      ) {
+        // Prompt 018: the password is asked for in the dialog, never taken from the workspace.
+        this.sessions.wineventRequest.set({ config, error });
+        report.skipped.push(`${label}: im Dialog „Windows-Ereignisse“ anmelden`);
       } else {
         report.skipped.push(`${label}: ${describeError(error)}`);
       }

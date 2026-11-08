@@ -134,6 +134,20 @@ Like <code>tail -f</code> with a GUI: millions of lines, instant filters, no wai
   again after 1, 2, 4 … 60 s and continues where it stopped, the lines stay. Several files of one server share one
   connection. The tab shows „⇅ host:/var/log/app.log“, the status bar connection, lines, bytes and latency. See
   [SSH logins and host keys](#ssh-logins-and-host-keys).
+- **Windows event logs** (only on Windows; invisible on macOS and Linux) – „Quelle öffnen“ → Windows-Ereignisse:
+  Application, System, Security or any other channel (the list of the computer with a filter) of this computer or of
+  another one, live instead of the slow Event Viewer. First the events of a period (24 hours by default, 1 h … all),
+  then a subscription for new ones; after a broken connection it goes on at the bookmark without gap or doubles (a log
+  cleared meanwhile is counted as a gap). Each event becomes one JSON line (`timestamp`, `level`, `provider`,
+  `eventId`, `message`, `channel`, `computer`, `task`, `user`, `recordId`, optionally the whole `xml` for the detail
+  panel), so filters, search, columns, timeline, dashboard and export work as for any JSON log. Levels: Critical →
+  FATAL, Error and audit failure → ERROR, Warning → WARN, Information and audit success → INFO, Verbose → DEBUG. The
+  columns start with time, level, provider, event ID and message; right click „Gleiche Event-ID“ filters on the ID.
+  Several channels open several tabs, optionally merged by time. „Security“ needs administrator rights or the group
+  *Event Log Readers*; the app never asks for elevation and says so instead. Another computer is read with the
+  logged-on Windows identity or with user and password (password only for this connect, or in the Windows
+  Credential Manager when ticked; never in settings, workspaces or logs; a workspace never connects by itself).
+  Remote reading needs the firewall rule „Remote Event Log Management“ on that computer.
 - **Share** – right click „Als Markdown kopieren“ or „Als Jira kopieren“: file, lines, time span and filter as a head,
   the selected lines as a code block, the notes as a list, up to 64 KB (for more there is the export).
 - **Search** – filter or highlight, regular expressions, case sensitivity, jump between matches.
@@ -157,6 +171,7 @@ Like <code>tail -f</code> with a GUI: millions of lines, instant filters, no wai
 | ![Received syslog](docs/screenshots/syslog.png) | ![Opening a syslog source](docs/screenshots/source-dialog.png) |
 | ![Timeline with an outage and a marked window](docs/screenshots/timeline.png) | ![Timeline in the light theme](docs/screenshots/timeline-light.png) |
 | ![A remote file over SFTP](docs/screenshots/remote.png) | ![Remote dialog: browser and host key](docs/screenshots/remote-dialog.png) |
+| ![Windows events (mock, taken on macOS)](docs/screenshots/winevent.png) | ![Windows events dialog (mock, taken on macOS)](docs/screenshots/winevent-dialog.png) |
 
 ## Receiving syslog safely
 

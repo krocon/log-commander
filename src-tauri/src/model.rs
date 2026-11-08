@@ -95,6 +95,8 @@ pub enum SourceKind {
     Syslog,
     /// A file on a server over SSH/SFTP (prompt 017).
     Sftp,
+    /// A Windows event log channel (prompt 018), only on Windows.
+    Winevent,
 }
 
 /// What a tab of a source shows instead of the spool path.
@@ -125,6 +127,8 @@ pub struct KeptSpools {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SourceState {
     Connecting,
+    /// Reading what was there before (Windows events, prompt 018: the backlog of the period).
+    Loading,
     Listening,
     Connected,
     Error {
@@ -163,6 +167,9 @@ pub struct SourceStatus {
     pub latency_ms: Option<u32>,
     /// Bytes of the remote file not fetched yet (first fetch, catching up; SFTP).
     pub pending_bytes: u64,
+    /// Places where events may be missing: the log was cleared or overwritten while the source
+    /// was away (Windows events, prompt 018).
+    pub gaps: u64,
 }
 
 /// Live state of one source of a merge.

@@ -35,6 +35,7 @@ import { SettingsDialogComponent } from './features/settings/settings-dialog';
 import { SidebarComponent } from './features/sidebar/sidebar';
 import { SourceDialogComponent } from './features/sources/source-dialog';
 import { RemoteDialogComponent } from './features/remote/remote-dialog';
+import { WinEventDialogComponent } from './features/winevent/winevent-dialog';
 import { SIDEBAR_MIN, sidebarMax, sidebarWidth } from './features/sidebar/sidebar-logic';
 import { SidebarState } from './features/sidebar/sidebar-state';
 import { StartScreenComponent } from './features/start/start-screen';
@@ -61,6 +62,7 @@ import { SplitterComponent } from './shared/splitter';
     SidebarComponent,
     SourceDialogComponent,
     RemoteDialogComponent,
+    WinEventDialogComponent,
     StartScreenComponent,
     SplitterComponent,
     StatusBarComponent,
@@ -194,6 +196,16 @@ import { SplitterComponent } from './shared/splitter';
           [start]="request.config"
           [startError]="request.error ?? null"
           (closed)="sessions.remoteRequest.set(null)"
+        />
+      }
+    }
+    @if (sessions.wineventRequest(); as request) {
+      <!-- Prompt 018: Windows event logs, only on Windows. -->
+      @defer (on immediate) {
+        <app-winevent-dialog
+          [start]="request.config"
+          [startError]="request.error ?? null"
+          (closed)="sessions.wineventRequest.set(null)"
         />
       }
     }
@@ -386,6 +398,7 @@ export class App implements OnInit, OnDestroy {
     await this.settings.load();
     if (!isTauri()) return;
     await this.sessions.refreshProfiles();
+    await this.sessions.loadWineventSupport();
     this.cleanups.push(await listen('menu-open', () => this.openFile()));
     this.cleanups.push(await listen('menu-open-path', () => this.pathDialogOpen.set(true)));
     this.cleanups.push(await listen('menu-merge', () => this.mergeDialogOpen.set(true)));

@@ -7,6 +7,12 @@ import {
 } from '../../core/log/log.models';
 import { formatCount } from '../../shared/format';
 import { parseSftpConfig, remoteCounters, sftpKey, sftpLabel } from '../remote/remote-logic';
+import {
+  parseWinEventConfig,
+  wineventCounters,
+  wineventKey,
+  wineventLabel,
+} from '../winevent/winevent-logic';
 
 /**
  * Sources without a file (prompt 016): defaults, checks of the dialog and of stored or shared configurations
@@ -167,6 +173,8 @@ const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !
 export function parseSourceConfig(v: unknown, fromWorkspace = false): SourceConfig | null {
   // Prompt 017: a workspace keeps no key file (a path of someone else's machine).
   if (isObj(v) && v['kind'] === 'sftp') return parseSftpConfig(v, !fromWorkspace);
+  // Prompt 018: a Windows event log channel (never a password in it).
+  if (isObj(v) && v['kind'] === 'winevent') return parseWinEventConfig(v);
   if (!isObj(v) || v['kind'] !== 'syslog') return null;
   const protocol = v['protocol'];
   const address = v['address'];
@@ -199,12 +207,14 @@ export function isRemoteSource(config: SourceConfig): boolean {
 /** Same kind, protocol, address and port: the same listener; for SFTP the same server, user and file. */
 export function sourceKey(config: SourceConfig): string {
   if (config.kind === 'sftp') return sftpKey(config);
+  if (config.kind === 'winevent') return wineventKey(config);
   return `${config.kind}|${config.protocol}|${stripBrackets(config.address).toLowerCase()}|${config.port}`;
 }
 
 /** Like the backend's label: „Syslog :5514“, „Syslog TCP 0.0.0.0:514“, `host:/var/log/app.log`. */
 export function sourceLabel(config: SourceConfig): string {
   if (config.kind === 'sftp') return sftpLabel(config);
+  if (config.kind === 'winevent') return wineventLabel(config);
   const proto = config.protocol === 'tcp' ? ' TCP' : config.protocol === 'both' ? ' UDP+TCP' : '';
   if (isLoopbackAddress(config.address)) return `Syslog${proto} :${config.port}`;
   const addr = stripBrackets(config.address);
@@ -246,6 +256,8 @@ export function sourcePill(state: SourceState): SourcePill {
   switch (state.kind) {
     case 'connecting':
       return { label: 'Verbinde …', cls: 'loading' };
+    case 'loading':
+      return { label: 'Lädt Bestand …', cls: 'loading' };
     case 'listening':
       return { label: 'Lauscht', cls: 'live' };
     case 'connected':
@@ -265,6 +277,7 @@ export function sourceCounters(
   kind: SourceConfig['kind'] = 'syslog',
 ): string {
   if (kind === 'sftp') return remoteCounters(status);
+  if (kind === 'winevent') return wineventCounters(status);
   const parts = [`${formatCount(status.received)} empfangen`];
   if (status.dropped) parts.push(`${formatCount(status.dropped)} verworfen`);
   if (status.truncated) parts.push(`${formatCount(status.truncated)} gekürzt`);

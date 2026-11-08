@@ -226,6 +226,28 @@ await shot(start, 'start');
   await shot(rem, 'remote');
 }
 
+// Windows events (prompt 018): only on Windows, so these two pictures come from the MOCK (`windows: true` in
+// scripts/e2e/mock-ipc.js), taken on macOS. Channels, events and the tab are imitations of the real source.
+{
+  const win = await page(browser, { theme: 'dark', withFiles: false, extra: { windows: true } });
+  await win.click('button:text-is("Quelle öffnen …")');
+  await win.waitForSelector('app-source-dialog dialog[open]');
+  await win.selectOption('#source-kind', 'winevent');
+  await win.waitForSelector('app-winevent-dialog dialog[open]');
+  await win.waitForSelector(
+    '#winevent-channels label:has-text("Microsoft-Windows-PowerShell/Operational")',
+  );
+  await win.check('#winevent-channels label:has-text("Application") input');
+  await win.check('#winevent-channels label:has-text("Security") input');
+  await win.waitForTimeout(200);
+  await shot(win, 'winevent-dialog');
+  await win.uncheck('#winevent-channels label:has-text("Security") input');
+  await win.click('#winevent-start');
+  await win.waitForSelector('.lt-cell');
+  await win.waitForTimeout(300);
+  await shot(win, 'winevent');
+}
+
 await start.click('button:text-is("Pfad eingeben …")');
 await start.fill('app-open-path-dialog input', '/tmp/app.log');
 await start.waitForTimeout(150);

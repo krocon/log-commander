@@ -1302,6 +1302,11 @@ impl Hub {
             .count()
     }
 
+    /// The keychain behind the hub (Windows events of prompt 018 keep their password there too).
+    pub fn secret_store(&self) -> Arc<dyn SecretStore> {
+        Arc::clone(&self.store)
+    }
+
     /// Closes everything (app exit).
     pub fn close_all(&self) {
         let all: Vec<Arc<Shared>> = self.pool.lock().drain().map(|(_, s)| s).collect();

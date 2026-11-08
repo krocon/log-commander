@@ -66,10 +66,19 @@ dbus-secret-service-keyring-store = { version = "1", features = ["crypto-rust"] 
 [target.'cfg(target_os = "macos")'.dependencies]
 apple-native-keyring-store = { version = "1", features = ["keychain"] }
 
-# File identity (rotation detection) needs GetFileInformationByHandle on Windows.
+# File identity (rotation detection) needs GetFileInformationByHandle on Windows, the event logs of
+# prompt 018 the Evt* API.
 [target.'cfg(windows)'.dependencies]
 windows-native-keyring-store = { version = "1.1", default-features = false }
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+# Event logs (prompt 018): EvtQuery/EvtSubscribe/EvtRender/EvtFormatMessage, the signal event of a
+# subscription (Threading, whose CreateEventW takes Security's SECURITY_ATTRIBUTES).
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_EventLog",
+    "Win32_System_Threading",
+] }
 
 [dev-dependencies]
 tempfile = "3"

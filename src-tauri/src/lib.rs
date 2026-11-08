@@ -181,6 +181,9 @@ pub fn run() {
             commands::remote_hosts,
             commands::remote_list_dir,
             commands::forget_remote_secret,
+            commands::winevent_supported,
+            commands::winevent_channels,
+            commands::forget_winevent_secret,
             #[cfg(debug_assertions)]
             e2e::e2e_report,
             #[cfg(debug_assertions)]

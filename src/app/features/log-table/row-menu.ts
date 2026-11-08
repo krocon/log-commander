@@ -24,6 +24,7 @@ export type RowMenuAction =
   | 'filter-text-tab'
   | 'filter-value'
   | 'filter-value-tab'
+  | 'same-event-id'
   | 'column-from-selection'
   | 'from-here'
   | 'to-here'
@@ -41,6 +42,8 @@ export interface RowMenuContext {
   tabLimit?: string | null;
   /** The entry under the pointer has a note (prompt 015). */
   hasNote?: boolean;
+  /** Prompt 018: the event ID of a Windows event under the pointer, for the quick filter. */
+  eventId?: string | null;
 }
 
 const short = (text: string): string => (text.length > 30 ? `${text.slice(0, 30)}…` : text);
@@ -73,6 +76,9 @@ export function rowMenuItems(context: RowMenuContext): RowMenuItem[] {
       ...tabState(context),
     });
   }
+  // Prompt 018: Windows events, the same event ID wherever the line was clicked.
+  const eventId = context.eventId?.trim();
+  if (eventId) items.push({ id: 'same-event-id', label: `Gleiche Event-ID (${short(eventId)})` });
   if (context.hasLine) {
     items.push({ id: 'from-here', label: 'Abschnitt ab hier', key: '>' });
     items.push({ id: 'to-here', label: 'Abschnitt bis hier', key: '<' });
