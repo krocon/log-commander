@@ -39,8 +39,9 @@ Like <code>tail -f</code> with a GUI: millions of lines, instant filters, no wai
   stored per format in the settings and valid for every file of that format right away. At most 32 per format.
 - **Detail panel** – the whole entry of the selected line below the log: head line and stack trace, without the
   cut at the screen edge and whatever the filter hides. Embedded JSON or XML is indented and coloured by its own
-  tokenizer, so 64-bit ids stay exact and fragments work. Double click a line (or `D`) to open it, click other lines
-  to browse, drag or use the arrow keys on the bar above it to change its height.
+  tokenizer, so 64-bit ids stay exact and fragments work. Double click a line (or `D`, or `Enter` with a selection) to
+  open it, click other lines or step with `↑`/`↓` (whole entries, `Shift` extends) to browse; dragging across a
+  line marks text instead. Drag or use the arrow keys on the bar above it to change its height.
 - **Sidebar** – left of the log, a tree with the open files (state, new errors, frozen), the active filter of each
   file (remove a part with `×`) and filters saved under a name (click applies one to the active tab). Below it a
   statistics table with lines per level for the whole file and for the current view; click a level to show only it,
@@ -339,8 +340,8 @@ Plain keys act in the log only, not in text fields, dialogs or the widgets below
 | `Home` | Go to the first line |
 | `PageUp` | One page up |
 | `PageDown` | One page down |
-| `↑` | One line up |
-| `↓` | One line down |
+| `↑` | With a selection: the previous entry (a stack trace is one), scrolled into view; without: one line up |
+| `↓` | With a selection: the next entry; without: one line down |
 | `E` | Next error (ERROR, FATAL) in the view; the selection stays |
 | `Shift+E` | Previous error |
 | `W` | Next warning or worse |
@@ -348,7 +349,10 @@ Plain keys act in the log only, not in text fields, dialogs or the widgets below
 | `N` | Next bookmark |
 | `Shift+N` | Previous bookmark |
 | `Cmd/Ctrl+C` | Copy the selected lines (marked text copies itself) |
-| `Esc` | Drop the selection |
+| `Esc` | Drop marked text in the log, then the selection |
+| `Shift+↑` | Extend the selection by one entry upwards (or shrink it) |
+| `Shift+↓` | Extend the selection by one entry downwards (or shrink it) |
+| `Enter` | Detail panel for the selection (stays open when it is) |
 | `M` | Bookmark on the selected entry, or off again |
 | `Shift+M` | Note on the selected entry (write, change, delete) |
 | `G` | Selected line in the whole log (filter lifted and kept, the filter tree too), again: back to the filter |

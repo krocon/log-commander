@@ -139,14 +139,14 @@ export const ACTIONS = [
   },
   {
     id: 'SCROLL_LINE_UP',
-    label: 'Eine Zeile hoch',
+    label: 'Vorheriger Eintrag, ohne Auswahl eine Zeile hoch',
     group: 'Navigation',
     scope: 'view',
     repeat: true,
   },
   {
     id: 'SCROLL_LINE_DOWN',
-    label: 'Eine Zeile runter',
+    label: 'Nächster Eintrag, ohne Auswahl eine Zeile runter',
     group: 'Navigation',
     scope: 'view',
     repeat: true,
@@ -190,6 +190,21 @@ export const ACTIONS = [
   // Auswahl
   { id: 'COPY_SELECTION', label: 'Auswahl kopieren', group: 'Auswahl', scope: 'view' },
   { id: 'CLEAR_SELECTION', label: 'Auswahl aufheben', group: 'Auswahl', scope: 'view' },
+  {
+    id: 'EXTEND_SELECTION_UP',
+    label: 'Auswahl um einen Eintrag nach oben erweitern',
+    group: 'Auswahl',
+    scope: 'view',
+    repeat: true,
+  },
+  {
+    id: 'EXTEND_SELECTION_DOWN',
+    label: 'Auswahl um einen Eintrag nach unten erweitern',
+    group: 'Auswahl',
+    scope: 'view',
+    repeat: true,
+  },
+  { id: 'OPEN_DETAIL', label: 'Details zur Auswahl zeigen', group: 'Auswahl', scope: 'view' },
   { id: 'TOGGLE_BOOKMARK', label: 'Lesezeichen an/aus', group: 'Auswahl', scope: 'view' },
   { id: 'EDIT_NOTE', label: 'Notiz zum Eintrag', group: 'Auswahl', scope: 'view' },
   // Filter

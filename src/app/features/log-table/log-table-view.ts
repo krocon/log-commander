@@ -34,6 +34,7 @@ import {
   bottomAnchor,
   clampToBottom,
   revealBelow,
+  revealRows,
   scrollBy,
   visibleRowCount,
 } from './viewport-logic';
@@ -46,11 +47,13 @@ import { locateSelection } from '../fields/rule-from-selection';
 import { isNumericKind } from '../fields/fields-logic';
 import { LogLine } from '../../core/log/log.models';
 import { SessionState } from '../sessions/session-state';
+import { Direction } from '../sessions/selection-logic';
 import { COL_NUMBER, COL_TEXT, ID_NUMBER, ID_TEXT, LogAreaModel } from './log-area-model';
 import {
   contentTop,
   contentTopFromScrollbar,
   holdForSelection,
+  isDrag,
   posFromContentTop,
   textColumnWidth,
 } from './table-logic';
@@ -154,6 +157,8 @@ const BASE_OPTIONS: TableOptionsIf = {
       [(tableApi)]="api"
       (scroll)="onTableScroll($event)"
       (mouseClicked)="onTableClick($event)"
+      (mouseDragging)="onTableDragging($event)"
+      (mouseDraggingEnded)="onTableDraggingEnded()"
       (contextMenu)="onTableContextMenu($event)"
     />
     @if (session().filteredLines() === 0) {
@@ -272,6 +277,16 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
   private resizeObserver: ResizeObserver | null = null;
   /** When a click last selected an entry: the double click that follows shows that one. */
   private clickedAt = -Infinity;
+  /**
+   * The press running now moved the pointer (the table's `mouseDragging`, before mouseup and click); reset by
+   * `mouseDraggingEnded`, which comes after the click. Text may be dragged out right now.
+   */
+  private dragged = false;
+  /** The text selection in the table was dragged by the user: only that one holds the drawing. */
+  private dragSelected = false;
+  /** Arrow steps run one after the other (each asks the backend); held keys queue at most two. */
+  private stepQueue: Promise<void> = Promise.resolve();
+  private stepsPending = 0;
 
   /** Frame times of `draw()`, for measurements (`window.__lcTable`, `scripts/e2e/spike-003.js`). */
   private readonly drawTimes: number[] = [];
@@ -367,7 +382,6 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
     host.addEventListener('wheel', this.onWheel, { passive: false, capture: true });
     host.addEventListener('mousedown', this.onHeaderMouseDown, { capture: true });
     host.addEventListener('dblclick', this.onHeaderDblClick, { capture: true });
-    host.addEventListener('dblclick', this.onBodyDblClick);
     window.addEventListener('mouseup', this.onMouseUp, { capture: true });
     document.addEventListener('mousedown', this.onOutsideMouseDown, { capture: true });
     this.resizeObserver = new ResizeObserver(() => {
@@ -509,7 +523,8 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
       follow: boolean;
     },
   ): void {
-    if (this.headerBusy || holdForSelection(state.follow, this.selectionInTable())) {
+    const dragging = this.dragged || this.dragSelected;
+    if (this.headerBusy || holdForSelection(state.follow, this.selectionInTable(), dragging)) {
       this.heldForSelection = true;
       this.holds++;
       return;
@@ -665,11 +680,18 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
   }
 
   private readonly onSelectionChange = (): void => {
-    // A released selection lets the view catch up.
-    if (this.heldForSelection && !this.headerBusy && !this.selectionInTable()) {
-      this.redraw.update((r) => r + 1);
-    }
+    if (this.selectionInTable()) return;
+    // A released selection lets the view catch up; the next selection holds only once dragged again.
+    if (!this.dragged) this.dragSelected = false;
+    if (this.heldForSelection && !this.headerBusy) this.redraw.update((r) => r + 1);
   };
+
+  /** Drops a text selection (stale, or one the user is done with) so it neither blocks nor holds anything. */
+  private clearTextSelection(): void {
+    this.dragSelected = false;
+    const selection = window.getSelection();
+    if (selection && !selection.isCollapsed) selection.removeAllRanges();
+  }
 
   // ---------------------------------------------------------------- columns
 
@@ -1074,32 +1096,59 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
     session.scroll.set(posFromContentTop(px, this.rowH()));
   }
 
+  /** The table's drag of a press (text being marked in the rows): from 4 px on it is no click any more. */
+  protected onTableDragging(event: GeMouseEvent): void {
+    if (this.headerBusy || this.dragged) return;
+    this.dragged = isDrag(event.draggingX, event.draggingY);
+  }
+
+  /** After the click of the press: marked text that remains is the user's and holds the view until it goes. */
+  protected onTableDraggingEnded(): void {
+    if (!this.dragged) return;
+    this.dragged = false;
+    this.dragSelected = this.selectionInTable();
+    if (!this.dragSelected && this.heldForSelection) this.redraw.update((r) => r + 1);
+  }
+
+  /**
+   * The table's click (`mouseClicked`, synchronous with `debounceMouseClickDelay` 0). A plain click selects the
+   * entry under the pointer (Shift: extends), whatever text is marked anywhere: the marking goes. A drag marks
+   * text instead and keeps the entry (filter on marked text, copy). `clickCount` 2 is the double click.
+   */
   protected onTableClick(event: GeMouseEvent): void {
     if (event.areaIdent !== 'body' || event.rowIndex < 0) return;
-    if (window.getSelection()?.toString()) return;
+    if (event.clickCount >= 2) {
+      this.onTableDoubleClick(event);
+      return;
+    }
+    if (this.dragged) {
+      // The table moved its focus cell and repaints after this event; that would rebuild the rows and drop
+      // the text just marked. Our own drawing repaints when it needs to.
+      queueMicrotask(() => this.api()?.getTableScope().cancelPendingRepaint());
+      return;
+    }
     const line = this.session().cache.line(event.rowIndex);
     if (!line) return;
+    this.clearTextSelection();
     this.clickedAt = performance.now();
     void this.sessions.selectEntry(this.session(), line.line, !!event.originalEvent?.shiftKey);
   }
 
   /**
    * Double click opens the detail panel. Its first click already chose the entry (in a running tail another
-   * line may lie under the pointer by now), so only without a selection does the target count. The second
-   * click marks a word and `onTableClick` returns early on it, which is right here.
+   * line lies under the pointer by now), so only without a selection does the target count. The word the
+   * double click marked goes again: it would hold the view and is no text the user chose.
    */
-  private readonly onBodyDblClick = (event: MouseEvent): void => {
-    const target = event.target as HTMLElement;
-    if (!target.closest?.('[data-area="body"]') && !target.closest?.('.lt-cell, .lt-gutter'))
-      return;
+  private onTableDoubleClick(event: GeMouseEvent): void {
+    this.clearTextSelection();
     const session = this.session();
     const clickPending = performance.now() - this.clickedAt < 1000;
     if (!session.selection() && !clickPending) {
-      const line = Number(target.closest?.<HTMLElement>('[data-line]')?.dataset['line']);
-      if (Number.isFinite(line)) void this.sessions.selectEntry(session, line, false);
+      const line = session.cache.line(event.rowIndex);
+      if (line) void this.sessions.selectEntry(session, line.line, false);
     }
     if (!this.settings().detailVisible) this.settingsService.update({ detailVisible: true });
-  };
+  }
 
   private readonly onWheel = (event: WheelEvent): void => {
     if ((event.target as HTMLElement).closest?.('.lt-colmenu, .lt-rowmenu')) return;
@@ -1125,6 +1174,27 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
       session.setFollow(false);
     }
     session.scroll.set(result.pos);
+  }
+
+  /**
+   * ↑/↓ with a selection: the previous/next entry of the view becomes the selection (Shift: extends it), and the
+   * view scrolls just enough to show it. Up from the end stops following, so the tail does not carry it away.
+   */
+  private stepSelection(direction: Direction, extend: boolean): void {
+    if (this.stepsPending >= 2) return;
+    this.stepsPending++;
+    this.stepQueue = this.stepQueue
+      .then(async () => {
+        const session = this.session();
+        const rows = await this.sessions.stepSelection(session, direction, extend);
+        if (!rows || session !== this.session()) return;
+        if (direction < 0) session.setFollow(false);
+        const next = revealRows(session.scroll(), rows.first, rows.last, this.metrics());
+        if (!next) return;
+        session.setFollow(false);
+        session.scroll.set(next);
+      })
+      .finally(() => this.stepsPending--);
   }
 
   private toggleColumnMode(): void {
@@ -1162,9 +1232,20 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
         },
         SCROLL_PAGE_DOWN: () => this.scrollPixels(page()),
         SCROLL_PAGE_UP: () => this.scrollPixels(-page()),
-        SCROLL_LINE_DOWN: () => this.scrollPixels(this.rowH()),
-        SCROLL_LINE_UP: () => this.scrollPixels(-this.rowH()),
-        CLEAR_SELECTION: () => s().selection.set(null),
+        // With a selection the arrows move it from entry to entry, without one they scroll.
+        SCROLL_LINE_DOWN: () => {
+          if (s().selection()) this.stepSelection(1, false);
+          else this.scrollPixels(this.rowH());
+        },
+        SCROLL_LINE_UP: () => {
+          if (s().selection()) this.stepSelection(-1, false);
+          else this.scrollPixels(-this.rowH());
+        },
+        // Marked text in the table goes first, the selected entry with the next Escape.
+        CLEAR_SELECTION: () => {
+          if (this.selectionInTable()) this.clearTextSelection();
+          else s().selection.set(null);
+        },
         // Prompt 007: errors, warnings and bookmarks in the view, the whole log and back.
         NEXT_ERROR: () => this.sessions.jumpToLevel(s(), 'error', true),
         PREV_ERROR: () => this.sessions.jumpToLevel(s(), 'error', false),
@@ -1192,6 +1273,17 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
       () => this.sessions.copySelection(s()),
       () => view() && !window.getSelection()?.toString() && !!s().selection(),
     );
+    const offSteps = this.actions.registerAll(
+      {
+        EXTEND_SELECTION_DOWN: () => this.stepSelection(1, true),
+        EXTEND_SELECTION_UP: () => this.stepSelection(-1, true),
+        // Enter: the detail panel for the selection (stays open when it is).
+        OPEN_DETAIL: () => {
+          if (!this.settings().detailVisible) this.settingsService.update({ detailVisible: true });
+        },
+      },
+      () => view() && !!s().selection(),
+    );
     const offMenu = this.actions.register(
       'OPEN_COLUMN_MENU',
       () => this.openMenu(this.lineNumbers() ? this.gutterWidth() : 0, this.headerH()),
@@ -1200,6 +1292,7 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
     return () => {
       off();
       offCopy();
+      offSteps();
       offMenu();
     };
   }

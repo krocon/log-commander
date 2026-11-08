@@ -41,8 +41,9 @@ export const README_TEXT = {
   GO_START: 'Go to the first line',
   SCROLL_PAGE_UP: 'One page up',
   SCROLL_PAGE_DOWN: 'One page down',
-  SCROLL_LINE_UP: 'One line up',
-  SCROLL_LINE_DOWN: 'One line down',
+  SCROLL_LINE_UP:
+    'With a selection: the previous entry (a stack trace is one), scrolled into view; without: one line up',
+  SCROLL_LINE_DOWN: 'With a selection: the next entry; without: one line down',
   NEXT_ERROR: 'Next error (ERROR, FATAL) in the view; the selection stays',
   PREV_ERROR: 'Previous error',
   NEXT_WARNING: 'Next warning or worse',
@@ -50,7 +51,10 @@ export const README_TEXT = {
   NEXT_BOOKMARK: 'Next bookmark',
   PREV_BOOKMARK: 'Previous bookmark',
   COPY_SELECTION: 'Copy the selected lines (marked text copies itself)',
-  CLEAR_SELECTION: 'Drop the selection',
+  CLEAR_SELECTION: 'Drop marked text in the log, then the selection',
+  EXTEND_SELECTION_UP: 'Extend the selection by one entry upwards (or shrink it)',
+  EXTEND_SELECTION_DOWN: 'Extend the selection by one entry downwards (or shrink it)',
+  OPEN_DETAIL: 'Detail panel for the selection (stays open when it is)',
   TOGGLE_BOOKMARK: 'Bookmark on the selected entry, or off again',
   EDIT_NOTE: 'Note on the selected entry (write, change, delete)',
   TOGGLE_FULL_LOG:

@@ -45,11 +45,28 @@ export function contentTopFromScrollbar(
 }
 
 /**
- * Every repaint of the table rebuilds the rows' DOM, which ends a mouse selection of text. While
- * the user holds a selection and does not follow, the view waits; the scroll bar is stale until then.
+ * Every repaint of the table rebuilds the rows' DOM, which ends a mouse selection of text. While the user drags
+ * out a selection in the table (or keeps the one he dragged) and does not follow, the view waits; the scroll bar
+ * is stale until then. Any other selection (left from a double click, made by a script, lying elsewhere) must
+ * never freeze the view.
  */
-export function holdForSelection(follow: boolean, selectionInTable: boolean): boolean {
-  return !follow && selectionInTable;
+export function holdForSelection(
+  follow: boolean,
+  selectionInTable: boolean,
+  userDrag: boolean,
+): boolean {
+  return !follow && selectionInTable && userDrag;
+}
+
+/** From this distance (px) on, a press of the mouse is a drag (marks text), below it a click. */
+export const DRAG_THRESHOLD_PX = 4;
+
+/**
+ * Whether the table's `draggingX`/`draggingY` of a press make it a drag. A drag marks text instead of selecting
+ * the entry (filter on marked text, copy); a hand that shakes a little still clicks.
+ */
+export function isDrag(draggingX: number, draggingY: number): boolean {
+  return Math.hypot(draggingX, draggingY) >= DRAG_THRESHOLD_PX;
 }
 
 /** Width the text column needs: the widest text seen so far, at least the free width. */

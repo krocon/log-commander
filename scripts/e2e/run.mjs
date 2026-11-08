@@ -395,6 +395,8 @@ createInterface({ input: app.stdout }).on('line', (line) => {
   if (message.startsWith('PASS')) {
     passed++;
     console.log(`  ok  ${message.slice(5)}`);
+  } else if (message.startsWith('SKIP')) {
+    console.log(`  skip ${message.slice(5)}`);
   } else if (message.startsWith('ACTION')) {
     act(message.slice(7));
   } else if (message === 'DONE') {

@@ -577,6 +577,137 @@
     await waitFor('a single click changes the entry in the open panel', () =>
       panelText() === rowTexts()[0] && panelRange() === 'Zeile 1',
     );
+
+    // fix/zeilenauswahl: after a double click every plain click still selects (the word it marked goes, a stale
+    // text selection neither blocks a click nor holds the view), a drag keeps its text, the arrows step entries.
+    // Synthetic events have no default action: the word of a double click and a stale selection are made by hand.
+    const cellOf = (n) =>
+      rows().find((r) => Number(r.dataset.line) === n) ?? $(`app-log-table-view .lt-cell[data-line="${n}"]`);
+    const selectedLines = () =>
+      [...new Set($$('.lt-cell.selected').map((c) => Number(c.dataset.line)))].sort((a, b) => a - b).join(',');
+    const markedText = () => window.getSelection()?.toString() ?? '';
+    const markRange = (el) => {
+      const node = document.createTreeWalker(el, NodeFilter.SHOW_TEXT).nextNode();
+      const range = document.createRange();
+      range.setStart(node, 0);
+      range.setEnd(node, Math.min(10, node.length));
+      window.getSelection().removeAllRanges();
+      window.getSelection().addRange(range);
+    };
+    const pointer = (el, type, dx = 0, options = {}) => {
+      const r = el.getBoundingClientRect();
+      el.dispatchEvent(
+        new MouseEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          button: 0,
+          detail: 1,
+          clientX: r.left + 40 + dx,
+          clientY: r.top + r.height / 2,
+          ...options,
+        }),
+      );
+    };
+    const userClick = (el, options = {}) => {
+      for (const type of ['mousedown', 'mouseup', 'click']) pointer(el, type, 0, options);
+    };
+    press('d');
+    await waitFor('panel closed before the double click', () => !panel());
+    const stackHead = cellOf(5);
+    userClick(stackHead);
+    pointer(stackHead, 'mousedown', 0, { detail: 2 });
+    markRange(stackHead);
+    pointer(stackHead, 'mouseup', 0, { detail: 2 });
+    pointer(stackHead, 'click', 0, { detail: 2 });
+    pointer(stackHead, 'dblclick', 0, { detail: 2 });
+    await waitFor('double click opens the panel and leaves no word marked', () =>
+      panelRange() === 'Zeile 6–13' && selectedLines() === '5,6,7,8,9,10,11,12' && markedText() === '',
+    );
+    userClick(cellOf(0));
+    await waitFor('after a double click a single click selects another line, the panel follows', () =>
+      selectedLines() === '0' && panelRange() === 'Zeile 1',
+    );
+    markRange(cellOf(13));
+    userClick(cellOf(14));
+    await waitFor('a stale text selection in the table blocks no click and holds no drawing', () =>
+      selectedLines() === '14' && panelRange() === 'Zeile 15' && markedText() === '',
+    );
+    markRange(panelBody());
+    userClick(cellOf(13));
+    await waitFor('text marked in the detail panel blocks no click in the table', () =>
+      selectedLines() === '13' && panelRange() === 'Zeile 14',
+    );
+    userClick(cellOf(14));
+    await waitFor('back on the last entry', () => selectedLines() === '14');
+    // A drag as the table sees it: it reports `mouseDragging` (with draggingX) in an animation frame after the
+    // move. A window in the background gets no frames, then the drag is only checkable by hand.
+    const frame = () =>
+      new Promise((resolve) => {
+        requestAnimationFrame(() => resolve(true));
+        setTimeout(() => resolve(false), 1000);
+      });
+    const dragCell = cellOf(3);
+    pointer(dragCell, 'mousedown');
+    pointer(dragCell, 'mousemove', 30, { buttons: 1 });
+    if (await frame()) {
+      markRange(dragCell);
+      pointer(dragCell, 'mouseup', 30);
+      pointer(dragCell, 'click', 30);
+      await frame();
+      await sleep(200);
+      await waitFor('a drag keeps its marked text and the selected entry', () =>
+        selectedLines() === '14' && panelRange() === 'Zeile 15' && markedText().length > 0,
+      );
+    } else {
+      pointer(dragCell, 'mouseup', 30);
+      await report('SKIP drag in the table: no animation frames in this window (check by hand)');
+    }
+    // Marked text in the table for Escape, made once the press has settled (the table repaints after its mouseup,
+    // which would drop a range made earlier); the redraw after Escape has to happen before the check.
+    await sleep(300);
+    markRange(cellOf(3));
+    await waitFor('text is marked in the table', () => markedText().length > 0);
+    press('Escape');
+    await sleep(300);
+    await waitFor('Escape drops the marked text first, the entry stays', () =>
+      markedText() === '' && selectedLines() === '14' && panelRange() === 'Zeile 15',
+    );
+    press('Escape');
+    await sleep(300);
+    await waitFor('the next Escape drops the entry', () => selectedLines() === '');
+    userClick(cellOf(14));
+    await waitFor('the last entry is selected again', () => selectedLines() === '14' && panelRange() === 'Zeile 15');
+    // The arrows move the selection from entry to entry (the stack trace is one), Shift extends, Enter opens.
+    const arrowSteps = [
+      ['ArrowUp', {}, '13', 'Zeile 14'],
+      ['ArrowUp', {}, '5,6,7,8,9,10,11,12', 'Zeile 6–13'],
+      ['ArrowUp', {}, '4', 'Zeile 5'],
+      ['ArrowDown', {}, '5,6,7,8,9,10,11,12', 'Zeile 6–13'],
+      ['ArrowDown', {}, '13', 'Zeile 14'],
+      ['ArrowUp', { shiftKey: true }, '5,6,7,8,9,10,11,12,13', null],
+      ['ArrowUp', { shiftKey: true }, '4,5,6,7,8,9,10,11,12,13', null],
+      ['ArrowDown', { shiftKey: true }, '5,6,7,8,9,10,11,12,13', null],
+      ['ArrowDown', {}, '14', 'Zeile 15'],
+    ];
+    for (const [key, options, lines, range] of arrowSteps) {
+      press(key, options);
+      await sleep(150);
+      await waitFor(`${options.shiftKey ? 'Shift+' : ''}${key} selects ${lines}`, () =>
+        selectedLines() === lines && (range === null || panelRange() === range),
+      );
+    }
+    await waitFor('the arrows stopped following', () => status().includes('Pausiert'));
+    press('d');
+    await waitFor('panel closed for Enter', () => !panel());
+    press('Enter');
+    await waitFor('Enter opens the panel for the selection', () => panelRange() === 'Zeile 15');
+    press('Enter');
+    await sleep(150);
+    await waitFor('Enter again keeps it open', () => panelRange() === 'Zeile 15');
+    userClick(cellOf(0));
+    await waitFor('a click selects the first line again', () =>
+      panelText() === rowTexts()[0] && panelRange() === 'Zeile 1',
+    );
     const logTop = topLine();
     panelBody().focus();
     for (const key of ['ArrowDown', 'PageDown', 'End']) {

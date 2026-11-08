@@ -105,3 +105,25 @@ export function revealBelow(pos: ScrollPos, row: number, m: ViewMetrics): Scroll
   const line = Math.floor(wanted / m.rowH);
   return { top: line, subPx: wanted - line * m.rowH };
 }
+
+/**
+ * The position that brings rows `first`..`last` (an entry) into view with the least scrolling, or null if they
+ * are visible. An entry taller than the view shows its first row at the top. Fixed row height.
+ */
+export function revealRows(
+  pos: ScrollPos,
+  first: number,
+  last: number,
+  m: ViewMetrics,
+): ScrollPos | null {
+  const top = pos.top * m.rowH + pos.subPx;
+  const firstPx = first * m.rowH;
+  const lastPx = (Math.max(first, last) + 1) * m.rowH;
+  let wanted: number;
+  if (firstPx < top) wanted = firstPx;
+  else if (lastPx > top + m.viewportH) wanted = Math.min(firstPx, lastPx - m.viewportH);
+  else return null;
+  wanted = Math.max(0, wanted);
+  const line = Math.floor(wanted / m.rowH);
+  return { top: line, subPx: wanted - line * m.rowH };
+}
