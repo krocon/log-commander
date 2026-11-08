@@ -20,6 +20,7 @@
         "minHeight": 400,
         "resizable": true,
         "backgroundColor": "#14171c",
+        "visible": false,
         "dragDropEnabled": true,
         "backgroundThrottling": "disabled"
       }

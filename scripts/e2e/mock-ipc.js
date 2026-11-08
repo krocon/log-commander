@@ -1193,6 +1193,8 @@
     'plugin:event|listen': () => 1,
     'plugin:event|unlisten': () => null,
     'plugin:window|set_title': () => null,
+    // Prompt 020: the native window frame.
+    set_window_chrome: () => null,
   };
 
   window.isTauri = true;

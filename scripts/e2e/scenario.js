@@ -2003,6 +2003,63 @@
     remDialog().close();
     await waitFor('remote dialog closed', () => !remDialog());
 
+    // Prompt 020: colour schemes. Cmd/Ctrl+Alt+T opens the picker, arrows show a scheme at once, Esc goes back,
+    // Enter keeps it; the ERROR rows take the scheme's colours, the choice is stored.
+    const ONE_DARK = { bgApp: '#282c34', errorBg: '#42353d' }; // src/app/core/theme/themes/one-dark.json
+    const rootStyle = () => getComputedStyle(document.documentElement);
+    const picker = () => $('app-theme-picker dialog[open]');
+    const pickerGrid = () => $('app-theme-picker [role=listbox]');
+    const gridKey = (key) =>
+      (document.activeElement?.closest('app-theme-picker [role=listbox]')
+        ? document.activeElement
+        : pickerGrid()
+      ).dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+    const rgbOf = (hex) => `rgb(${[1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(', ')})`;
+    const schemeBefore = rootStyle().getPropertyValue('--bg-app').trim();
+    const openPicker = () =>
+      document.body.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 't', code: 'KeyT', altKey: true, metaKey: true, ctrlKey: true, bubbles: true }),
+      );
+    openPicker();
+    await waitFor(
+      'Cmd/Ctrl+Alt+T opens the colour scheme picker with all schemes',
+      () => picker() && $$('app-theme-picker .card').length === 18,
+    );
+    await waitFor('„System folgen“ is the chosen card', () => $('app-theme-picker .card.chosen')?.dataset.id === 'system');
+    const schemeTop = topLine();
+    gridKey('ArrowRight');
+    gridKey('ArrowRight');
+    await waitFor(
+      'arrow keys show One Dark at once (preview), the log does not move',
+      () =>
+        rootStyle().getPropertyValue('--bg-app').trim() === ONE_DARK.bgApp &&
+        $('app-theme-picker .card.chosen')?.dataset.id === 'one-dark' &&
+        (Number.isNaN(schemeTop) || topLine() === schemeTop),
+    );
+    picker().dispatchEvent(new Event('cancel', { cancelable: true }));
+    await waitFor(
+      'Esc closes the picker and goes back to the scheme before',
+      () => !picker() && rootStyle().getPropertyValue('--bg-app').trim() === schemeBefore,
+    );
+    openPicker();
+    await waitFor('picker open again', () => picker() && $('app-theme-picker .card.chosen'));
+    gridKey('ArrowRight');
+    gridKey('ArrowRight');
+    gridKey('Enter');
+    await waitFor(
+      'Enter keeps One Dark: data-theme, tokens inline',
+      () =>
+        !picker() &&
+        document.documentElement.dataset.theme === 'dark' &&
+        document.documentElement.style.getPropertyValue('--lv-error-bg') === ONE_DARK.errorBg,
+    );
+    await waitFor('an ERROR row has the colour of the scheme', () => {
+      const cell = $$('.lt-cell.lv-ERROR')[0];
+      return !cell || getComputedStyle(cell).backgroundColor === rgbOf(ONE_DARK.errorBg);
+    });
+    await sleep(800);
+    await act('expectsettings "themeSelection"|"fixed"|"one-dark"');
+
     await report('DONE');
   } catch (e) {
     await report(`FAIL ${e.message}`);

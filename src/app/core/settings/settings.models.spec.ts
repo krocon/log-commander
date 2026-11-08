@@ -13,15 +13,64 @@ describe('settings', () => {
   it('falls back to defaults for missing or broken values', () => {
     expect(mergeSettings(null)).toEqual(DEFAULT_SETTINGS);
     const broken = mergeSettings({
-      theme: 'pink' as never,
-      fontSize: 'x' as never,
-      recentFiles: 7 as never,
-      colorOverrides: null as never,
-    });
-    expect(broken.theme).toBe('system');
+      theme: 'pink',
+      fontSize: 'x',
+      recentFiles: 7,
+      colorOverrides: null,
+    } as never);
+    expect(broken.themeSelection).toEqual(DEFAULT_SETTINGS.themeSelection);
+    expect('theme' in broken).toBe(false);
     expect(broken.fontSize).toBe(DEFAULT_SETTINGS.fontSize);
     expect(broken.recentFiles).toEqual([]);
     expect(broken.colorOverrides).toEqual({});
+  });
+
+  it('migrates the old theme setting to a scheme selection (prompt 020)', () => {
+    const follow = { mode: 'system', theme: 'dark', light: 'light', dark: 'dark' };
+    expect(mergeSettings({ theme: 'system' } as never).themeSelection).toEqual(follow);
+    expect(mergeSettings({ theme: 'dark' } as never).themeSelection).toEqual({
+      ...follow,
+      mode: 'fixed',
+      theme: 'dark',
+    });
+    expect(mergeSettings({ theme: 'light' } as never).themeSelection).toEqual({
+      ...follow,
+      mode: 'fixed',
+      theme: 'light',
+    });
+    // a stored selection wins over a leftover old value
+    const fixed = {
+      mode: 'fixed',
+      theme: 'matrix',
+      light: 'true-light',
+      dark: 'one-dark',
+    } as const;
+    const merged = mergeSettings({ theme: 'light', themeSelection: fixed } as never);
+    expect(merged.themeSelection).toEqual(fixed);
+    expect('theme' in merged).toBe(false);
+    // broken ids and modes fall back field by field
+    expect(
+      mergeSettings({
+        themeSelection: { mode: 'x', theme: 'Bad Id;', light: 7, dark: 'one-dark' },
+      } as never).themeSelection,
+    ).toEqual({ ...follow, dark: 'one-dark' });
+  });
+
+  it('keeps own level colours only as plain colours', () => {
+    const merged = mergeSettings({
+      colorOverrides: {
+        'lv-error-fg': '#ff0000',
+        'lv-warn-bg': 'rgb(1 2 3 / 50%)',
+        'lv-info-fg': 'red; background: url(x)',
+        'lv-fatal-bg': 'url(https://x)',
+        'bg-app': '#000000',
+        'lv-trace-fg': 'var(--text)',
+      },
+    });
+    expect(merged.colorOverrides).toEqual({
+      'lv-error-fg': '#ff0000',
+      'lv-warn-bg': 'rgb(1 2 3 / 50%)',
+    });
   });
 
   it('drops the settings of the removed own viewport', () => {

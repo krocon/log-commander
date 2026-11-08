@@ -6,22 +6,19 @@ import { DEFAULT_SETTINGS, Settings, addRecent, mergeSettings } from './settings
 const STORE_KEY = 'settings';
 const SAVE_DELAY_MS = 300;
 
-/** Settings as a signal, persisted with tauri-plugin-store; applies theme and colours. */
+/** Settings as a signal, persisted with tauri-plugin-store. The colour scheme puts the `ThemeService` on screen. */
 @Injectable({ providedIn: 'root' })
 export class SettingsService {
   private readonly store = isTauri() ? new LazyStore('settings.json', { autoSave: false }) : null;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
-  private loaded = false;
   readonly settings = signal<Settings>(DEFAULT_SETTINGS);
+  /** The stored settings are read (or could not be): the colour scheme is the user's from here on. */
+  readonly loaded = signal(false);
 
   constructor() {
-    effect(() => this.applyToDocument(this.settings()));
-    matchMedia('(prefers-color-scheme: light)').addEventListener('change', () =>
-      this.applyToDocument(this.settings()),
-    );
     effect(() => {
       const settings = this.settings();
-      if (this.loaded) this.scheduleSave(settings);
+      if (this.loaded()) this.scheduleSave(settings);
     });
   }
 
@@ -32,7 +29,7 @@ export class SettingsService {
     } catch (e) {
       console.warn('settings could not be loaded, using defaults', e);
     }
-    this.loaded = true;
+    this.loaded.set(true);
   }
 
   update(change: Partial<Settings>): void {
@@ -57,19 +54,5 @@ export class SettingsService {
         .then(() => store.save())
         .catch((e) => console.warn('settings could not be saved', e));
     }, SAVE_DELAY_MS);
-  }
-
-  private applyToDocument(settings: Settings): void {
-    const root = document.documentElement;
-    const dark =
-      settings.theme === 'dark' ||
-      (settings.theme === 'system' && !matchMedia('(prefers-color-scheme: light)').matches);
-    root.dataset['theme'] = dark ? 'dark' : 'light';
-    for (const name of [...root.style]) {
-      if (name.startsWith('--lv-')) root.style.removeProperty(name);
-    }
-    for (const [token, value] of Object.entries(settings.colorOverrides)) {
-      if (token.startsWith('lv-')) root.style.setProperty(`--${token}`, value);
-    }
   }
 }

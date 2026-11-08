@@ -312,6 +312,11 @@ export class LogApi {
     return call('copy_lines', { sessionId, first, last, view, viewId });
   }
 
+  /** Prompt 020: the native window frame (`#rrggbb`; `dark` null = appearance of the system); shows the window. */
+  setWindowChrome(color: string, dark: boolean | null): Promise<void> {
+    return call('set_window_chrome', { color, dark });
+  }
+
   setKeepOnRotate(sessionId: number, keep: boolean): Promise<void> {
     return call('set_keep_on_rotate', { sessionId, keep });
   }

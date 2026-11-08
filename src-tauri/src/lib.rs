@@ -54,6 +54,9 @@ const MENU_WORKSPACE_OPEN: &str = "workspace-open";
 const MENU_WORKSPACE_SAVE: &str = "workspace-save";
 const MENU_OPEN_SOURCE: &str = "open-source";
 const MENU_OPEN_REMOTE: &str = "open-remote";
+const MENU_COLOR_SCHEME: &str = "color-scheme";
+/// The window starts hidden (prompt 020) and is shown with the first colour scheme; at the latest then.
+const SHOW_FALLBACK: std::time::Duration = std::time::Duration::from_secs(1);
 
 pub fn run() {
     #[allow(unused_mut)] // changed by end-to-end runs (debug builds) only
@@ -74,10 +77,25 @@ pub fn run() {
         .plugin(tauri_plugin_cli::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::default().build())
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        // The window starts hidden until its colour scheme is on (prompt 020): restoring "visible" would
+        // show it before that.
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::all()
+                        - tauri_plugin_window_state::StateFlags::VISIBLE,
+                )
+                .build(),
+        )
         .manage(SessionManager::default())
         .manage(export::ExportJobs::default())
         .setup(|app| {
+            // Prompt 020: a frontend that never applies a scheme must not leave the window hidden.
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(SHOW_FALLBACK);
+                commands::show_main(&handle);
+            });
             // Dashboard databases (prompt 012) live in this process's cache folder; what a crashed
             // process left behind is removed here.
             match app.path().app_cache_dir() {
@@ -127,6 +145,8 @@ pub fn run() {
                 let _ = app.emit("menu-open-source", ());
             } else if event.id() == MENU_OPEN_REMOTE {
                 let _ = app.emit("menu-open-remote", ());
+            } else if event.id() == MENU_COLOR_SCHEME {
+                let _ = app.emit("menu-color-scheme", ());
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -187,6 +207,7 @@ pub fn run() {
             commands::db_preview,
             commands::db_tables,
             commands::forget_db_secret,
+            commands::set_window_chrome,
             #[cfg(debug_assertions)]
             e2e::e2e_report,
             #[cfg(debug_assertions)]
@@ -340,6 +361,22 @@ fn build_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<Men
                 .item(&workspace_save)
                 .build()?,
         )?,
+    }
+    // Prompt 020: View → Colour Scheme… opens the picker (Cmd/Ctrl+Alt+T in the frontend).
+    let scheme = MenuItem::with_id(
+        app,
+        MENU_COLOR_SCHEME,
+        "Colour Scheme…",
+        true,
+        Some("CmdOrCtrl+Alt+T"),
+    )?;
+    let view = menu.items()?.into_iter().find_map(|item| {
+        let submenu = item.as_submenu()?;
+        (submenu.text().ok()? == "View").then(|| submenu.clone())
+    });
+    match view {
+        Some(view) => view.insert(&scheme, 0)?,
+        None => menu.append(&SubmenuBuilder::new(app, "View").item(&scheme).build()?)?,
     }
     Ok(menu)
 }

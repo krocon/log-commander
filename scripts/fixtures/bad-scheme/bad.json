@@ -1,0 +1,10 @@
+{
+  "id": "bad",
+  "name": "Absichtlich schlecht",
+  "dark": true,
+  "tokens": {
+    "--text": "#2a2d33",
+    "--accent": "url(https://example.invalid/x)",
+    "--ge-table-bg": "#000000"
+  }
+}

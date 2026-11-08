@@ -13,6 +13,7 @@ import {
 } from '@angular/core';
 import { LEVELS, Level, SearchMode } from '../../core/log/log.models';
 import { MAX_FONT_SIZE, MIN_FONT_SIZE } from '../../core/settings/settings.models';
+import { ThemeService } from '../../core/theme/theme.service';
 import { SettingsService } from '../../core/settings/settings.service';
 import { formatCount } from '../../shared/format';
 import {
@@ -307,7 +308,15 @@ const SEARCH_DEBOUNCE_MS = 200;
       </select>
       <button type="button" title="Schrift kleiner" (click)="changeFont(-1)">A−</button>
       <button type="button" title="Schrift größer" (click)="changeFont(1)">A+</button>
-      <button type="button" [title]="'Theme: ' + themeLabel()" (click)="cycleTheme()">◐</button>
+      <button
+        type="button"
+        class="scheme"
+        [title]="'Farbschema: ' + themeLabel() + ' (⌘/Strg+Alt+T)'"
+        aria-haspopup="dialog"
+        (click)="theme.pickerOpen.set(true)"
+      >
+        ◐
+      </button>
       <button type="button" title="Einstellungen" (click)="openSettings.emit()">⚙</button>
     </div>
   `,
@@ -419,6 +428,7 @@ const SEARCH_DEBOUNCE_MS = 200;
 export class ToolbarComponent implements OnInit, OnDestroy {
   protected readonly sessions = inject(LogSessionService);
   private readonly settingsService = inject(SettingsService);
+  protected readonly theme = inject(ThemeService);
   protected readonly settings = this.settingsService.settings;
   protected readonly sidebar = inject(SidebarState);
 
@@ -454,9 +464,10 @@ export class ToolbarComponent implements OnInit, OnDestroy {
     columnsActive(this.settings().columnMode, this.session()?.columns() ?? null),
   );
 
+  /** Prompt 020: the scheme on screen, „System“ while following it. */
   protected readonly themeLabel = computed(() => {
-    const theme = this.settings().theme;
-    return theme === 'system' ? 'System' : theme === 'dark' ? 'Dunkel' : 'Hell';
+    const name = this.theme.active()?.name ?? '';
+    return this.theme.selection().mode === 'system' ? `System (${name})` : name;
   });
 
   protected readonly isAll = computed(() => {
@@ -657,11 +668,5 @@ export class ToolbarComponent implements OnInit, OnDestroy {
       Math.max(MIN_FONT_SIZE, this.settings().fontSize + step),
     );
     this.settingsService.update({ fontSize });
-  }
-
-  protected cycleTheme(): void {
-    const order = ['system', 'dark', 'light'] as const;
-    const next = order[(order.indexOf(this.settings().theme) + 1) % order.length];
-    this.settingsService.update({ theme: next });
   }
 }

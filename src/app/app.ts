@@ -37,6 +37,8 @@ import { SourceDialogComponent } from './features/sources/source-dialog';
 import { RemoteDialogComponent } from './features/remote/remote-dialog';
 import { WinEventDialogComponent } from './features/winevent/winevent-dialog';
 import { DatabaseDialogComponent } from './features/database/database-dialog';
+import { ThemePickerComponent } from './features/themes/theme-picker';
+import { ThemeService } from './core/theme/theme.service';
 import { SIDEBAR_MIN, sidebarMax, sidebarWidth } from './features/sidebar/sidebar-logic';
 import { SidebarState } from './features/sidebar/sidebar-state';
 import { StartScreenComponent } from './features/start/start-screen';
@@ -69,6 +71,7 @@ import { SplitterComponent } from './shared/splitter';
     SplitterComponent,
     StatusBarComponent,
     TabsComponent,
+    ThemePickerComponent,
     TimelineComponent,
     ToolbarComponent,
     WorkspaceDialogComponent,
@@ -170,6 +173,11 @@ import { SplitterComponent } from './shared/splitter';
       <div class="drop" aria-hidden="true"><span>Datei hier ablegen</span></div>
     }
     <!-- Rarely used dialogs load on first use (keeps the initial bundle under its budget). -->
+    @if (theme.pickerOpen()) {
+      @defer (on immediate) {
+        <app-theme-picker (closed)="theme.pickerOpen.set(false)" />
+      }
+    }
     @if (settingsOpen()) {
       @defer (on immediate) {
         <app-settings-dialog (closed)="settingsOpen.set(false)" />
@@ -343,6 +351,8 @@ import { SplitterComponent } from './shared/splitter';
 export class App implements OnInit, OnDestroy {
   protected readonly sessions = inject(LogSessionService);
   protected readonly settings = inject(SettingsService);
+  /** Prompt 020: created first, it puts the colour scheme on screen and shows the window. */
+  protected readonly theme = inject(ThemeService);
   protected readonly sidebar = inject(SidebarState);
   /** Prompt 015; created here so `.lcw` paths open as workspaces from everywhere. */
   protected readonly workspaceService = inject(WorkspaceService);
@@ -417,6 +427,7 @@ export class App implements OnInit, OnDestroy {
     this.cleanups.push(await listen('menu-export', () => this.openExport()));
     this.cleanups.push(await listen('menu-open-source', () => this.openSource()));
     this.cleanups.push(await listen('menu-open-remote', () => this.openRemote()));
+    this.cleanups.push(await listen('menu-color-scheme', () => this.theme.pickerOpen.set(true)));
     this.cleanups.push(
       await listen('menu-workspace-open', () => void this.workspaceService.open()),
     );
@@ -500,6 +511,12 @@ export class App implements OnInit, OnDestroy {
     const mod = event.metaKey || event.ctrlKey;
     if (!mod) return;
     const key = event.key.toLowerCase();
+    // Prompt 020: the colour scheme picker. `code`, because Alt changes `key` on macOS (Alt+T = †).
+    if (event.code === 'KeyT' && event.altKey && !event.shiftKey) {
+      event.preventDefault();
+      this.theme.pickerOpen.set(true);
+      return;
+    }
     if (key === 'o') {
       event.preventDefault();
       if (event.shiftKey) this.pathDialogOpen.set(true);

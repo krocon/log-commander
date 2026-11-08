@@ -19,9 +19,9 @@ import {
   MIN_FONT_SIZE,
   MAX_SPOOL_LIMIT_MB,
   MIN_SPOOL_LIMIT_MB,
-  ThemeChoice,
 } from '../../core/settings/settings.models';
 import { SettingsService } from '../../core/settings/settings.service';
+import { ThemeService } from '../../core/theme/theme.service';
 import { LogSessionService } from '../sessions/log-session.service';
 import { formatMapping, newProfileId, parseMapping } from './profile-logic';
 import { draftFromInference, parseLayouts } from '../sessions/format-logic';
@@ -38,16 +38,15 @@ import { draftFromInference, parseLayouts } from '../sessions/format-logic';
       <div class="body">
         <section>
           <h3>Darstellung</h3>
-          <label>
-            Theme
-            <select (change)="setTheme($event)">
-              <option value="system" [selected]="settings().theme === 'system'">
-                System folgen
-              </option>
-              <option value="dark" [selected]="settings().theme === 'dark'">Dunkel</option>
-              <option value="light" [selected]="settings().theme === 'light'">Hell</option>
-            </select>
-          </label>
+          <div class="scheme-row">
+            <span>
+              Farbschema:
+              <strong>{{ schemeName() }}</strong>
+            </span>
+            <button type="button" aria-haspopup="dialog" (click)="theme.pickerOpen.set(true)">
+              Farbschema wählen …
+            </button>
+          </div>
           <label>
             Schriftgröße
             <input
@@ -114,7 +113,7 @@ import { draftFromInference, parseLayouts } from '../sessions/format-logic';
         </section>
 
         <section>
-          <h3>Farben</h3>
+          <h3>Eigene Level-Farben (über jedem Farbschema)</h3>
           <div class="colors">
             @for (item of colorTokens; track item.token) {
               <label>
@@ -274,6 +273,14 @@ import { draftFromInference, parseLayouts } from '../sessions/format-logic';
       margin-bottom: 8px;
       font-size: 12px;
     }
+    .scheme-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 8px;
+      font-size: 12px;
+    }
     label.check {
       flex-direction: row;
       align-items: center;
@@ -389,8 +396,16 @@ export class SettingsDialogComponent implements OnInit {
     () => this.sessions.active()?.columns()?.inferredLayout ?? null,
   );
 
+  /** Prompt 020: the scheme is chosen in the picker; here its name. */
+  protected readonly theme = inject(ThemeService);
+  protected readonly schemeName = computed(() => {
+    const name = this.theme.active()?.name ?? '';
+    return this.theme.selection().mode === 'system' ? `System folgen (${name})` : name;
+  });
+
   private readonly computedColors = computed(() => {
     this.settings();
+    this.theme.applied();
     return getComputedStyle(document.documentElement);
   });
 
@@ -418,12 +433,6 @@ export class SettingsDialogComponent implements OnInit {
       this.sessions.showError(toAppError(e));
     }
     await this.loadKept();
-  }
-
-  protected setTheme(event: Event): void {
-    this.settingsService.update({
-      theme: (event.target as HTMLSelectElement).value as ThemeChoice,
-    });
   }
 
   protected setFont(event: Event): void {
