@@ -27,6 +27,7 @@ import { LogSessionService } from '../sessions/log-session.service';
 import { formatSummary } from '../sessions/format-logic';
 import { columnsActive, columnsAvailable } from '../log-table/columns-logic';
 import { SidebarState } from '../sidebar/sidebar-state';
+import { ActionService } from '../../core/actions/action.service';
 import { isVisible, onlySource, sourceColor, toggleSource } from '../merge/merge-logic';
 
 const SEARCH_DEBOUNCE_MS = 200;
@@ -44,8 +45,8 @@ const SEARCH_DEBOUNCE_MS = 200;
         [attr.aria-pressed]="sidebar.shown()"
         [title]="
           sidebar.shown()
-            ? 'Seitenleiste ausblenden (⌘/Strg+B)'
-            : 'Seitenleiste: Dateien, Filter, Statistik (⌘/Strg+B)'
+            ? 'Seitenleiste ausblenden' + actions.hint('TOGGLE_SIDEBAR')
+            : 'Seitenleiste: Dateien, Filter, Statistik' + actions.hint('TOGGLE_SIDEBAR')
         "
         (click)="sidebar.toggle()"
       >
@@ -126,8 +127,8 @@ const SEARCH_DEBOUNCE_MS = 200;
         [attr.aria-pressed]="s?.mode() === 'dashboard'"
         [title]="
           s?.mode() === 'dashboard'
-            ? 'Zurück zum Log (⌘/Strg+Shift+D)'
-            : 'Dashboard: Diagramme über die Zeit per SQL (⌘/Strg+Shift+D)'
+            ? 'Zurück zum Log' + actions.hint('TOGGLE_DASHBOARD')
+            : 'Dashboard: Diagramme über die Zeit per SQL' + actions.hint('TOGGLE_DASHBOARD')
         "
         (click)="s && sessions.toggleDashboard(s)"
       >
@@ -138,7 +139,10 @@ const SEARCH_DEBOUNCE_MS = 200;
         class="export-button"
         aria-haspopup="dialog"
         [disabled]="!s"
-        title="Exportieren: Auswahl, Ansicht oder ganze Datei als TXT, CSV oder JSON Lines (⌘/Strg+Shift+E)"
+        [title]="
+          'Exportieren: Auswahl, Ansicht oder ganze Datei als TXT, CSV oder JSON Lines' +
+          actions.hint('EXPORT')
+        "
         (click)="s && sessions.exportRequest.set(s)"
       >
         ⤓ Export
@@ -203,7 +207,8 @@ const SEARCH_DEBOUNCE_MS = 200;
         [disabled]="!s || !!filterTabLimit()"
         [title]="
           filterTabLimit() ??
-          'Als Tab öffnen: das Ergebnis dieses Tabs in einem neuen Tab weiter filtern (⌘/Strg+Shift+T)'
+          'Als Tab öffnen: das Ergebnis dieses Tabs in einem neuen Tab weiter filtern' +
+            actions.hint('NEW_FILTER_TAB')
         "
         (click)="openFilterTab()"
       >
@@ -215,7 +220,10 @@ const SEARCH_DEBOUNCE_MS = 200;
         <button
           type="button"
           class="full-log"
-          title="Zurück zum gemerkten Filter, die gewählte Zeile bleibt (G)"
+          [title]="
+            'Zurück zum gemerkten Filter, die gewählte Zeile bleibt' +
+            actions.hint('TOGGLE_FULL_LOG')
+          "
           (click)="toggleFullLog()"
         >
           ↩ Zurück zum Filter
@@ -226,7 +234,10 @@ const SEARCH_DEBOUNCE_MS = 200;
         <button
           type="button"
           class="full-log"
-          title="Gewählte Zeile im ungefilterten Log zeigen, der Filter wird gemerkt (G)"
+          [title]="
+            'Gewählte Zeile im ungefilterten Log zeigen, der Filter wird gemerkt' +
+            actions.hint('TOGGLE_FULL_LOG')
+          "
           (click)="toggleFullLog()"
         >
           ⇱ Im Gesamtlog
@@ -237,14 +248,14 @@ const SEARCH_DEBOUNCE_MS = 200;
       <input
         #search
         type="search"
-        placeholder="Suchen … (⌘/Strg+F)"
+        data-action-field="search"
+        [placeholder]="'Suchen …' + actions.hint('FOCUS_SEARCH')"
         aria-label="Suchtext"
         [disabled]="!s"
         [class.invalid]="s?.searchError()"
         [title]="s?.searchError() ?? ''"
         [value]="s?.query()?.text ?? ''"
         (input)="onSearchInput(search.value)"
-        (keydown)="onSearchKey($event)"
       />
       <button
         type="button"
@@ -275,13 +286,18 @@ const SEARCH_DEBOUNCE_MS = 200;
       </select>
       <button
         type="button"
-        title="Vorheriger Treffer (Shift+Enter)"
+        [title]="'Vorheriger Treffer' + actions.hint('FIND_PREV')"
         [disabled]="!s"
         (click)="find(false)"
       >
         ▲
       </button>
-      <button type="button" title="Nächster Treffer (Enter)" [disabled]="!s" (click)="find(true)">
+      <button
+        type="button"
+        [title]="'Nächster Treffer' + actions.hint('FIND_NEXT')"
+        [disabled]="!s"
+        (click)="find(true)"
+      >
         ▼
       </button>
       @if (s?.findMessage(); as message) {
@@ -311,7 +327,7 @@ const SEARCH_DEBOUNCE_MS = 200;
       <button
         type="button"
         class="scheme"
-        [title]="'Farbschema: ' + themeLabel() + ' (⌘/Strg+Alt+T)'"
+        [title]="'Farbschema: ' + themeLabel() + actions.hint('COLOR_SCHEME')"
         aria-haspopup="dialog"
         (click)="theme.pickerOpen.set(true)"
       >
@@ -431,6 +447,8 @@ export class ToolbarComponent implements OnInit, OnDestroy {
   protected readonly theme = inject(ThemeService);
   protected readonly settings = this.settingsService.settings;
   protected readonly sidebar = inject(SidebarState);
+  protected readonly actions = inject(ActionService);
+  private offActions: () => void = () => undefined;
 
   readonly openSettings = output<void>();
 
@@ -495,20 +513,26 @@ export class ToolbarComponent implements OnInit, OnDestroy {
   }
 
   ngOnInit(): void {
-    document.addEventListener('keydown', this.onGlobalKey);
+    // Prompt 021: the search field's keys are actions (FIND_* act only in the field).
+    this.offActions = this.actions.registerAll({
+      FOCUS_SEARCH: () => {
+        this.searchInput().nativeElement.focus();
+        this.searchInput().nativeElement.select();
+      },
+      FIND_NEXT: () => this.find(true),
+      FIND_PREV: () => this.find(false),
+      CLEAR_SEARCH: () => {
+        const input = this.searchInput().nativeElement;
+        input.value = '';
+        this.onSearchInput('');
+        input.blur();
+      },
+    });
   }
 
   ngOnDestroy(): void {
-    document.removeEventListener('keydown', this.onGlobalKey);
+    this.offActions();
   }
-
-  private readonly onGlobalKey = (event: KeyboardEvent): void => {
-    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'f') {
-      event.preventDefault();
-      this.searchInput().nativeElement.focus();
-      this.searchInput().nativeElement.select();
-    }
-  };
 
   protected count(level: Level): string {
     return formatCount(this.session()?.update().counts[level] ?? 0);
@@ -606,18 +630,6 @@ export class ToolbarComponent implements OnInit, OnDestroy {
       if (!session || session !== typedIn || session.presetRevision() !== revision) return;
       void this.sessions.setQuery(session, { ...session.query(), text });
     }, SEARCH_DEBOUNCE_MS);
-  }
-
-  protected onSearchKey(event: KeyboardEvent): void {
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      void this.find(!event.shiftKey);
-    } else if (event.key === 'Escape') {
-      const input = this.searchInput().nativeElement;
-      input.value = '';
-      this.onSearchInput('');
-      input.blur();
-    }
   }
 
   protected toggleRegex(): void {

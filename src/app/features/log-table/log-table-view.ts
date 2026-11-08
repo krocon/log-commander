@@ -38,6 +38,7 @@ import {
   visibleRowCount,
 } from './viewport-logic';
 import { LogSessionService } from '../sessions/log-session.service';
+import { ActionService } from '../../core/actions/action.service';
 import { labelWidth } from '../merge/merge-logic';
 import { ColumnMenuComponent } from './column-menu';
 import { RowMenuAction, RowMenuComponent, RowMenuItem, rowMenuItems } from './row-menu';
@@ -197,6 +198,8 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
   private readonly settingsService = inject(SettingsService);
   private readonly settings = this.settingsService.settings;
   private readonly sessions = inject(LogSessionService);
+  private readonly actions = inject(ActionService);
+  private offActions: () => void = () => undefined;
 
   protected readonly formatCount = formatCount;
   protected readonly fontSize = computed(() => this.settings().fontSize);
@@ -374,7 +377,7 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
     this.resizeObserver.observe(host);
     this.viewportH.set(host.clientHeight);
     this.viewportW.set(host.clientWidth);
-    document.addEventListener('keydown', this.onKey);
+    this.offActions = this.registerActions();
     document.addEventListener('selectionchange', this.onSelectionChange);
     (window as unknown as { __lcTable: unknown }).__lcTable = {
       drawTimes: this.drawTimes,
@@ -387,7 +390,7 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
     this.resizeObserver?.disconnect();
     window.removeEventListener('mouseup', this.onMouseUp, { capture: true });
     document.removeEventListener('mousedown', this.onOutsideMouseDown, { capture: true });
-    document.removeEventListener('keydown', this.onKey);
+    this.offActions();
     document.removeEventListener('selectionchange', this.onSelectionChange);
   }
 
@@ -1131,119 +1134,73 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
     });
   }
 
-  private readonly onKey = (event: KeyboardEvent): void => {
-    const target = event.target as HTMLElement;
-    if (target.closest?.('input, textarea, select, dialog, .lt-colmenu, .lt-rowmenu')) return;
-    // The detail panel, splitters, sidebar tree, statistics and timeline have their own keys; only D closes the panel there.
-    const inPanel = !!target.closest?.('.detail, [role=separator], [role=tree], .stats, .timeline');
-    if (inPanel && event.key !== 'd' && event.key !== 'D') return;
-    const session = this.session();
-    // Prompt 012: the dashboard lies over the log; its keys are its own.
-    if (session.mode() === 'dashboard') return;
-    const mod = event.metaKey || event.ctrlKey;
-    if (mod && event.key.toLowerCase() === 'c') {
-      if (!window.getSelection()?.toString() && session.selection()) {
-        event.preventDefault();
-        void this.sessions.copySelection(session);
-      }
-      return;
-    }
-    if (mod || event.altKey) return;
-    if ((event.key === 'F10' && event.shiftKey) || event.key === 'ContextMenu') {
-      if (!this.config().area.columnView) return;
-      event.preventDefault();
-      this.openMenu(this.lineNumbers() ? this.gutterWidth() : 0, this.headerH());
-      return;
-    }
-    const page = Math.max(this.rowH(), this.bodyH() - this.rowH());
-    switch (event.key) {
-      case 'End':
-      case 'f':
-      case 'F':
-        this.jumpToEnd();
-        break;
-      case ' ':
-        if (target.closest('button')) return;
-        if (session.follow()) session.setFollow(false);
-        else this.jumpToEnd();
-        break;
-      case 'p':
-      case 'P':
-        void this.sessions.toggleFreeze(session);
-        break;
-      case 't':
-      case 'T':
-        this.toggleColumnMode();
-        break;
-      case 'd':
-      case 'D':
-        this.settingsService.update({ detailVisible: !this.settings().detailVisible });
-        break;
-      // Prompt 014: the timeline above the log.
-      case 'z':
-      case 'Z':
-        this.settingsService.update({ showTimeline: !this.settings().showTimeline });
-        break;
-      case 'Home':
-        session.setFollow(false);
-        session.scroll.set({ top: 0, subPx: 0 });
-        break;
-      case 'PageDown':
-        this.scrollPixels(page);
-        break;
-      case 'PageUp':
-        this.scrollPixels(-page);
-        break;
-      case 'ArrowDown':
-        this.scrollPixels(this.rowH());
-        break;
-      case 'ArrowUp':
-        this.scrollPixels(-this.rowH());
-        break;
-      case 'Escape':
-        session.selection.set(null);
-        break;
-      // Prompt 007: errors, warnings and bookmarks in the view, the whole log and back.
-      case 'e':
-      case 'E':
-        void this.sessions.jumpToLevel(session, 'error', !event.shiftKey);
-        break;
-      case 'w':
-      case 'W':
-        void this.sessions.jumpToLevel(session, 'warn', !event.shiftKey);
-        break;
-      case 'n':
-      case 'N':
-        void this.sessions.jumpToBookmark(session, !event.shiftKey);
-        break;
-      case 'm':
-      case 'M':
-        // Prompt 015: Shift+M writes a note on the entry.
-        if (event.shiftKey) this.sessions.openNote(session);
-        else this.sessions.toggleBookmark(session);
-        break;
-      case 'g':
-      case 'G':
-        void this.sessions.toggleFullLog(session);
-        break;
-      // Prompt 010: marked text into the filter tree (Shift: exclude it), sections from the selection.
-      case 'i':
-      case 'I':
-        this.sessions.filterOnText(
-          session,
-          window.getSelection()?.toString() ?? '',
-          event.shiftKey,
-        );
-        break;
-      case '>':
-        this.sessions.filterSection(session, 'from');
-        break;
-      case '<':
-        this.sessions.filterSection(session, 'to');
-        break;
-      default:
-        return;
-    }
-    event.preventDefault();
-  };
+  /**
+   * Prompt 021: the keys of the log are actions; the dispatcher decides where they act (not in fields, dialogs,
+   * menus or the widgets with own keys). The dashboard lies over the log (prompt 012): its keys are its own.
+   */
+  private registerActions(): () => void {
+    const view = () => this.session().mode() !== 'dashboard';
+    const page = () => Math.max(this.rowH(), this.bodyH() - this.rowH());
+    const s = () => this.session();
+    const off = this.actions.registerAll(
+      {
+        FOLLOW_END: () => this.jumpToEnd(),
+        TOGGLE_FOLLOW: () => {
+          if (s().follow()) s().setFollow(false);
+          else this.jumpToEnd();
+        },
+        TOGGLE_FREEZE: () => this.sessions.toggleFreeze(s()),
+        TOGGLE_COLUMNS: () => this.toggleColumnMode(),
+        TOGGLE_DETAIL: () =>
+          this.settingsService.update({ detailVisible: !this.settings().detailVisible }),
+        // Prompt 014: the timeline above the log.
+        TOGGLE_TIMELINE: () =>
+          this.settingsService.update({ showTimeline: !this.settings().showTimeline }),
+        GO_START: () => {
+          s().setFollow(false);
+          s().scroll.set({ top: 0, subPx: 0 });
+        },
+        SCROLL_PAGE_DOWN: () => this.scrollPixels(page()),
+        SCROLL_PAGE_UP: () => this.scrollPixels(-page()),
+        SCROLL_LINE_DOWN: () => this.scrollPixels(this.rowH()),
+        SCROLL_LINE_UP: () => this.scrollPixels(-this.rowH()),
+        CLEAR_SELECTION: () => s().selection.set(null),
+        // Prompt 007: errors, warnings and bookmarks in the view, the whole log and back.
+        NEXT_ERROR: () => this.sessions.jumpToLevel(s(), 'error', true),
+        PREV_ERROR: () => this.sessions.jumpToLevel(s(), 'error', false),
+        NEXT_WARNING: () => this.sessions.jumpToLevel(s(), 'warn', true),
+        PREV_WARNING: () => this.sessions.jumpToLevel(s(), 'warn', false),
+        NEXT_BOOKMARK: () => this.sessions.jumpToBookmark(s(), true),
+        PREV_BOOKMARK: () => this.sessions.jumpToBookmark(s(), false),
+        TOGGLE_BOOKMARK: () => this.sessions.toggleBookmark(s()),
+        // Prompt 015: a note on the entry.
+        EDIT_NOTE: () => this.sessions.openNote(s()),
+        TOGGLE_FULL_LOG: () => this.sessions.toggleFullLog(s()),
+        // Prompt 010: marked text into the filter tree (or excluded), sections from the selection.
+        FILTER_ON_TEXT: () =>
+          this.sessions.filterOnText(s(), window.getSelection()?.toString() ?? '', false),
+        FILTER_EXCLUDE_TEXT: () =>
+          this.sessions.filterOnText(s(), window.getSelection()?.toString() ?? '', true),
+        SECTION_FROM: () => this.sessions.filterSection(s(), 'from'),
+        SECTION_TO: () => this.sessions.filterSection(s(), 'to'),
+      },
+      view,
+    );
+    // Marked text copies itself (the WebView's own copy); only selected lines are ours.
+    const offCopy = this.actions.register(
+      'COPY_SELECTION',
+      () => this.sessions.copySelection(s()),
+      () => view() && !window.getSelection()?.toString() && !!s().selection(),
+    );
+    const offMenu = this.actions.register(
+      'OPEN_COLUMN_MENU',
+      () => this.openMenu(this.lineNumbers() ? this.gutterWidth() : 0, this.headerH()),
+      () => view() && this.config().area.columnView,
+    );
+    return () => {
+      off();
+      offCopy();
+      offMenu();
+    };
+  }
 }

@@ -31,6 +31,7 @@
 | Farbschemata neu erzeugen | `node scripts/theme-from-fnf.mjs --all [id] [--verbose]` (Rezepte `scripts/theme-recipes.json`) |
 | Screenshots für die Doku | `npm run build`, dann `node scripts/screenshots.mjs` (WebKit + IPC-Mock; `--schemes` nur Picker und je Schema ein Bild) |
 | Log-Generator | `node scripts/gen-log.mjs /tmp/app.log --rate 5000 [--format …] [--rotate-every N] [--truncate-every N] [--metrics]` (`--metrics`: `cpu= mem= took` für Prompt 011); Lücken (014): `--start ISO --pause-after N --pause MIN` |
+| README-Tabelle der Kürzel | `node scripts/keymap-table.mjs` (aus den Keymaps; `npm run check` prüft sie) |
 | Icons neu | `npx tauri icon src-tauri/icons/source/app-icon.svg -o src-tauri/icons` (danach `android/`, `ios/` löschen) |
 
 ## Layout
@@ -344,6 +345,14 @@ samples/                     Beispiel-Logs
   zum Format. CSV mit `'` vor Formel-Zellen. Ein `.lcw` ist fremde Eingabe: `parseWorkspace` prüft alles, Backend liest
   und schreibt nur `.lcw`. Lesezeichen/Notizen gehören zur Datei, Anker = Zeile + Offset + Länge + Hash der ersten 256 Byte.
   Details und Grenzen: `prompts/done/015-export-und-arbeitsstand.design.md`.
+
+- **Tastenkürzel nur über Katalog und Keymaps (Prompt 021).** Neue Kürzel: Aktion in `action-catalog.ts`, Default in
+  `keymaps/*.json`, Handler per `ActionService.register`, nie ein eigener `keydown`-Handler am `document`. Lokale Tasten von
+  Widgets (Baum, Zeitstrahl, Splitter, Panels, Menüs, Dialoge, Diagramm) bleiben am Element; der Dispatcher lässt `view`-Aktionen
+  dort aus (`OWN_KEYS`). Satzzeichen kommen aus `key` ohne Shift (`?` ist `?` auf jedem Layout), Buchstaben aus `key` mit
+  `code`-Rückfall (⌥ unter macOS), Ziffern aus `code`. Unter macOS ist `Mod` ⌘ und `Ctrl` die echte Control-Taste
+  (Tabwechsel `Ctrl+Tab`, ⌘Tab gehört dem System); „Close Window“ ist aus dem macOS-Menü entfernt, ⌘W schließt den Tab.
+  Der Lazy-Chunk `engine.ts` hält das Startbundle unter 1 MB: bis er geladen ist (ms nach dem Start), tun Tasten nichts.
 
 ## Arbeitsweise
 

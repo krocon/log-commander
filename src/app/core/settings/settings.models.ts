@@ -77,7 +77,19 @@ export interface Settings {
   savedSources: SavedSource[];
   /** Total size of one source's spool in MB (prompt 016); the oldest spool file goes beyond it. */
   spoolLimitMb: number;
+  /** Own shortcuts (prompt 021): only the actions that differ from the default keymap, `[]` = none. */
+  keymap: KeymapSetting;
 }
+
+export interface KeymapSetting {
+  version: 1;
+  bindings: Record<string, string[]>;
+}
+
+export const KEYMAP_VERSION = 1;
+const MAX_KEYMAP_ENTRIES = 200;
+const MAX_SHORTCUTS_PER_ACTION = 8;
+const MAX_SHORTCUT_LENGTH = 64;
 
 export const DEFAULT_SETTINGS: Settings = {
   themeSelection: DEFAULT_SELECTION,
@@ -102,6 +114,7 @@ export const DEFAULT_SETTINGS: Settings = {
   fieldHints: [],
   savedSources: [],
   spoolLimitMb: 2048,
+  keymap: { version: KEYMAP_VERSION, bindings: {} },
 };
 
 export const MIN_FONT_SIZE = 9;
@@ -195,7 +208,55 @@ export function mergeSettings(saved: Partial<Settings> | null | undefined): Sett
   merged.spoolLimitMb = Number.isFinite(spool)
     ? Math.round(Math.min(MAX_SPOOL_LIMIT_MB, Math.max(MIN_SPOOL_LIMIT_MB, spool)))
     : DEFAULT_SETTINGS.spoolLimitMb;
+  merged.keymap = mergeKeymap(merged.keymap).keymap;
   return merged;
+}
+
+/**
+ * The stored shortcuts in shape (prompt 021): an id with a list of strings. Whether ids and shortcuts are valid
+ * is checked by `resolveKeymap`, which reports it. A broken value falls back to the defaults with a notice and
+ * never stops the start.
+ */
+export function mergeKeymap(raw: unknown): { keymap: KeymapSetting; notice: string | null } {
+  const empty = (): KeymapSetting => ({ version: KEYMAP_VERSION, bindings: {} });
+  if (raw === undefined || raw === null) return { keymap: empty(), notice: null };
+  const value = raw as { version?: unknown; bindings?: unknown };
+  if (
+    typeof raw !== 'object' ||
+    Array.isArray(raw) ||
+    value.version !== KEYMAP_VERSION ||
+    typeof value.bindings !== 'object' ||
+    value.bindings === null ||
+    Array.isArray(value.bindings)
+  ) {
+    return {
+      keymap: empty(),
+      notice: 'Die eigene Tastenbelegung ist nicht lesbar, es gelten die Vorgaben.',
+    };
+  }
+  const bindings: Record<string, string[]> = {};
+  let dropped = 0;
+  for (const [id, list] of Object.entries(value.bindings as Record<string, unknown>)) {
+    if (Object.keys(bindings).length >= MAX_KEYMAP_ENTRIES || id.length > MAX_SHORTCUT_LENGTH) {
+      dropped++;
+      continue;
+    }
+    if (!Array.isArray(list)) {
+      dropped++;
+      continue;
+    }
+    const strings = list.filter(
+      (s): s is string => typeof s === 'string' && s.length <= MAX_SHORTCUT_LENGTH,
+    );
+    if (strings.length !== list.length || strings.length > MAX_SHORTCUTS_PER_ACTION) dropped++;
+    bindings[id] = strings.slice(0, MAX_SHORTCUTS_PER_ACTION);
+  }
+  return {
+    keymap: { version: KEYMAP_VERSION, bindings },
+    notice: dropped
+      ? `${dropped} Einträge der eigenen Tastenbelegung waren nicht lesbar und gelten nicht.`
+      : null,
+  };
 }
 
 /** Own level colours: `lv-` tokens with a plain colour only (they end up in the style of `<html>`). */

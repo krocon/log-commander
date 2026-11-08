@@ -47,6 +47,10 @@ import { TabsComponent } from './features/tabs/tabs';
 import { TimelineComponent } from './features/timeline/timeline';
 import { ToolbarComponent } from './features/toolbar/toolbar';
 import { SplitterComponent } from './shared/splitter';
+import { ActionService } from './core/actions/action.service';
+import type { ActionId } from './core/actions/action-catalog';
+import { ShortcutDialogComponent } from './features/shortcuts/shortcut-dialog';
+import { SessionState } from './features/sessions/session-state';
 
 @Component({
   selector: 'app-root',
@@ -63,6 +67,7 @@ import { SplitterComponent } from './shared/splitter';
     OpenPathDialogComponent,
     OverviewRulerComponent,
     SettingsDialogComponent,
+    ShortcutDialogComponent,
     SidebarComponent,
     SourceDialogComponent,
     RemoteDialogComponent,
@@ -180,7 +185,16 @@ import { SplitterComponent } from './shared/splitter';
     }
     @if (settingsOpen()) {
       @defer (on immediate) {
-        <app-settings-dialog (closed)="settingsOpen.set(false)" />
+        <app-settings-dialog
+          (closed)="settingsOpen.set(false)"
+          (openShortcuts)="shortcutsOpen.set('edit')"
+        />
+      }
+    }
+    @if (shortcutsOpen(); as mode) {
+      <!-- Prompt 021: view, record, remove and reset shortcuts. -->
+      @defer (on immediate) {
+        <app-shortcut-dialog [startMode]="mode" (closed)="shortcutsOpen.set(null)" />
       }
     }
     @if (pathDialogOpen()) {
@@ -359,6 +373,9 @@ export class App implements OnInit, OnDestroy {
 
   protected readonly active = computed(() => this.sessions.active());
   protected readonly settingsOpen = signal(false);
+  /** Prompt 021: the shortcut editor, `read` as an overview (`?`). */
+  protected readonly shortcutsOpen = signal<'edit' | 'read' | null>(null);
+  private readonly actions = inject(ActionService);
   protected readonly pathDialogOpen = signal(false);
   protected readonly mergeDialogOpen = signal(false);
   protected readonly dropActive = signal(false);
@@ -416,23 +433,26 @@ export class App implements OnInit, OnDestroy {
   }
 
   async ngOnInit(): Promise<void> {
-    document.addEventListener('keydown', this.onKey);
+    // Prompt 021: the one keyboard handler; the shortcuts of the app are actions.
+    this.cleanups.push(this.actions.attach(document));
+    this.cleanups.push(this.registerActions());
+    this.actions.reportError = (message) => this.sessions.showError(message);
+    const engine = this.actions.load();
     await this.settings.load();
+    await engine;
+    const notice = this.actions.startNotice();
+    if (notice) this.sessions.showError(notice);
     if (!isTauri()) return;
     await this.sessions.refreshProfiles();
     await this.sessions.loadWineventSupport();
-    this.cleanups.push(await listen('menu-open', () => this.openFile()));
-    this.cleanups.push(await listen('menu-open-path', () => this.pathDialogOpen.set(true)));
-    this.cleanups.push(await listen('menu-merge', () => this.mergeDialogOpen.set(true)));
-    this.cleanups.push(await listen('menu-export', () => this.openExport()));
-    this.cleanups.push(await listen('menu-open-source', () => this.openSource()));
-    this.cleanups.push(await listen('menu-open-remote', () => this.openRemote()));
-    this.cleanups.push(await listen('menu-color-scheme', () => this.theme.pickerOpen.set(true)));
+    // Menu entries are actions too; their accelerators follow the keymap (ActionService).
     this.cleanups.push(
-      await listen('menu-workspace-open', () => void this.workspaceService.open()),
-    );
-    this.cleanups.push(
-      await listen('menu-workspace-save', () => void this.workspaceService.save()),
+      await listen<string>('menu-action', (event) => {
+        const id = event.payload;
+        if (typeof id === 'string' && this.actions.engine()?.isActionId(id)) {
+          this.actions.run(id as ActionId, 'menu');
+        }
+      }),
     );
     this.cleanups.push(
       await getCurrentWebview().onDragDropEvent((event) => {
@@ -452,8 +472,40 @@ export class App implements OnInit, OnDestroy {
 
   ngOnDestroy(): void {
     this.workspaceObserver?.disconnect();
-    document.removeEventListener('keydown', this.onKey);
     for (const cleanup of this.cleanups) cleanup();
+  }
+
+  /** The actions of the app shell: open, tabs, layout, dialogs. */
+  private registerActions(): () => void {
+    const withSession = (run: (session: SessionState) => unknown) => () => {
+      const session = this.sessions.active();
+      if (session) void run(session);
+    };
+    return this.actions.registerAll({
+      OPEN_FILE: () => this.openFile(),
+      OPEN_PATH: () => this.pathDialogOpen.set(true),
+      OPEN_SOURCE: () => this.openSource(),
+      OPEN_REMOTE: () => this.openRemote(),
+      MERGE_FILES: () => this.mergeDialogOpen.set(true),
+      EXPORT: () => this.openExport(),
+      OPEN_WORKSPACE: () => this.workspaceService.open(),
+      SAVE_WORKSPACE: () => this.workspaceService.save(),
+      OPEN_SETTINGS: () => this.settingsOpen.set(true),
+      CLOSE_TAB: () => {
+        const id = this.sessions.activeId();
+        if (id !== null) void this.sessions.close(id);
+      },
+      NEXT_TAB: () => this.sessions.cycle(1),
+      PREV_TAB: () => this.sessions.cycle(-1),
+      // Prompt 013: the result of the active tab as a new tab, to filter further there.
+      NEW_FILTER_TAB: withSession((s) => this.sessions.openFilterTab(s)),
+      TOGGLE_SIDEBAR: () => this.sidebar.toggle(),
+      // Prompt 012: log or dashboard of the active tab.
+      TOGGLE_DASHBOARD: withSession((s) => this.sessions.toggleDashboard(s)),
+      COLOR_SCHEME: () => this.theme.pickerOpen.set(true),
+      OPEN_SHORTCUTS: () => this.shortcutsOpen.set('edit'),
+      SHOW_SHORTCUTS: () => this.shortcutsOpen.set('read'),
+    });
   }
 
   protected commitWidth(width: number): void {
@@ -506,59 +558,4 @@ export class App implements OnInit, OnDestroy {
       console.warn('command line ignored', e);
     }
   }
-
-  private readonly onKey = (event: KeyboardEvent): void => {
-    const mod = event.metaKey || event.ctrlKey;
-    if (!mod) return;
-    const key = event.key.toLowerCase();
-    // Prompt 020: the colour scheme picker. `code`, because Alt changes `key` on macOS (Alt+T = †).
-    if (event.code === 'KeyT' && event.altKey && !event.shiftKey) {
-      event.preventDefault();
-      this.theme.pickerOpen.set(true);
-      return;
-    }
-    if (key === 'o') {
-      event.preventDefault();
-      if (event.shiftKey) this.pathDialogOpen.set(true);
-      else void this.openFile();
-    } else if (key === 'e' && event.shiftKey && !event.altKey) {
-      // Prompt 015: export.
-      event.preventDefault();
-      this.openExport();
-    } else if (key === 'm' && event.shiftKey) {
-      event.preventDefault();
-      this.mergeDialogOpen.set(true);
-    } else if (key === 'l' && event.shiftKey && !event.altKey) {
-      // Prompt 016: a source without a file.
-      event.preventDefault();
-      this.openSource();
-    } else if (key === 'h' && event.shiftKey && !event.altKey) {
-      // Prompt 017: a remote file over SSH/SFTP.
-      event.preventDefault();
-      this.openRemote();
-    } else if (key === 'w') {
-      event.preventDefault();
-      const id = this.sessions.activeId();
-      if (id !== null) void this.sessions.close(id);
-    } else if (event.key === 'Tab') {
-      event.preventDefault();
-      this.sessions.cycle(event.shiftKey ? -1 : 1);
-    } else if (key === 'b' && !event.shiftKey && !event.altKey) {
-      event.preventDefault();
-      this.sidebar.toggle();
-    } else if (key === 'd' && event.shiftKey && !event.altKey) {
-      // Prompt 012: log or dashboard of the active tab.
-      event.preventDefault();
-      const session = this.sessions.active();
-      if (session) this.sessions.toggleDashboard(session);
-    } else if (key === 't' && event.shiftKey && !event.altKey) {
-      // Prompt 013: the result of the active tab as a new tab, to filter further there.
-      event.preventDefault();
-      const session = this.sessions.active();
-      if (session) void this.sessions.openFilterTab(session);
-    } else if (key === ',') {
-      event.preventDefault();
-      this.settingsOpen.set(true);
-    }
-  };
 }

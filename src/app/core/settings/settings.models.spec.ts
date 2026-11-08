@@ -2,6 +2,7 @@ import { emptyTree } from '../../features/sessions/filter-tree';
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_SETTINGS,
+  mergeKeymap,
   MAX_RECENT_FILES,
   addRecent,
   mergeSettings,
@@ -345,5 +346,24 @@ describe('sources and spool (prompt 016)', () => {
     expect(mergeSettings({ spoolLimitMb: 1e9 }).spoolLimitMb).toBe(8192);
     expect(mergeSettings({ spoolLimitMb: 'x' as never }).spoolLimitMb).toBe(2048);
     expect(mergeSettings({ savedSources: 'x' as never }).savedSources).toEqual([]);
+  });
+
+  it('keeps the own shortcuts in shape, anything else falls back with a notice (prompt 021)', () => {
+    expect(mergeSettings(null).keymap).toEqual({ version: 1, bindings: {} });
+    const kept = mergeSettings({
+      keymap: { version: 1, bindings: { TOGGLE_FREEZE: ['K'], X: [] } },
+    });
+    expect(kept.keymap.bindings).toEqual({ TOGGLE_FREEZE: ['K'], X: [] });
+    expect(mergeKeymap(undefined).notice).toBeNull();
+    for (const broken of ['x', [], { version: 2, bindings: {} }, { version: 1, bindings: [] }]) {
+      const merged = mergeKeymap(broken);
+      expect(merged.keymap).toEqual({ version: 1, bindings: {} });
+      expect(merged.notice).toContain('nicht lesbar');
+    }
+    const partly = mergeKeymap({ version: 1, bindings: { A: 'K', B: ['K', 3], C: ['L'] } });
+    expect(partly.keymap.bindings).toEqual({ B: ['K'], C: ['L'] });
+    expect(partly.notice).toContain('2 Einträge');
+    const many = mergeKeymap({ version: 1, bindings: { A: Array(20).fill('K') } });
+    expect(many.keymap.bindings['A']).toHaveLength(8);
   });
 });
