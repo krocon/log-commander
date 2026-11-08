@@ -27,8 +27,9 @@
 | Windows-Code prüfen (macOS/Linux) | `npm run rust:check-windows` (clippy für x86_64-pc-windows-msvc und -gnu; nur Rust, C-Teile und Ressourcen durch Platzhalter, nichts gelinkt; vorher `rustup target add x86_64-pc-windows-msvc x86_64-pc-windows-gnu`) |
 | Syslog von Hand senden | `logger -n 127.0.0.1 -P 5514 -d "Hallo"` (UDP; macOS: `logger` kann kein `-n`, dann `echo '<11>test' \| nc -u -w0 127.0.0.1 5514`) |
 | Messung Merge 2 × 500 MB | `cd src-tauri && cargo test --release --test merge_integration -- --ignored --nocapture measure_merge` |
-| Kontrast WCAG AA | `npm run contrast` (prüft `src/styles.css`) |
-| Screenshots für die Doku | `npm run build`, dann `node scripts/screenshots.mjs` (WebKit + IPC-Mock) |
+| Kontrast WCAG AA | `npm run contrast` (dark/light aus `src/styles.css` und alle Schemata in `core/theme/themes/`) |
+| Farbschemata neu erzeugen | `node scripts/theme-from-fnf.mjs --all [id] [--verbose]` (Rezepte `scripts/theme-recipes.json`) |
+| Screenshots für die Doku | `npm run build`, dann `node scripts/screenshots.mjs` (WebKit + IPC-Mock; `--schemes` nur Picker und je Schema ein Bild) |
 | Log-Generator | `node scripts/gen-log.mjs /tmp/app.log --rate 5000 [--format …] [--rotate-every N] [--truncate-every N] [--metrics]` (`--metrics`: `cpu= mem= took` für Prompt 011); Lücken (014): `--start ISO --pause-after N --pause MIN` |
 | Icons neu | `npx tauri icon src-tauri/icons/source/app-icon.svg -o src-tauri/icons` (danach `android/`, `ios/` löschen) |
 
@@ -41,7 +42,10 @@ src/                         Angular 22 (zoneless, Signals, OnPush, Standalone)
   app/core/backend/call.ts   einzige Stelle mit invoke()
   app/core/errors/           AppError (Codes = Rust error.rs), Texte
   app/core/log/              LogApi, DTOs (= Rust model.rs)
-  app/core/settings/         SettingsService (tauri-plugin-store, wendet Theme/Farben an), reine Merge-Logik
+  app/core/settings/         SettingsService (tauri-plugin-store), reine Merge-Logik
+  app/core/theme/            ThemeService (Schema auf <html>, Fensterrahmen), Katalog tokens.ts, theme-logic, color,
+                             contrast-pairs.json, themes/*.json (Lazy-Chunk), builtin-themes
+  app/features/themes/       Picker mit Vorschaubildern (theme-picker, theme-thumb, theme-picker-logic)
   app/features/sessions/     LogSessionService (Tabs, alle Aktionen), SessionState (je Tab), PageCache, filter-logic,
                              filter-tree (Filterbaum: Knoten, Verschieben, zu FilterExpr kompilieren),
                              format-logic (Spalten, Formattext), navigation-logic (Lesezeichen, Sprung, Gesamtlog),
@@ -313,6 +317,10 @@ samples/                     Beispiel-Logs
 - **Grenzen Dashboard:** 10 000 Zeilen/32 MB je Ergebnis, 10 s je Abfrage, 64 KB SQL, 64 KB je Wert, 50 Spalten, Text-Felder auf
   1 KB gekürzt, 24 Panels, 24 Reihen je Diagramm, über 5000 Punkte wird ein größeres `bucket` vorgeschlagen. Nur die
   ganze Datei, nicht die gefilterte Ansicht.
+- **Farbschemata (Prompt 020):** `styles.css` bleibt Quelle für dark und light, andere Schemata sind JSON mit nur den
+  Abweichungen und ein Lazy-Chunk (Startbundle kennt nur Ids, `BUILT_IN_DARK`). Kontrast wird beim Erzeugen angepasst
+  (`theme-from-fnf.mjs`), nie zur Laufzeit. Fenster startet unsichtbar, `set_window_chrome` zeigt es (Rust-Fallback 1 s);
+  bei „System folgen“ bleibt das Erscheinungsbild des Rahmens beim System, sonst folgt `prefers-color-scheme` nicht mehr.
 - **Grenzen:** höchstens 2³² Zeilen je Sitzung (Index dann 64 GB), Anzeige 128 KB je Zeile, Suche 1 MB je Zeile, Zeile ohne
   Ende wird bei 16 MB geteilt, Detail-Panel 1 MiB je Eintrag (Formatieren bis 256 KB). Felder: höchstens 12 Spalten aus JSON-/logfmt-Schlüsseln bzw. FIX-Tags, zerlegt werden 16 KB. Zeitstrahl: Zahlen je Eimer
   angenähert (gleichverteilt im Abschnitt), Ausfälle innerhalb eines Abschnitts nur auf eine Probe genau.

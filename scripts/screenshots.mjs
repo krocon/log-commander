@@ -2,7 +2,7 @@
 // Screenshots for the docs: the production frontend in Playwright's WebKit with a small IPC mock
 // (scripts/e2e/mock-ipc.js) fed from samples/. `npm run build` first. Writes docs/screenshots/.
 import { createServer } from 'node:http';
-import { mkdirSync, readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync } from 'node:fs';
 import { extname, join, normalize } from 'node:path';
 import { webkit } from 'playwright';
 import { makeEntry } from './gen-log.mjs';
@@ -39,10 +39,10 @@ const files = {
 // Prompt 016: what a syslog source received (the mock's spool).
 const received = readFileSync(join(root, 'samples/syslog-received.log'), 'utf8');
 
-async function page(browser, { theme, withFiles = true, only = null, extra = {} }) {
+async function page(browser, { theme, withFiles = true, only = null, extra = {}, scale = 2 }) {
   const context = await browser.newContext({
     viewport: { width: 1240, height: 680 },
-    deviceScaleFactor: 2,
+    deviceScaleFactor: scale,
     colorScheme: theme,
   });
   const p = await context.newPage();
@@ -65,6 +65,47 @@ const shot = async (p, name) => {
   await p.waitForTimeout(600);
   await p.screenshot({ path: join(outDir, `${name}.png`) });
 };
+
+// Colour schemes (prompt 020): the picker, then one picture per built-in scheme in docs/screenshots/schemes/
+// (scale 1, a log with a selected row and search hits). `--schemes` takes only these pictures.
+{
+  const schemeIds = readdirSync(join(root, 'src/app/core/theme/themes'))
+    .map((f) => f.replace(/\.json$/, ''))
+    .filter((id) => id !== 'dark' && id !== 'light');
+  mkdirSync(join(outDir, 'schemes'), { recursive: true });
+  const picker = await page(browser, { theme: 'dark' });
+  await picker.click('.tab .title >> text=app.log');
+  await picker.click('button.scheme');
+  await picker.waitForSelector('app-theme-picker .card[data-id=one-dark]');
+  await picker.waitForTimeout(200);
+  await picker.keyboard.press('ArrowRight');
+  await picker.keyboard.press('ArrowRight');
+  await picker.waitForTimeout(300);
+  await shot(picker, 'scheme-picker');
+  await picker.context().close();
+  for (const id of schemeIds) {
+    const p = await page(browser, {
+      theme: 'dark',
+      scale: 1,
+      extra: {
+        settings: { themeSelection: { mode: 'fixed', theme: id, light: 'light', dark: 'dark' } },
+      },
+    });
+    await p.click('.tab .title >> text=app.log');
+    await p.selectOption('select[aria-label=Suchmodus]', 'highlight');
+    await p.fill('input[type=search]', 'order');
+    await p.waitForTimeout(350);
+    await p.keyboard.press('Enter');
+    await p.evaluate(() => document.activeElement?.blur());
+    await shot(p, `schemes/${id}`);
+    await p.context().close();
+  }
+  if (process.argv.includes('--schemes')) {
+    await browser.close();
+    server.close();
+    process.exit(0);
+  }
+}
 
 const dark = await page(browser, { theme: 'dark' });
 await dark.click('.tab .title >> text=app.log');

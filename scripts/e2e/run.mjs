@@ -337,6 +337,22 @@ function act(action) {
       }
       break;
     }
+    case 'expectsettings': {
+      // Prompt 020: what the app stored in its settings store (survives a restart): `text|text…`.
+      const file = readdirSync(dir, { recursive: true }).find((f) =>
+        String(f).endsWith('settings.json'),
+      );
+      const content = file ? readFileSync(join(dir, String(file)), 'utf8') : '';
+      const missing = text.split('|').filter((w) => !content.includes(w));
+      if (!file || missing.length) {
+        console.error(`\nFAIL settings ${file ?? '(none)'} lack ${JSON.stringify(missing)}`);
+        finish(1);
+      } else {
+        passed++;
+        console.log(`  ok  the settings store holds ${text}`);
+      }
+      break;
+    }
     case 'expectnofile': {
       const leftovers = readdirSync(dir).filter((f) => f.includes(text));
       if (leftovers.length) {

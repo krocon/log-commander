@@ -68,8 +68,19 @@ Architektur verbaut nichts davon.
   Zeitlimit 30 s; TLS mit Prüfung als Vorgabe; „Tabelle wählen“, Vorschau 20 Zeilen, Tab `db:schema.tabelle`, letzte
   Abfrage und Dauer in der Statusleiste; Wiederverbinden 1–60 s ab letztem Schlüssel; Passwort wie 017; im Arbeitsstand
   ohne Passwort/CA-Datei und ohne Auto-Verbinden
+- Farbschemata (Prompt 020, Phase 1): 17 Schemata (dark, light, One Dark, One Dark Vivid, True Dark/Black/Light, Matrix,
+  Amber, Solarized Light, Mystico – C64, Crimson, fünf Rainglow), Picker mit Vorschaubildern, Filter und Live-Vorschau
+  (`Cmd/Ctrl+Alt+T`, Toolbar, Ansicht-Menü, Einstellungen), „System folgen“ mit wählbarem Paar, Fensterrahmen passend,
+  Start ohne Blitz, Kontrastprüfung aller Schemata (`npm run contrast`, Vitest)
 
 ## Offen
+
+**Farbschemata, Phase 2 von Prompt 020:** eigene Schemata bearbeiten (Editor mit Gruppen aus `tokens.ts`, Live-Vorschau,
+Kontrast-Hinweise je Paar, Speichern nur der Abweichungen über `diffTokens`), im Store unter `themes` (höchstens 50
+Schemata, 300 Tokens), Import über einen eigenen Command `import_theme` (256 KiB, Bereinigung mit `sanitizeTokens`,
+ausgewählt nur ohne Kontrastprobleme) und Export `export_theme` (`dialog:allow-save` ist schon da). Die reinen
+Funktionen dafür (`tokenValueOk`, `sanitizeTokens`, `diffTokens`, `checkContrast`) gibt es schon. Dazu ein
+„Solarized Dark“ als Partner für Solarized Light.
 
 **Dateien:** Rotierte Archive als durchgehende Timeline, `.gz`/`.zip`/`.zst` lesen, Ordner/Glob
 beobachten, `stdin`/Pipe-Modus.

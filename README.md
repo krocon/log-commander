@@ -165,7 +165,12 @@ Like <code>tail -f</code> with a GUI: millions of lines, instant filters, no wai
 - **Freeze** – holds a tab to read in peace: lines, counts and the position stay put while filters and search keep
   working. Resuming reads everything written in between.
 - **Comfort** – tabs with a red dot for new errors in the background, drag & drop, command line, recent files,
-  copying whole entries, dark and light themes that follow the system, adjustable colours.
+  copying whole entries, adjustable level colours.
+- **Colour schemes** – 17 schemes in a gallery with previews („◐“ in the toolbar, View → Colour Scheme… or
+  `Cmd/Ctrl+Alt+T`): dark and light plus One Dark, One Dark Vivid, True Dark, True Black, True Light, Matrix, Amber,
+  Solarized Light, Mystico – C64, Crimson and five Rainglow themes. Arrow keys show a scheme at once, `Enter` keeps it,
+  `Esc` goes back; „System folgen“ takes a light and a dark scheme of your choice. Every scheme passes WCAG AA, the
+  window frame follows it. See [docs/themes.md](docs/themes.md).
 - **Encodings** – UTF-8, UTF-16 by BOM, Latin-1 detection; invalid bytes never stop it. ANSI colours in logs are removed.
 
 | | |
@@ -177,7 +182,9 @@ Like <code>tail -f</code> with a GUI: millions of lines, instant filters, no wai
 | ![Fields dialog](docs/screenshots/fields.png) | ![Extracted columns](docs/screenshots/extracted.png) |
 | ![Dashboard](docs/screenshots/dashboard.png) | ![Dashboard with SQL and schema](docs/screenshots/dashboard-sql.png) |
 | ![Overview ruler on a busy log](docs/screenshots/ruler-dense.png) | ![The same in the light theme](docs/screenshots/ruler-dense-light.png) |
-| ![Filter tabs: a chain of filters](docs/screenshots/drilldown.png) | |
+| ![Filter tabs: a chain of filters](docs/screenshots/drilldown.png) | ![Colour scheme picker](docs/screenshots/scheme-picker.png) |
+| ![Scheme One Dark](docs/screenshots/schemes/one-dark.png) | ![Scheme Solarized Light](docs/screenshots/schemes/solarized-light.png) |
+| ![Scheme Matrix](docs/screenshots/schemes/matrix.png) | ![Scheme Mystico – C64](docs/screenshots/schemes/mystico-c64.png) |
 | ![Received syslog](docs/screenshots/syslog.png) | ![Opening a syslog source](docs/screenshots/source-dialog.png) |
 | ![Timeline with an outage and a marked window](docs/screenshots/timeline.png) | ![Timeline in the light theme](docs/screenshots/timeline-light.png) |
 | ![A remote file over SFTP](docs/screenshots/remote.png) | ![Remote dialog: browser and host key](docs/screenshots/remote-dialog.png) |
@@ -338,6 +345,7 @@ log-commander /var/log/app.log /var/log/other.log
 | `Cmd/Ctrl+C` | Copy the selected lines |
 | `Cmd/Ctrl+W`, `Ctrl+Tab` | Close a tab, next tab |
 | `Cmd/Ctrl+,` | Settings |
+| `Cmd/Ctrl+Alt+T` | Colour scheme picker (arrows try, `Enter` keeps, `Esc` goes back) |
 
 ## Development
 

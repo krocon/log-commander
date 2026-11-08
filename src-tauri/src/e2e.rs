@@ -72,6 +72,9 @@ pub fn keep_in_background(
     for window in &mut context.config_mut().app.windows {
         window.focus = false;
         window.always_on_bottom = true;
+        // Visible from the start (the app shows a hidden window with its colour scheme, prompt 020): showing
+        // it later could bring it to the front.
+        window.visible = true;
     }
     #[cfg(target_os = "macos")]
     let builder = builder.activate_ignoring_other_apps(false);

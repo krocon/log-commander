@@ -29,7 +29,8 @@ import {
   toggleNegate,
   toggleOp,
 } from '../sessions/filter-tree';
-import { ConditionDialogComponent, ConditionEdit } from './condition-dialog';
+import { ConditionDialogComponent } from './condition-dialog';
+import type { ConditionEdit } from './condition-dialog';
 import {
   TreeNode,
   buildTree,
@@ -224,11 +225,14 @@ import {
     </div>
     @if (condEdit(); as edit) {
       @if (sessionById(edit.sessionId); as session) {
-        <app-condition-dialog
-          [session]="session"
-          [edit]="edit.edit"
-          (closed)="onDialogClosed(edit.returnTo)"
-        />
+        <!-- Loaded on first use (keeps the initial bundle under its budget). -->
+        @defer (on immediate) {
+          <app-condition-dialog
+            [session]="session"
+            [edit]="edit.edit"
+            (closed)="onDialogClosed(edit.returnTo)"
+          />
+        }
       }
     }
   `,

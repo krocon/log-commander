@@ -1,6 +1,6 @@
 # Architektur
 
-Stand: Logs aus Datenbanken (Prompt 019), Windows-Ereignisprotokolle (Prompt 018), Remote-Dateien über SSH/SFTP (Prompt 017), Quellen ohne Datei mit Spool und Syslog-Empfang (Prompt 016), Export und Arbeitsstand (Prompt 015), Zeitstrahl (Prompt 014), Filter als eigener Tab (Prompt 013), Dashboard und SQL-Timeline (Prompt 012), Felder aus der Nachricht (Prompt 011), Verkettete Filter (Prompt 010), Overview Ruler und Navigation (Prompt 007), Dateien zusammenführen (Prompt 006), Seitenleiste (Prompt 005), Detail-Panel (Prompt 004), Spaltenansicht (Prompt 009) und Formaterkennung (Prompt 008) auf Basis des Startauftrags, des Flacker-Fixes (001), des Freeze-Buttons (002) und
+Stand: Farbschemata (Prompt 020), Logs aus Datenbanken (Prompt 019), Windows-Ereignisprotokolle (Prompt 018), Remote-Dateien über SSH/SFTP (Prompt 017), Quellen ohne Datei mit Spool und Syslog-Empfang (Prompt 016), Export und Arbeitsstand (Prompt 015), Zeitstrahl (Prompt 014), Filter als eigener Tab (Prompt 013), Dashboard und SQL-Timeline (Prompt 012), Felder aus der Nachricht (Prompt 011), Verkettete Filter (Prompt 010), Overview Ruler und Navigation (Prompt 007), Dateien zusammenführen (Prompt 006), Seitenleiste (Prompt 005), Detail-Panel (Prompt 004), Spaltenansicht (Prompt 009) und Formaterkennung (Prompt 008) auf Basis des Startauftrags, des Flacker-Fixes (001), des Freeze-Buttons (002) und
 der GuiExpert Table (003). Dieses Dokument beschreibt
 Entscheidungen, nicht Wünsche. Geplantes steht in `docs/roadmap.md` und in `prompts/`.
 
@@ -13,7 +13,8 @@ Entscheidungen, nicht Wünsche. Geplantes steht in `docs/roadmap.md` und in `pro
 │  LogSessionService (Root) ── Tabs, Aktionen, Fehleranzeige            │
 │   └ SessionState je Tab ── update, Filter, Scroll, Auswahl,           │
 │       displayedLines, PageCache (Seiten zu 200 Zeilen, max. 64)       │
-│  SettingsService ── tauri-plugin-store, Theme und Farben              │
+│  SettingsService ── tauri-plugin-store                                │
+│  ThemeService ── Farbschema auf <html>, Vorschau, Fensterrahmen       │
 │  LogApi ── call.ts: einzige Stelle mit invoke()                       │
 └──────┼───────────────────────────────────────────▲────────────────────┘
        │ Commands (get_lines, set_filter, find_*, …)│ Channel<SessionUpdate>
@@ -81,6 +82,7 @@ Entscheidungen, nicht Wünsche. Geplantes steht in `docs/roadmap.md` und in `pro
 
 | Thema | Entscheidung | Begründung |
 |---|---|---|
+| Farbschemata (Prompt 020) | `styles.css` bleibt Quelle für dark/light; 15 weitere Schemata als JSON mit nur den Abweichungen, als Lazy-Chunk; `ThemeService` setzt Katalog-Tokens inline auf `<html>`, darüber `colorOverrides`; Fenster startet unsichtbar, Command `set_window_chrome` setzt Rahmen und zeigt es (Fallback 1 s in Rust) | Kein zweiter Ort für die Grundwerte; Startbundle bleibt unter 1 MB; kein Blitz beim Start. Kontrast beim Erzeugen (`scripts/theme-from-fnf.mjs`) statt zur Laufzeit. Keine neue Abhängigkeit, keine neue Capability. Siehe `docs/themes.md`. |
 | Text im Speicher | Nein. Nur ein Index mit 16 Byte je Zeile, der Text wird bei Bedarf aus der Datei gelesen | Dateien mit vielen GB bleiben offen- und scrollbar. Grenze 2³² Zeilen je Sitzung (Index dann 64 GB). |
 | Ansicht | GuiExpert Table (`log-table-view.ts`, `LogAreaModel`), eigenes Scroll-Modell: Position = Zeile + Pixel-Offset (`viewport-logic.ts`), die Tabelle zeichnet sie mit `repaintHard({ px, py })` bzw. `scrollToPixel`. Feste Zeilenhöhe, kein Umbruch, Ziehen an der Scrollleiste wird auf eine Zeile umgerechnet | Die Tabelle kappt die Scrollhöhe bei 8 Mio. px; mit dem eigenen Modell wandert die Ansicht beim Anhängen nicht. Messwerte: `prompts/done/003-gui-expert-table.design.md`. |
 | Spaltenansicht | Dieselbe Tabelle mit ihrer Kopfzeile: je Feld aus `get_columns` eine Spalte, Zellen aus den Spannen (`cellSegments` schneidet die Segmente der Zeile, Treffer und Tokens bleiben). Fortsetzungs- und nicht zerlegte Zeilen spannen per Colspan ab der ersten sichtbaren Spalte. Layout (Reihenfolge, Breiten, ausgeblendet) je Profil in den Settings, Rohansicht per `T` | Kein zweiter Viewport; Breite und Reihenfolge zieht die Tabelle selbst. Kein Sortieren: die Ansicht ist nach Datei und Zeit geordnet und wächst live. Prompt 009. |

@@ -784,3 +784,76 @@ pub fn scripted_dialogs() -> bool {
 pub async fn probe_paths(paths: Vec<String>) -> AppResult<Vec<crate::workspace::PathProbe>> {
     blocking(move || crate::workspace::probe(&paths)).await
 }
+
+/// `#rrggbb` as its channels; anything else (short forms, names, `rgb()`, whitespace) is refused.
+pub fn parse_hex_rgb(color: &str) -> Option<(u8, u8, u8)> {
+    let hex = color.strip_prefix('#')?;
+    if hex.len() != 6 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    let channel = |i: usize| u8::from_str_radix(&hex[i..i + 2], 16).ok();
+    Some((channel(0)?, channel(2)?, channel(4)?))
+}
+
+/// Prompt 020: the window frame follows the colour scheme. `dark` forces the frame's appearance; `None`
+/// (follow the system) leaves it to the system, because the frame's appearance also sets the webview's
+/// `prefers-color-scheme` and a forced one would no longer follow the system. The window starts hidden
+/// (`visible: false`) so a light scheme does not flash dark; the first call shows it.
+#[tauri::command]
+pub fn set_window_chrome(app: AppHandle, color: String, dark: Option<bool>) -> AppResult<()> {
+    let (r, g, b) = parse_hex_rgb(&color)
+        .ok_or_else(|| AppError::new(ErrorCode::Unsupported, "not a #rrggbb colour"))?;
+    let Some(window) = app.get_webview_window("main") else {
+        return Ok(());
+    };
+    let io = |e: tauri::Error| AppError::new(ErrorCode::Io, e.to_string());
+    let theme = dark.map(|d| {
+        if d {
+            tauri::Theme::Dark
+        } else {
+            tauri::Theme::Light
+        }
+    });
+    window.set_theme(theme).map_err(io)?;
+    window
+        .set_background_color(Some(tauri::window::Color(r, g, b, 255)))
+        .map_err(io)?;
+    show_main(&app);
+    Ok(())
+}
+
+/// Shows the main window if it is still hidden (after the first scheme, or after a time limit).
+pub fn show_main(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        if !window.is_visible().unwrap_or(true) {
+            let _ = window.show();
+        }
+    }
+}
+
+#[cfg(test)]
+mod chrome_tests {
+    use super::parse_hex_rgb;
+
+    #[test]
+    fn only_six_digit_hex_is_a_window_colour() {
+        assert_eq!(parse_hex_rgb("#14171c"), Some((0x14, 0x17, 0x1c)));
+        assert_eq!(parse_hex_rgb("#FBFBFC"), Some((0xfb, 0xfb, 0xfc)));
+        for bad in [
+            "",
+            "#",
+            "14171c",
+            "#fff",
+            "#14171c00",
+            "#14171g",
+            " #14171c",
+            "#14171c ",
+            "red",
+            "rgb(1, 2, 3)",
+            "#ü1717",
+            "#+1+1+1",
+        ] {
+            assert_eq!(parse_hex_rgb(bad), None, "{bad:?}");
+        }
+    }
+}

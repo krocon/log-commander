@@ -9,8 +9,13 @@ import {
 } from '../log/log.models';
 import { FilterGroupNode, sanitizeTree } from '../../features/sessions/filter-tree';
 import { SavedSource, mergeSavedSources } from '../../features/sources/source-logic';
+import {
+  DEFAULT_SELECTION,
+  ThemeSelection,
+  isColorLiteral,
+  sanitizeSelection,
+} from '../theme/theme.models';
 
-export type ThemeChoice = 'system' | 'dark' | 'light';
 /** Column view (prompt 009) or the raw line. */
 export type ColumnMode = 'columns' | 'raw';
 
@@ -38,7 +43,8 @@ export interface SavedFilter {
 export const SAVED_FILTER_VERSION = 2;
 
 export interface Settings {
-  theme: ThemeChoice;
+  /** Colour scheme (prompt 020): fixed or following the system; replaces `theme` (system/dark/light). */
+  themeSelection: ThemeSelection;
   fontSize: number;
   showLineNumbers: boolean;
   /** Overview ruler right of the log (prompt 007). */
@@ -47,7 +53,7 @@ export interface Settings {
   showTimeline: boolean;
   /** After a rotation: keep the old file's lines above the new ones, or start over. */
   keepOnRotate: boolean;
-  /** CSS colour per token name without the `--` (e.g. `lv-error-fg`). */
+  /** CSS colour per token name without the `--` (e.g. `lv-error-fg`), over every colour scheme. */
   colorOverrides: Record<string, string>;
   customProfiles: Profile[];
   recentFiles: string[];
@@ -74,7 +80,7 @@ export interface Settings {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  theme: 'system',
+  themeSelection: DEFAULT_SELECTION,
   fontSize: 13,
   showLineNumbers: true,
   showOverviewRuler: true,
@@ -132,23 +138,25 @@ export const COLOR_TOKENS: readonly { token: string; level: Level | null; label:
   { token: 'lv-fatal-bg', level: 'FATAL', label: 'FATAL Hintergrund' },
 ];
 
-const LEGACY_KEYS = ['wrapLines', 'tableView'] as const;
+const LEGACY_KEYS = ['wrapLines', 'tableView', 'theme'] as const;
 
 /** Forgiving merge: unknown or broken values in the store fall back to the defaults. */
 export function mergeSettings(saved: Partial<Settings> | null | undefined): Settings {
   const merged: Settings = { ...DEFAULT_SETTINGS, ...(saved ?? {}) };
   // Gone with the own viewport (prompt 003): no wrapping, the table is the only view.
+  // Prompt 020: `theme` (system/dark/light) became `themeSelection`.
+  merged.themeSelection = sanitizeSelection(
+    (saved as Record<string, unknown> | null | undefined)?.['themeSelection'],
+    (saved as Record<string, unknown> | null | undefined)?.['theme'],
+  );
   for (const key of LEGACY_KEYS) delete (merged as unknown as Record<string, unknown>)[key];
-  if (!['system', 'dark', 'light'].includes(merged.theme)) merged.theme = DEFAULT_SETTINGS.theme;
   const size = Number(merged.fontSize);
   merged.fontSize = Number.isFinite(size)
     ? Math.min(MAX_FONT_SIZE, Math.max(MIN_FONT_SIZE, size))
     : DEFAULT_SETTINGS.fontSize;
   if (!Array.isArray(merged.recentFiles)) merged.recentFiles = [];
   if (!Array.isArray(merged.customProfiles)) merged.customProfiles = [];
-  if (typeof merged.colorOverrides !== 'object' || merged.colorOverrides === null) {
-    merged.colorOverrides = {};
-  }
+  merged.colorOverrides = mergeColorOverrides(merged.colorOverrides);
   if (merged.columnMode !== 'columns' && merged.columnMode !== 'raw') {
     merged.columnMode = DEFAULT_SETTINGS.columnMode;
   }
@@ -188,6 +196,18 @@ export function mergeSettings(saved: Partial<Settings> | null | undefined): Sett
     ? Math.round(Math.min(MAX_SPOOL_LIMIT_MB, Math.max(MIN_SPOOL_LIMIT_MB, spool)))
     : DEFAULT_SETTINGS.spoolLimitMb;
   return merged;
+}
+
+/** Own level colours: `lv-` tokens with a plain colour only (they end up in the style of `<html>`). */
+function mergeColorOverrides(saved: unknown): Record<string, string> {
+  if (typeof saved !== 'object' || saved === null || Array.isArray(saved)) return {};
+  const out: Record<string, string> = {};
+  for (const [token, value] of Object.entries(saved as Record<string, unknown>)) {
+    if (/^lv-[a-z-]{1,40}$/.test(token) && typeof value === 'string' && isColorLiteral(value)) {
+      out[token] = value.trim();
+    }
+  }
+  return out;
 }
 
 const SEARCH_MODES: readonly SearchMode[] = ['filter', 'highlight'];
