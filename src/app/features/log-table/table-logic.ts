@@ -73,3 +73,55 @@ export function isDrag(draggingX: number, draggingY: number): boolean {
 export function textColumnWidth(widestText: number, freeWidth: number): number {
   return Math.ceil(Math.max(widestText + 24, freeWidth));
 }
+
+/** Everything one draw of the table shows. */
+export interface DrawState {
+  count: number;
+  rowH: number;
+  pos: { top: number; subPx: number };
+  left: number;
+  revision: number;
+  /** Lines in the file (the gutter width follows its digits). */
+  total: number;
+  marks: string;
+  follow: boolean;
+}
+
+/**
+ * Identity of a picture: everything a draw shows. Two equal keys draw the same cells, so the second draw is
+ * skipped (it would only rebuild the cells, and a rebuild during a click loses that click).
+ */
+export function drawKey(state: DrawState, forced: readonly number[]): string {
+  const { count, rowH, pos, left, revision, total, marks, follow } = state;
+  return [
+    count,
+    rowH,
+    pos.top,
+    pos.subPx,
+    left,
+    revision,
+    total,
+    follow ? 1 : 0,
+    ...forced,
+    marks,
+  ].join('|');
+}
+
+/**
+ * True if the only change is lines arriving behind the view while the reader is not following: the cells on
+ * screen stay, only the scroll bar grows. Such draws can wait (one per second is enough).
+ */
+export function growsOnlyBehindView(
+  prev: DrawState | null,
+  next: DrawState,
+  prevForced: string,
+  nextForced: string,
+  visibleRows: number,
+): boolean {
+  if (!prev || prev.follow || next.follow || next.count <= prev.count) return false;
+  if (prevForced !== nextForced || prev.rowH !== next.rowH || prev.left !== next.left) return false;
+  if (prev.pos.top !== next.pos.top || prev.pos.subPx !== next.pos.subPx) return false;
+  if (prev.revision !== next.revision || prev.marks !== next.marks) return false;
+  if (String(prev.total).length !== String(next.total).length) return false;
+  return prev.pos.top + visibleRows + 1 < prev.count;
+}
