@@ -22,6 +22,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { createSocket } from 'node:dgram';
+import { DatabaseSync } from 'node:sqlite';
 import { entryTime, makeEntry, parseArgs } from '../gen-log.mjs';
 
 const root = new URL('../..', import.meta.url).pathname;
@@ -104,6 +105,14 @@ writeFileSync(
     text += `${makeEntry('spring', entryTime(options, i), random, 0.3)}\n`;
   writeFileSync(join(dir, 'gap.log'), text);
 }
+// Prompt 019: a SQLite database with a log table; the scenario opens it as a source (read-only), the harness adds
+// rows (`dbinsert`) and checks that nothing else changed it (`expectdbcount`).
+const logsDb = new DatabaseSync(join(dir, 'logs.db'));
+logsDb.exec(`CREATE TABLE logs (id INTEGER PRIMARY KEY, ts TEXT NOT NULL, level TEXT, msg TEXT, data BLOB);
+  INSERT INTO logs (ts, level, msg, data) VALUES
+    ('2026-11-08T10:00:00', 'INFO', 'db start', NULL),
+    ('2026-11-08T10:00:01', 'ERROR', 'db Grüße 😀', x'00ff'),
+    ('2026-11-08T10:00:01', 'WARN', 'db same time', NULL);`);
 // Dashboard (prompt 012): the Spring Boot sample once more, opened by the scenario through the path dialog.
 const dash = join(dir, 'dash.log');
 writeFileSync(dash, readFileSync(join(root, 'samples/spring-boot.log')));
@@ -309,6 +318,25 @@ function act(action) {
       check();
       break;
     }
+    case 'dbinsert': {
+      // `dbinsert <ts>|<level>|<msg>` (prompt 019).
+      const [ts, level, msg] = text.split('|');
+      logsDb.prepare('INSERT INTO logs (ts, level, msg) VALUES (?, ?, ?)').run(ts, level, msg);
+      break;
+    }
+    case 'expectdbcount': {
+      // Only the harness writes: the app never changed the database (prompt 019).
+      const { n } = logsDb.prepare('SELECT count(*) AS n FROM logs').get();
+      const hacked = logsDb.prepare("SELECT count(*) AS n FROM logs WHERE msg = 'hacked'").get().n;
+      if (n === Number(text) && hacked === 0) {
+        passed++;
+        console.log(`  ok  the database holds ${n} rows, none written by the app`);
+      } else {
+        console.error(`\nFAIL the database holds ${n} rows (${hacked} 'hacked'), expected ${text}`);
+        finish(1);
+      }
+      break;
+    }
     case 'expectnofile': {
       const leftovers = readdirSync(dir).filter((f) => f.includes(text));
       if (leftovers.length) {
@@ -364,6 +392,7 @@ createInterface({ input: app.stdout }).on('line', (line) => {
 
 app.on('exit', () => {
   clearTimeout(timer);
+  logsDb.close();
   for (const g of generators) g.kill();
   rmSync(dir, { recursive: true, force: true });
   process.exit(exitCode);

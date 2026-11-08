@@ -1146,8 +1146,9 @@ fn invalid(message: impl Into<String>) -> AppError {
     AppError::new(ErrorCode::InvalidQuery, message)
 }
 
-/// The authorizer of query connections: reading and calling functions, nothing else.
-fn authorize(ctx: AuthContext<'_>) -> Authorization {
+/// The authorizer of query connections: reading and calling functions, nothing else. Also guards
+/// the SQLite source of prompt 019.
+pub(crate) fn authorize(ctx: AuthContext<'_>) -> Authorization {
     match ctx.action {
         AuthAction::Select | AuthAction::Read { .. } | AuthAction::Recursive => {
             Authorization::Allow

@@ -68,6 +68,60 @@
   ];
   const WINEVENT_LEVEL = { fatal: 'FATAL', error: 'ERROR', warn: 'WARN', info: 'INFO', debug: 'DEBUG' };
 
+  // Databases (prompt 019), mock for the screenshots: rows of a log table as the JSON lines that
+  // sources/database/value.rs writes (time and level renamed, then the other columns).
+  const DB_KEYS = ['timestamp', 'level', 'id', 'logger', 'msg', 'user_id'];
+  const DB_COLUMNS = DB_KEYS.map((id) => ({
+    id,
+    label: id,
+    kind: id === 'timestamp' ? 'timestamp' : id === 'level' ? 'level' : id === 'id' || id === 'user_id' ? 'number' : 'text',
+  }));
+  const DB_SAMPLES = [
+    ['INFO', 'app.orders', 'Bestellung 48211 angelegt (3 Positionen)', 1042],
+    ['INFO', 'app.auth', 'Anmeldung erfolgreich', 1042],
+    ['WARN', 'app.payment', 'Zahlungsanbieter antwortet langsam: 2.4 s', null],
+    ['ERROR', 'app.payment', 'Zahlung 48211 abgelehnt: Karte abgelaufen', 1042],
+    ['DEBUG', 'app.cache', 'Cache-Treffer für Produktliste (812 Einträge)', null],
+    ['INFO', 'app.mail', 'Versandbestätigung an kunde@example.com gesendet', 2077],
+    ['ERROR', 'app.db', 'Deadlock beim Buchen erkannt, Wiederholung 1 von 3', null],
+    ['INFO', 'app.orders', 'Bestellung 48212 angelegt (1 Position)', 2077],
+  ];
+
+  function dbLines(count = 140) {
+    const lines = [];
+    const start = Date.UTC(2026, 10, 8, 8, 0, 0);
+    for (let i = 0; i < count; i++) {
+      const [level, logger, msg, user] = DB_SAMPLES[(i * 5 + (i >> 3)) % DB_SAMPLES.length];
+      const values = {
+        timestamp: new Date(start + i * 7_310).toISOString().replace('Z', '+00:00'),
+        level,
+        id: 73_400 + i,
+        logger,
+        msg,
+        user_id: user,
+      };
+      let text = '{';
+      const fields = [];
+      DB_KEYS.forEach((key, k) => {
+        text += `${k ? ',' : ''}"${key}":`;
+        const value = values[key];
+        const raw = typeof value === 'number' || value === null ? String(value) : JSON.stringify(value);
+        const quoted = typeof value === 'string';
+        const from = text.length + (quoted ? 1 : 0);
+        text += raw;
+        fields.push([from, text.length - (quoted ? 1 : 0)]);
+      });
+      text += '}';
+      lines.push({ line: i, level, source: 0, text, isContinuation: false, truncated: false, matches: [], fields });
+    }
+    return lines;
+  }
+
+  function dbLabel(config) {
+    const m = /\bfrom\s+([\w."`[\]]+)/i.exec(config.query);
+    return m ? `db:${m[1].replace(/["`[\]]/g, '')}` : `db:${config.database || config.host}`;
+  }
+
   function wineventLines(channel) {
     const lines = [];
     const start = Date.UTC(2026, 10, 8, 7, 30, 0);
@@ -536,6 +590,48 @@
           source: { kind: 'winevent', label, spoolPath, keep: !!keep, config },
         };
       }
+      if (config.kind === 'database') {
+        const label = dbLabel(config);
+        const lines = dbLines();
+        const session = {
+          id,
+          columns: DB_COLUMNS,
+          lines,
+          size: lines.reduce((sum, l) => sum + l.text.length + 1, 0),
+          generation: 0,
+          filter: { levels: LEVELS, search: '', mode: 'filter' },
+          channel: onUpdate.id,
+          sent: 0,
+          views: new Map(),
+          profileId: 'jsonl',
+          sourceStatus: {
+            state: { kind: 'connected' },
+            received: lines.length,
+            dropped: 0,
+            truncated: 0,
+            rejected: 0,
+            connections: 0,
+            spooled: lines.length,
+            spoolError: null,
+            bytes: 0,
+            latencyMs: 14,
+            pendingBytes: 0,
+            gaps: 0,
+            polledAtMs: Date.UTC(2026, 10, 8, 8, 17, 4),
+          },
+        };
+        sessions.set(id, session);
+        const spoolPath = `/Users/me/Library/Caches/io.github.krocon.logcommander/spool/4711/source-${id}/spool.log`;
+        return {
+          sessionId: id,
+          path: spoolPath,
+          fileName: label,
+          suggestedProfileId: 'jsonl',
+          update: update(session),
+          sources: [],
+          source: { kind: 'database', label, spoolPath, keep: !!keep, config },
+        };
+      }
       if (config.kind === 'sftp') {
         // Prompt 017: the first connect shows the host-key confirmation, the next one opens.
         if (!credentials?.trustFingerprint && setupData.remoteTrust !== true) {
@@ -672,6 +768,24 @@
       ];
     },
     forget_winevent_secret: () => null,
+    db_tables: () => [
+      { schema: 'app', name: 'audit_log' },
+      { schema: 'app', name: 'logs' },
+      { schema: 'app', name: 'orders' },
+    ],
+    db_preview: ({ config }) => ({
+      columns: [
+        { name: 'id', typeName: 'INT8', kind: 'int' },
+        { name: 'created_at', typeName: 'TIMESTAMPTZ', kind: 'timestampTz' },
+        { name: 'level', typeName: 'TEXT', kind: 'text' },
+        { name: 'logger', typeName: 'TEXT', kind: 'text' },
+        { name: 'msg', typeName: 'TEXT', kind: 'text' },
+        { name: 'user_id', typeName: 'INT4', kind: 'int' },
+      ],
+      lines: dbLines(20).map((l) => l.text),
+      keyType: config.keyColumn === 'created_at' ? 'TIMESTAMPTZ' : 'INT8',
+    }),
+    forget_db_secret: () => null,
     set_spool_keep: () => null,
     set_spool_limit: () => null,
     kept_spools: () => ({ count: 1, bytes: 3_145_728 }),

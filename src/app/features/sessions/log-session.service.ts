@@ -16,6 +16,7 @@ import {
   RemoteCredentials,
   SftpConfig,
   WinEventConfig,
+  DbConfig,
 } from '../../core/log/log.models';
 import { addSavedSource, sourceKey } from '../sources/source-logic';
 import { ALL_SOURCES, mergeKey, maskForBackend } from '../merge/merge-logic';
@@ -103,6 +104,10 @@ export class LogSessionService {
     config: WinEventConfig | null;
     error?: AppError | null;
   } | null>(null);
+  /** Prompt 019: the dialog „Datenbank“, maybe prefilled (remembered, workspace) and with the error that opened it. */
+  readonly databaseRequest = signal<{ config: DbConfig | null; error?: AppError | null } | null>(
+    null,
+  );
   /**
    * Opens a workspace (`.lcw`) given as a path, wherever a path is opened (dialog, path field, drop, command line,
    * recent files). Set by the workspace service, which needs this service itself.

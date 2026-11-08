@@ -36,6 +36,7 @@ import { SidebarComponent } from './features/sidebar/sidebar';
 import { SourceDialogComponent } from './features/sources/source-dialog';
 import { RemoteDialogComponent } from './features/remote/remote-dialog';
 import { WinEventDialogComponent } from './features/winevent/winevent-dialog';
+import { DatabaseDialogComponent } from './features/database/database-dialog';
 import { SIDEBAR_MIN, sidebarMax, sidebarWidth } from './features/sidebar/sidebar-logic';
 import { SidebarState } from './features/sidebar/sidebar-state';
 import { StartScreenComponent } from './features/start/start-screen';
@@ -50,6 +51,7 @@ import { SplitterComponent } from './shared/splitter';
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
     DashboardComponent,
+    DatabaseDialogComponent,
     DetailPanelComponent,
     ExportDialogComponent,
     FieldsDialogComponent,
@@ -206,6 +208,16 @@ import { SplitterComponent } from './shared/splitter';
           [start]="request.config"
           [startError]="request.error ?? null"
           (closed)="sessions.wineventRequest.set(null)"
+        />
+      }
+    }
+    @if (sessions.databaseRequest(); as request) {
+      <!-- Prompt 019: a query on a database table as a live source. -->
+      @defer (on immediate) {
+        <app-database-dialog
+          [start]="request.config"
+          [startError]="request.error ?? null"
+          (closed)="sessions.databaseRequest.set(null)"
         />
       }
     }

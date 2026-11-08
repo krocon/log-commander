@@ -148,6 +148,16 @@ Like <code>tail -f</code> with a GUI: millions of lines, instant filters, no wai
   logged-on Windows identity or with user and password (password only for this connect, or in the Windows
   Credential Manager when ticked; never in settings, workspaces or logs; a workspace never connects by itself).
   Remote reading needs the firewall rule „Remote Event Log Management“ on that computer.
+- **Logs from databases** – „Quelle öffnen“ → Datenbank: a `SELECT` on PostgreSQL, MySQL/MariaDB, SQL Server or a
+  SQLite file, live. „Tabelle wählen“ writes the query for a table, „Vorschau“ shows the first 20 rows as they will
+  arrive. The rows come in order of a *key column* (an id or a time), in batches of up to 10 000, starting with the
+  last N rows (1000 by default) or all; then every 2 s (0.5 s … 1 h) the new ones (`key >= last`). Rows with the same
+  key (equal times) are neither lost nor doubled: the ones already shown are remembered. Each row becomes one JSON line
+  – the time column as `timestamp`, the level column as `level`, then the other columns – so columns, filters,
+  timeline, dashboard and export work as for any JSON log; times in ISO 8601, numbers as numbers, binary data as
+  „(binär, N Byte)“. The tab is called `db:schema.table`, the status bar shows the rows and the last query with its
+  duration. After a broken connection it reconnects (1 … 60 s) and goes on from the last key; a refused login stops.
+  See [Reading databases safely](#reading-databases-safely).
 - **Share** – right click „Als Markdown kopieren“ or „Als Jira kopieren“: file, lines, time span and filter as a head,
   the selected lines as a code block, the notes as a list, up to 64 KB (for more there is the export).
 - **Search** – filter or highlight, regular expressions, case sensitivity, jump between matches.
@@ -172,6 +182,7 @@ Like <code>tail -f</code> with a GUI: millions of lines, instant filters, no wai
 | ![Timeline with an outage and a marked window](docs/screenshots/timeline.png) | ![Timeline in the light theme](docs/screenshots/timeline-light.png) |
 | ![A remote file over SFTP](docs/screenshots/remote.png) | ![Remote dialog: browser and host key](docs/screenshots/remote-dialog.png) |
 | ![Windows events (mock, taken on macOS)](docs/screenshots/winevent.png) | ![Windows events dialog (mock, taken on macOS)](docs/screenshots/winevent-dialog.png) |
+| ![A database table as a log (mock data)](docs/screenshots/database.png) | ![Database dialog with table and preview (mock data)](docs/screenshots/database-dialog.png) |
 
 ## Receiving syslog safely
 
@@ -201,6 +212,45 @@ A syslog listener takes data from the network. Log Commander keeps it small and 
 Measured with `cargo test --release --test syslog_integration -- --ignored --nocapture measure_`: 50,000 and 100,000
 messages per second over UDP without loss, a single sender pushing 120,000 per second without loss, about 0.1 s from
 receipt to the index.
+
+## Reading databases safely
+
+A database source runs SQL from you – or from a workspace someone sent – on a server with real data.
+
+**Use a read-only database account.** Give Log Commander its own user with `SELECT` on the log table and nothing
+else: no superuser, no `FILE` privilege (MySQL), not in `pg_write_server_files`/`pg_read_server_files` (PostgreSQL),
+not `sysadmin` (SQL Server). The checks below are a second line, not a replacement: the integration tests show that a
+read-only *transaction* does **not** stop `SELECT … INTO OUTFILE` (MySQL, MariaDB) or `lo_export` (PostgreSQL) for an
+account that has those rights – only the account's rights do.
+
+- **One SELECT:** the query must be a single `SELECT` (or `WITH … SELECT`). Words that write or act on the server
+  (`INSERT`, `UPDATE`, `DELETE`, `MERGE`, `INTO`, `OUTFILE`, `DUMPFILE`, `FOR UPDATE`, `DROP`, `EXEC`, `OPENROWSET`,
+  `ATTACH`, `PRAGMA`, …), a list of functions with side effects (`LOAD_FILE`, `GET_LOCK`, `lo_export`,
+  `pg_read_file`, `pg_terminate_backend`, `dblink_exec`, advisory locks, `set_config`, `xp_cmdshell`, …) and a second
+  statement are refused, also when hidden behind comments, quotes or dialect quirks (MySQL `--1`, `x#`, non-ASCII
+  names). The app wraps the query as a subquery and adds the key condition, order and batch limit (so no
+  `ORDER BY`/`LIMIT`).
+- **Read-only on the server:** PostgreSQL in a read-only session and `BEGIN READ ONLY` per query, MySQL/MariaDB in a
+  read-only session and `START TRANSACTION READ ONLY`, SQL Server (no read-only session for a normal database) in a
+  transaction that is always rolled back, SQLite opened read-only with an authorizer that allows reading only. Table
+  writes fail even through a function in the query.
+- **What remains with a privileged account:** functions the list does not know (extensions, `CLR` code, user-defined
+  functions with side effects, extended procedures behind synonyms), server files, other sessions, locks. Hence the
+  account recommendation above.
+- **Limits:** 30 s per query (server side where possible, and in the app; a cancelled query closes the connection –
+  SQL Server was seen to stop it within 0.2 s), at most 10 000 rows or 32 MB per batch, 200 columns; texts over 32 000
+  characters and lines over 256 KB are cut and marked. The drivers read a whole row into memory before the app cuts it.
+- **TLS** is on and the certificate checked by default (system certificates plus an optional CA file). Switching the
+  check or TLS off shows a warning in the dialog and in a workspace's confirmation.
+- **Passwords** are asked for in the dialog and kept in memory only while the source runs. „Im Schlüsselbund merken“
+  puts them into the system keychain – only when ticked, only after the login worked, and bound to the TLS mode: a
+  password stored with certificate check is never sent over a connection without it. Never written to the settings, a
+  workspace, a log or an error message. A refused login is not retried.
+- **Workspaces** keep the connection and the query, never a password and no CA file. Opening one never connects by
+  itself: the database is listed unticked in the confirmation **with its query**, and a password is asked for in the
+  dialog.
+- **Values are foreign data:** escaped like received syslog (one line per row, control characters, bidi marks and line
+  separators as `\uXXXX`), shown as text, never as markup.
 
 ## SSH logins and host keys
 
@@ -251,7 +301,7 @@ log-commander /var/log/app.log /var/log/other.log
 | `Cmd/Ctrl+O` | Open a file |
 | `Cmd/Ctrl+Shift+O` | Type or paste a path to open (`~` works) |
 | `Cmd/Ctrl+Shift+M` | Merge files into one tab, sorted by time |
-| `Cmd/Ctrl+Shift+L` | Open a source: receive syslog over UDP/TCP |
+| `Cmd/Ctrl+Shift+L` | Open a source: receive syslog over UDP/TCP, a database query (kind „Datenbank“) |
 | `Cmd/Ctrl+Shift+H` | Open a remote file over SSH/SFTP |
 | `End`, `F` | Go to the end and follow |
 | `Space` | Pause or resume following |

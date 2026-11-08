@@ -248,6 +248,31 @@ await shot(start, 'start');
   await shot(win, 'winevent');
 }
 
+// Databases (prompt 019): the dialog with „Tabelle wählen“, the preview and the warning-free TLS default, then the
+// tab with the rows as columns (mock data shaped like sources/database/value.rs).
+{
+  const db = await page(browser, { theme: 'dark', withFiles: false });
+  await db.click('button:text-is("Quelle öffnen …")');
+  await db.waitForSelector('app-source-dialog dialog[open]');
+  await db.selectOption('#source-kind', 'database');
+  await db.waitForSelector('app-database-dialog dialog[open]');
+  await db.fill('#db-host', 'db.prod.example');
+  await db.fill('#db-database', 'shop');
+  await db.fill('#db-user', 'log_reader');
+  await db.click('#db-tables');
+  await db.waitForSelector('#db-table');
+  await db.selectOption('#db-table', { label: 'app.logs' });
+  await db.fill('#db-key', 'id');
+  await db.click('#db-preview-button');
+  await db.waitForSelector('#db-preview');
+  await db.waitForTimeout(200);
+  await shot(db, 'database-dialog');
+  await db.click('#db-start');
+  await db.waitForSelector('.lt-cell');
+  await db.waitForTimeout(300);
+  await shot(db, 'database');
+}
+
 await start.click('button:text-is("Pfad eingeben …")');
 await start.fill('app-open-path-dialog input', '/tmp/app.log');
 await start.waitForTimeout(150);

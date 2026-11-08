@@ -6,6 +6,7 @@ import { isWorkspacePath } from '../workspace/workspace-model';
 import { sourceLabel } from '../sources/source-logic';
 import { sftpAddress } from '../remote/remote-logic';
 import { wineventWhere } from '../winevent/winevent-logic';
+import { dbWhere } from '../database/database-logic';
 
 @Component({
   selector: 'app-start-screen',
@@ -49,6 +50,20 @@ import { wineventWhere } from '../winevent/winevent-logic';
                       ><span class="sr-only">Remote-Datei: </span>{{ sourceLabel(s.config) }}</span
                     >
                     <span class="dir">{{ address(s.config) }} · SSH/SFTP</span>
+                  </button>
+                } @else if (s.config.kind === 'database') {
+                  <!-- Prompt 019: opens the dialog prefilled, connects only from there. -->
+                  <button
+                    type="button"
+                    class="recent"
+                    title="Im Dialog „Datenbank“ prüfen und öffnen"
+                    (click)="sessions.databaseRequest.set({ config: s.config })"
+                  >
+                    <span class="name"
+                      ><span class="ws" aria-hidden="true">⛁</span
+                      ><span class="sr-only">Datenbank: </span>{{ sourceLabel(s.config) }}</span
+                    >
+                    <span class="dir">{{ dbWhere(s.config) }}</span>
                   </button>
                 } @else if (s.config.kind === 'winevent') {
                   <!-- Prompt 018: opens the dialog prefilled; only listed on Windows. -->
@@ -239,6 +254,7 @@ export class StartScreenComponent {
   protected readonly sourceLabel = sourceLabel;
   protected readonly address = sftpAddress;
   protected readonly where = wineventWhere;
+  protected readonly dbWhere = dbWhere;
 
   protected forget(path: string): void {
     this.settingsService.removeRecentFile(path);

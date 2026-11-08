@@ -184,6 +184,9 @@ pub fn run() {
             commands::winevent_supported,
             commands::winevent_channels,
             commands::forget_winevent_secret,
+            commands::db_preview,
+            commands::db_tables,
+            commands::forget_db_secret,
             #[cfg(debug_assertions)]
             e2e::e2e_report,
             #[cfg(debug_assertions)]

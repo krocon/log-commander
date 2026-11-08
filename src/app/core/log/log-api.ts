@@ -4,6 +4,9 @@ import { call } from '../backend/call';
 import {
   Anchor,
   ColumnSet,
+  DbConfig,
+  DbPreview,
+  DbTable,
   EntryDetail,
   EntryRange,
   ExportFormat,
@@ -112,6 +115,21 @@ export class LogApi {
   /** Prompt 018: removes the stored password of a remote computer from the keychain. */
   forgetWineventSecret(target: WinTarget): Promise<void> {
     return call('forget_winevent_secret', { target });
+  }
+
+  /** Prompt 019: the first rows of a database query as they will be spooled; connects like `openSource`. */
+  dbPreview(config: DbConfig, credentials: RemoteCredentials | null): Promise<DbPreview> {
+    return call('db_preview', { config, credentials });
+  }
+
+  /** Prompt 019: tables and views of a database for „Tabelle wählen“. */
+  dbTables(config: DbConfig, credentials: RemoteCredentials | null): Promise<DbTable[]> {
+    return call('db_tables', { config, credentials });
+  }
+
+  /** Prompt 019: removes the stored password of a database server from the keychain. */
+  forgetDbSecret(config: DbConfig): Promise<void> {
+    return call('forget_db_secret', { config });
   }
 
   /** Keep the spool of a source when its tab closes. */
