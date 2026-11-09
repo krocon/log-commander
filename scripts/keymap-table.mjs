@@ -70,6 +70,9 @@ export const README_TEXT = {
   OPEN_SHORTCUTS:
     'Keyboard shortcuts: view, record, remove, reset (also Help → Keyboard Shortcuts…)',
   SHOW_SHORTCUTS: 'Keyboard shortcuts as an overview',
+  MCP_SHOW_HISTORY: 'Show the AI control history (no default key)',
+  MCP_DISCONNECT: 'Disconnect the AI (no default key)',
+  MCP_TOGGLE_HIDDEN: 'Hide the tab in front from the AI, or show it again (no default key)',
 };
 
 const KEY_NAMES = {

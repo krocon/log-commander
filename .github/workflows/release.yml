@@ -75,6 +75,10 @@ jobs:
               { echo "$name<<$delimiter"; echo "$value"; echo "$delimiter"; } >> "$GITHUB_ENV"
             fi
           done
+      # Prompt 022: the MCP sidecar `log-commander-mcp` next to the app (`bundle.externalBin` in tauri.sidecar.conf.json).
+      - name: MCP sidecar
+        shell: bash
+        run: node scripts/mcp-sidecar.mjs ${{ runner.os == 'macOS' && 'universal-apple-darwin' || '' }}
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -83,4 +87,4 @@ jobs:
           releaseName: 'Log Commander ${{ github.ref_name }}'
           releaseDraft: true
           prerelease: false
-          args: ${{ matrix.args }}
+          args: ${{ matrix.args }} --config src-tauri/tauri.sidecar.conf.json

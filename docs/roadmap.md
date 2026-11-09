@@ -76,8 +76,18 @@ Architektur verbaut nichts davon.
   (Geltungsbereich global/Ansicht/Suchfeld), Editor mit Suche, Aufnehmen, Konflikt- und Reserviert-Hinweis, Zurücksetzen
   (`Cmd/Ctrl+Shift+K`, `?` als Übersicht, Hilfe-Menü, Einstellungen); eigene Belegung im Settings-Store; Menü-Kürzel folgen
   der Keymap; Tooltips zeigen die aktuelle Belegung; README-Tabelle aus den Keymaps erzeugt und geprüft
+- KI-Steuerung über MCP (Prompt 022): Sidecar `log-commander-mcp` für Claude Code, Claude Desktop, Cursor; 31 Tools in
+  drei Stufen (lesen, Ansicht steuern, vorschlagen mit Bestätigung im Fenster), `help` mit Konzepten, Filterbaum, SQL,
+  Rezepten, Grenzen und Fehlercodes, MCP-Prompts; aus per Default, Tabs vor der KI verbergen, bekannte Geheimnisse
+  maskiert, Verlauf und „KI trennen“ in der Statusleiste, Einrichtungszeilen und Verbindungstest in den Einstellungen
 
 ## Offen
+
+**KI-Steuerung (Nachfragen zu 022):** `propose_dashboard_panel` (Dashboard mit vorbelegtem Panel), Arbeitsstand
+speichern als Vorschlag (braucht einen Weg am nativen Dialog vorbei, der den Pfad sichtbar bestätigt), eigene
+Maskier-Muster, MCP-Resources mit `resources/updated` statt `wait_for_lines`, Einrichtung von Claude Desktop/Cursor per
+Knopf mit Diff wie AppIconic 086, Handtest mit Claude Desktop und unter Windows/Linux, Signierung des Sidecars mit den
+Apple-Secrets prüfen.
 
 **Nach Prompt 021:** Befehlspalette (der Katalog bringt Namen, Gruppen und Kürzel schon mit), Import/Export einer Keymap
 (zu 015; streng prüfen, wie `mergeKeymap` + `resolveKeymap`), Kürzel für Profile und gespeicherte Filter, Keymap-Vorlagen

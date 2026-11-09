@@ -2704,6 +2704,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "lc-mcp"
+version = "1.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "libappindicator"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2811,6 +2820,7 @@ dependencies = [
  "futures-util",
  "hmac 0.13.0",
  "keyring-core",
+ "lc-mcp",
  "libc",
  "memchr",
  "notify",

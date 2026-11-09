@@ -237,6 +237,15 @@ export const ACTIONS = [
     menu: true,
   },
   { id: 'SHOW_SHORTCUTS', label: 'Tastenkürzel anzeigen', group: 'Hilfe', scope: 'view' },
+  // KI-Steuerung (prompt 022), without default shortcuts
+  { id: 'MCP_SHOW_HISTORY', label: 'KI-Verlauf zeigen', group: 'Hilfe', scope: 'global' },
+  { id: 'MCP_DISCONNECT', label: 'KI trennen', group: 'Hilfe', scope: 'global' },
+  {
+    id: 'MCP_TOGGLE_HIDDEN',
+    label: 'Tab vor der KI verbergen / zeigen',
+    group: 'Tabs',
+    scope: 'global',
+  },
 ] as const satisfies readonly ActionDef[];
 
 export type ActionId = (typeof ACTIONS)[number]['id'];
