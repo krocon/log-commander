@@ -889,6 +889,238 @@ pub fn show_main(app: &AppHandle) {
     }
 }
 
+// ---------------------------------------------------------------- prompt 022: AI control over MCP
+
+/// What goes to the frontend over the channel of `subscribe_mcp`.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum McpEvent {
+    /// A tool call to run; answer with `mcp_reply`.
+    #[serde(rename_all = "camelCase")]
+    Call {
+        call_id: u64,
+        tool: String,
+        args: serde_json::Value,
+    },
+    /// The bridge or its connections changed.
+    Status { info: McpInfo },
+}
+
+/// AI control as the settings and the status bar show it.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpInfo {
+    /// The bridge is open (a port and the endpoint file exist).
+    pub enabled: bool,
+    pub connections: usize,
+    /// The sidecar next to the app program, `None` = missing.
+    pub sidecar: Option<String>,
+    /// A debug build: a missing sidecar is built with `cargo build -p lc-mcp`.
+    pub debug: bool,
+}
+
+type McpChannel = Arc<std::sync::Mutex<Option<Channel<McpEvent>>>>;
+
+/// The bridge of the process, the calls in flight and the frontend's channel.
+#[derive(Default)]
+pub struct McpState {
+    host: std::sync::Mutex<Option<lc_mcp::host::Host>>,
+    calls: Arc<crate::mcp::Calls>,
+    channel: McpChannel,
+}
+
+impl McpState {
+    fn connections(&self) -> Option<usize> {
+        self.host
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .map(|h| h.connections())
+    }
+
+    /// Closes the bridge (quitting): port closed, connections cut, endpoint file removed.
+    pub fn shutdown(&self) {
+        self.host.lock().unwrap_or_else(|e| e.into_inner()).take();
+        self.calls
+            .fail_all("not_running", "Log Commander is closing");
+    }
+}
+
+struct TauriFrontend {
+    channel: McpChannel,
+}
+
+impl crate::mcp::Frontend for TauriFrontend {
+    fn send(&self, id: u64, tool: &str, args: &serde_json::Value) -> bool {
+        let channel = self.channel.lock().unwrap_or_else(|e| e.into_inner());
+        channel.as_ref().is_some_and(|c| {
+            c.send(McpEvent::Call {
+                call_id: id,
+                tool: tool.to_owned(),
+                args: args.clone(),
+            })
+            .is_ok()
+        })
+    }
+}
+
+struct McpBridge {
+    router: crate::mcp::Router<TauriFrontend>,
+}
+
+impl lc_mcp::host::Handler for McpBridge {
+    fn call(
+        &self,
+        tool: &str,
+        args: &serde_json::Value,
+    ) -> Result<serde_json::Value, lc_mcp::bridge::BridgeError> {
+        self.router.call(tool, args)
+    }
+
+    fn status(&self, connections: usize) {
+        let channel = self
+            .router
+            .frontend
+            .channel
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(c) = channel.as_ref() {
+            let _ = c.send(McpEvent::Status {
+                info: McpInfo {
+                    enabled: true,
+                    connections,
+                    sidecar: mcp_sidecar_path().map(|p| p.to_string_lossy().into_owned()),
+                    debug: cfg!(debug_assertions),
+                },
+            });
+        }
+    }
+}
+
+/// `log-commander-mcp[.exe]` next to the app program (where `bundle.externalBin` and `cargo build` put it).
+pub fn mcp_sidecar_path() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let p = exe
+        .parent()?
+        .join(format!("log-commander-mcp{}", std::env::consts::EXE_SUFFIX));
+    p.is_file().then_some(p)
+}
+
+fn mcp_info_of(state: &McpState) -> McpInfo {
+    let connections = state.connections();
+    McpInfo {
+        enabled: connections.is_some(),
+        connections: connections.unwrap_or(0),
+        sidecar: mcp_sidecar_path().map(|p| p.to_string_lossy().into_owned()),
+        debug: cfg!(debug_assertions),
+    }
+}
+
+/// `LOG_COMMANDER_MCP_ENDPOINT` (tests, e2e) or `<app config>/mcp.json`.
+fn mcp_endpoint_file(app: &AppHandle) -> AppResult<PathBuf> {
+    if let Some(p) = std::env::var_os(lc_mcp::bridge::ENDPOINT_ENV).filter(|p| !p.is_empty()) {
+        return Ok(PathBuf::from(p));
+    }
+    app.path()
+        .app_config_dir()
+        .map(|d| d.join(lc_mcp::bridge::ENDPOINT_FILE))
+        .map_err(|e| AppError::new(ErrorCode::Io, e.to_string()))
+}
+
+/// The frontend listens for tool calls; a new channel (reload) replaces the old one, calls of the old one fail.
+#[tauri::command]
+pub fn subscribe_mcp(state: State<'_, McpState>, on_event: Channel<McpEvent>) -> McpInfo {
+    state
+        .calls
+        .fail_all("not_running", "the window of Log Commander was reloaded");
+    *state.channel.lock().unwrap_or_else(|e| e.into_inner()) = Some(on_event);
+    mcp_info_of(&state)
+}
+
+/// Opens or closes the bridge (setting „KI-Steuerung“). Off: no port, no endpoint file, every connection cut.
+#[tauri::command]
+pub fn mcp_set_enabled(
+    app: AppHandle,
+    state: State<'_, McpState>,
+    enabled: bool,
+) -> AppResult<McpInfo> {
+    let mut host = state.host.lock().unwrap_or_else(|e| e.into_inner());
+    match (enabled, host.is_some()) {
+        (true, false) => {
+            let file = mcp_endpoint_file(&app)?;
+            let bridge = McpBridge {
+                router: crate::mcp::Router::new(
+                    TauriFrontend {
+                        channel: state.channel.clone(),
+                    },
+                    state.calls.clone(),
+                ),
+            };
+            let started = lc_mcp::host::Host::start(Arc::new(bridge), &file)
+                .map_err(|e| AppError::from_io(&e, &file))?;
+            *host = Some(started);
+        }
+        (false, true) => {
+            *host = None;
+            state
+                .calls
+                .fail_all("not_running", "AI control was turned off");
+        }
+        _ => {}
+    }
+    drop(host);
+    Ok(mcp_info_of(&state))
+}
+
+#[tauri::command]
+pub fn mcp_info(state: State<'_, McpState>) -> McpInfo {
+    mcp_info_of(&state)
+}
+
+/// The frontend's answer to call `call_id`.
+#[tauri::command]
+pub fn mcp_reply(
+    state: State<'_, McpState>,
+    call_id: u64,
+    result: Option<serde_json::Value>,
+    error: Option<lc_mcp::bridge::BridgeError>,
+) {
+    let r = match error {
+        Some(e) => Err(e),
+        None => Ok(result.unwrap_or(serde_json::Value::Null)),
+    };
+    state.calls.complete(call_id, r);
+}
+
+/// „Trennen“: closes every connection; the bridge stays open for a new one.
+#[tauri::command]
+pub fn mcp_disconnect(state: State<'_, McpState>) {
+    if let Some(h) = state
+        .host
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+    {
+        h.disconnect();
+    }
+}
+
+/// „Verbindung testen“: starts the sidecar like an MCP client, handshake and one `get_workspace`.
+#[tauri::command]
+pub async fn mcp_probe() -> AppResult<lc_mcp::probe::Probe> {
+    let Some(sidecar) = mcp_sidecar_path() else {
+        return Err(AppError::new(
+            ErrorCode::NotFound,
+            "log-commander-mcp is missing next to the app",
+        ));
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        lc_mcp::probe::probe(&sidecar, std::time::Duration::from_secs(5))
+    })
+    .await
+    .map_err(|e| AppError::new(ErrorCode::Io, e.to_string()))
+}
+
 #[cfg(test)]
 mod chrome_tests {
     use super::parse_hex_rgb;

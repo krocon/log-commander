@@ -563,7 +563,10 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
       return;
     }
     const dragging = this.dragged || this.dragSelected;
-    if (this.columnDragging() || holdForSelection(state.follow, this.selectionInTable(), dragging)) {
+    if (
+      this.columnDragging() ||
+      holdForSelection(state.follow, this.selectionInTable(), dragging)
+    ) {
       this.heldForSelection = true;
       this.holds++;
       return;

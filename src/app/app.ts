@@ -51,11 +51,14 @@ import { ActionService } from './core/actions/action.service';
 import type { ActionId } from './core/actions/action-catalog';
 import { ShortcutDialogComponent } from './features/shortcuts/shortcut-dialog';
 import { SessionState } from './features/sessions/session-state';
+import { McpService } from './features/mcp/mcp.service';
+import { McpProposalDialogComponent } from './features/mcp/mcp-proposal-dialog';
 
 @Component({
   selector: 'app-root',
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
+    McpProposalDialogComponent,
     DashboardComponent,
     DatabaseDialogComponent,
     DetailPanelComponent,
@@ -263,6 +266,12 @@ import { SessionState } from './features/sessions/session-state';
         <app-export-dialog [session]="target" (closed)="sessions.exportRequest.set(null)" />
       }
     }
+    @if (mcp.proposal(); as proposal) {
+      <!-- Prompt 022: a proposal of the AI waits for the user. -->
+      @defer (on immediate) {
+        <app-mcp-proposal-dialog [proposal]="proposal" />
+      }
+    }
     @if (workspaceService.confirm()) {
       @defer (on immediate) {
         <app-workspace-dialog kind="confirm" />
@@ -376,6 +385,7 @@ export class App implements OnInit, OnDestroy {
   /** Prompt 021: the shortcut editor, `read` as an overview (`?`). */
   protected readonly shortcutsOpen = signal<'edit' | 'read' | null>(null);
   private readonly actions = inject(ActionService);
+  protected readonly mcp = inject(McpService);
   protected readonly pathDialogOpen = signal(false);
   protected readonly mergeDialogOpen = signal(false);
   protected readonly dropActive = signal(false);
@@ -445,6 +455,8 @@ export class App implements OnInit, OnDestroy {
     if (!isTauri()) return;
     await this.sessions.refreshProfiles();
     await this.sessions.loadWineventSupport();
+    // Prompt 022: AI control listens and follows its setting (off by default: no port).
+    this.mcp.start();
     // Menu entries are actions too; their accelerators follow the keymap (ActionService).
     this.cleanups.push(
       await listen<string>('menu-action', (event) => {
@@ -505,6 +517,10 @@ export class App implements OnInit, OnDestroy {
       COLOR_SCHEME: () => this.theme.pickerOpen.set(true),
       OPEN_SHORTCUTS: () => this.shortcutsOpen.set('edit'),
       SHOW_SHORTCUTS: () => this.shortcutsOpen.set('read'),
+      // Prompt 022: AI control.
+      MCP_SHOW_HISTORY: () => this.mcp.panelOpen.set(true),
+      MCP_DISCONNECT: () => void this.mcp.disconnect(),
+      MCP_TOGGLE_HIDDEN: () => this.mcp.toggleHidden(),
     });
   }
 

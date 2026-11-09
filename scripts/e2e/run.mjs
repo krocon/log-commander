@@ -24,6 +24,7 @@ import { createInterface } from 'node:readline';
 import { createSocket } from 'node:dgram';
 import { DatabaseSync } from 'node:sqlite';
 import { entryTime, makeEntry, parseArgs } from '../gen-log.mjs';
+import { McpClient } from './mcp-client.mjs';
 
 const root = new URL('../..', import.meta.url).pathname;
 const exe = process.platform === 'win32' ? 'log-commander.exe' : 'log-commander';
@@ -36,6 +37,17 @@ if (!process.argv.includes('--no-build')) {
     shell: process.platform === 'win32',
   });
   if (built.status !== 0) process.exit(built.status ?? 1);
+  // Prompt 022: the MCP sidecar next to the debug app (a workspace member, `tauri build` leaves it out).
+  const sidecar = spawnSync(
+    'cargo',
+    ['build', '-p', 'lc-mcp', '--manifest-path', 'src-tauri/Cargo.toml'],
+    {
+      cwd: root,
+      stdio: 'inherit',
+      shell: process.platform === 'win32',
+    },
+  );
+  if (sidecar.status !== 0) process.exit(sidecar.status ?? 1);
 }
 
 /** `--scenario <file>` runs another scenario, e.g. a spike measurement. */
@@ -169,10 +181,180 @@ const timer = setTimeout(() => {
   finish(1);
 }, 90_000);
 
+// ---------------------------------------------------------------- prompt 022: AI control over MCP
+
+const sidecarPath = join(
+  root,
+  'src-tauri/target/debug',
+  process.platform === 'win32' ? 'log-commander-mcp.exe' : 'log-commander-mcp',
+);
+const appEnv = { ...process.env, HOME: dir, APPDATA: dir, LOCALAPPDATA: dir, XDG_CONFIG_HOME: dir };
+let mcpClient = null;
+
+function mcpCheck(what, condition, detail = '') {
+  if (condition) {
+    passed++;
+    console.log(`  ok  mcp: ${what}`);
+    return;
+  }
+  throw new Error(`${what} ${detail}`);
+}
+
+/** The sidecar against the running app: what an AI client sees and does (the scenario checks the window). */
+async function mcpRun() {
+  const snapshot = JSON.parse(
+    readFileSync(join(root, 'src-tauri/mcp/tools.snapshot.json'), 'utf8'),
+  );
+  const c = (mcpClient = new McpClient(sidecarPath, appEnv));
+  const init = await c.initialize();
+  mcpCheck(
+    'initialize names the server and gives instructions',
+    init.serverInfo?.name === 'log-commander' && init.instructions?.includes('get_workspace'),
+  );
+  const list = await c.request('tools/list');
+  mcpCheck(
+    'tools/list has every tool of the snapshot',
+    list.tools.length === snapshot.tools.length,
+  );
+  const help = await c.tool('help', { topic: 'filters' });
+  mcpCheck('help explains the filter tree', help.ok && help.text.includes('"kind":"group"'));
+  const ws = await c.tool('get_workspace');
+  // Whatever the scenario left open: a file tab of this run with errors in it.
+  let e2e = null;
+  for (const t of ws.data?.tabs ?? []) {
+    if (t.kind !== 'file' || t.filter_tab || !t.path?.startsWith(dir)) continue;
+    const stats = await c.tool('get_stats', { tab_id: t.tab_id });
+    if (stats.ok && stats.data.counts_view.ERROR > 0) {
+      e2e = t;
+      break;
+    }
+  }
+  mcpCheck(
+    'get_workspace lists the open tabs, one with errors',
+    ws.ok && e2e,
+    JSON.stringify((ws.data?.tabs ?? []).map((t) => [t.title, t.kind, t.lines])),
+  );
+  const errors = await c.tool('find_level', { tab_id: e2e.tab_id, levels: ['ERROR'], limit: 5 });
+  const first = errors.data?.hits?.[0];
+  mcpCheck(
+    'find_level finds ERROR heads, 1-based',
+    errors.ok && first?.level === 'ERROR' && first.line >= 1,
+    errors.text.slice(0, 300),
+  );
+  const entry = await c.tool('get_entry', {
+    tab_id: e2e.tab_id,
+    line: first.line,
+    epoch: errors.data.epoch,
+  });
+  mcpCheck(
+    'get_entry returns the whole entry of that line',
+    entry.ok &&
+      entry.data.first_line === first.line &&
+      entry.data.text.startsWith(first.text.slice(0, 20)),
+    entry.text.slice(0, 300),
+  );
+  const around = await c.tool('read_lines', {
+    tab_id: e2e.tab_id,
+    around_line: first.line,
+    count: 5,
+  });
+  mcpCheck(
+    'read_lines around a line contains it',
+    around.ok && around.data.lines.some((l) => l.line === first.line),
+  );
+  const stale = await c.tool('read_lines', { tab_id: e2e.tab_id, epoch: errors.data.epoch + 1 });
+  mcpCheck('a wrong epoch is stale_view', !stale.ok && stale.code === 'stale_view');
+  const sql = await c.tool(
+    'run_sql',
+    { tab_id: e2e.tab_id, sql: "SELECT count(*) AS n FROM log WHERE level = 'ERROR'" },
+    60_000,
+  );
+  mcpCheck('run_sql counts the errors', sql.ok && sql.data.rows[0][0] >= 1, sql.text.slice(0, 300));
+  const tab = await c.tool('open_filter_tab', {
+    tab_id: e2e.tab_id,
+    tree: {
+      kind: 'group',
+      op: 'and',
+      children: [
+        { kind: 'cond', cond: { type: 'level', levels: ['ERROR', 'FATAL'] } },
+        {
+          kind: 'cond',
+          negate: true,
+          cond: { type: 'text', text: 'MCP-NEVER', isRegex: false, caseSensitive: false },
+        },
+      ],
+    },
+  });
+  mcpCheck(
+    'open_filter_tab opens a filtered tab',
+    tab.ok && tab.data.view_lines >= 1 && tab.data.parent_tab_id === e2e.tab_id,
+    tab.text.slice(0, 300),
+  );
+  const unknown = await c
+    .request('tools/call', { name: 'run_shell', arguments: {} })
+    .catch((e) => e.rpc);
+  mcpCheck('a tool that is not on the list does not exist', unknown?.code === -32602);
+  const started = Date.now();
+  setTimeout(
+    () =>
+      appendFileSync(e2e.path, '2026-01-15 10:09:00,000 ERROR [main] app.Mcp - MCP-OOM happened\n'),
+    1500,
+  );
+  const waited = await c.tool(
+    'wait_for_lines',
+    { tab_id: e2e.tab_id, query: 'MCP-OOM', timeout_s: 20 },
+    40_000,
+  );
+  mcpCheck(
+    'wait_for_lines returns the new line soon after it is written',
+    waited.ok &&
+      !waited.data.timed_out &&
+      waited.data.lines[0]?.text.includes('MCP-OOM') &&
+      Date.now() - started < 8000,
+    waited.text.slice(0, 300),
+  );
+  const note = await c.tool('add_note', {
+    tab_id: e2e.tab_id,
+    line: first.line,
+    text: 'Erster Fehler',
+  });
+  mcpCheck('add_note writes a note', note.ok, note.text);
+  // The scenario answers the dialog with „Ablehnen“.
+  const open = await c.tool('propose_open', { paths: ['/etc/hosts'] }, 60_000);
+  mcpCheck(
+    'propose_open waits for the user and reports the refusal',
+    open.ok && open.data.outcome === 'cancelled',
+    open.text,
+  );
+}
+
+async function mcpOff() {
+  const file = join(
+    dir,
+    process.platform === 'darwin' ? 'Library/Application Support' : '.config',
+    'io.github.krocon.logcommander',
+    'mcp.json',
+  );
+  mcpCheck('turning AI control off removes the endpoint file', !existsSync(file), file);
+  const after = await mcpClient.tool('get_workspace');
+  mcpCheck(
+    'a call after turning off is not_running',
+    !after.ok && after.code === 'not_running',
+    after.text,
+  );
+  mcpClient.close();
+}
+
 function act(action) {
   const [verb, ...rest] = action.split(' ');
   const text = rest.join(' ');
   switch (verb) {
+    case 'mcp':
+      (text === 'off' ? mcpOff() : mcpRun()).catch((e) => {
+        console.error(`\nFAIL mcp: ${e.message}`);
+        finish(1);
+      });
+      break;
     case 'append':
       appendFileSync(log, `${text}\n`);
       break;

@@ -26,6 +26,7 @@ pub mod filter;
 pub mod filter_expr;
 pub mod indexer;
 pub mod level;
+pub mod mcp;
 pub mod menu_accel;
 pub mod merge;
 pub mod model;
@@ -93,6 +94,7 @@ pub fn run() {
         )
         .manage(SessionManager::default())
         .manage(export::ExportJobs::default())
+        .manage(commands::McpState::default())
         .setup(|app| {
             // Prompt 020: a frontend that never applies a scheme must not leave the window hidden.
             let handle = app.handle().clone();
@@ -198,6 +200,12 @@ pub fn run() {
             commands::forget_db_secret,
             commands::set_window_chrome,
             commands::set_menu_accelerators,
+            commands::subscribe_mcp,
+            commands::mcp_set_enabled,
+            commands::mcp_info,
+            commands::mcp_reply,
+            commands::mcp_disconnect,
+            commands::mcp_probe,
             #[cfg(debug_assertions)]
             e2e::e2e_report,
             #[cfg(debug_assertions)]
@@ -211,6 +219,8 @@ pub fn run() {
             // Prompt 015: an export running while the app quits leaves no temporary file.
             if let tauri::RunEvent::Exit = event {
                 app.state::<export::ExportJobs>().shutdown();
+                // Prompt 022: the AI bridge closes, its endpoint file goes.
+                app.state::<commands::McpState>().shutdown();
                 // Prompt 016: listeners stop, spools are deleted or kept as chosen.
                 app.state::<SessionManager>().close_all();
             }

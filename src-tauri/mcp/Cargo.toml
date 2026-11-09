@@ -1,0 +1,24 @@
+[package]
+name = "lc-mcp"
+version = "1.0.0"
+description = "MCP server of Log Commander (stdio sidecar `log-commander-mcp`) and the bridge between it and the running app"
+authors = ["Marc Kronberg"]
+license = "MIT"
+repository = "https://github.com/krocon/log-commander"
+edition = "2021"
+rust-version = "1.89"
+
+[lib]
+name = "lc_mcp"
+path = "src/lib.rs"
+
+[[bin]]
+name = "log-commander-mcp"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3"

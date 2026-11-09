@@ -11,6 +11,20 @@ import {
 } from './settings.models';
 
 describe('settings', () => {
+  it('keeps AI control off and masking on unless stored as booleans (prompt 022)', () => {
+    expect(mergeSettings({}).mcp).toEqual({
+      enabled: false,
+      maskSecrets: true,
+      skipConfirm: false,
+    });
+    expect(mergeSettings({ mcp: { enabled: 'yes', maskSecrets: false } } as never).mcp).toEqual({
+      enabled: false,
+      maskSecrets: false,
+      skipConfirm: false,
+    });
+    expect(mergeSettings({ mcp: 7 } as never).mcp).toEqual(DEFAULT_SETTINGS.mcp);
+  });
+
   it('falls back to defaults for missing or broken values', () => {
     expect(mergeSettings(null)).toEqual(DEFAULT_SETTINGS);
     const broken = mergeSettings({

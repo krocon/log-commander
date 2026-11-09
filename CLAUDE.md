@@ -32,6 +32,8 @@
 | Screenshots für die Doku | `npm run build`, dann `node scripts/screenshots.mjs` (WebKit + IPC-Mock; `--schemes` nur Picker und je Schema ein Bild) |
 | Log-Generator | `node scripts/gen-log.mjs /tmp/app.log --rate 5000 [--format …] [--rotate-every N] [--truncate-every N] [--metrics]` (`--metrics`: `cpu= mem= took` für Prompt 011); Lücken (014): `--start ISO --pause-after N --pause MIN` |
 | README-Tabelle der Kürzel | `node scripts/keymap-table.mjs` (aus den Keymaps; `npm run check` prüft sie) |
+| KI-Steuerung (MCP) | `cd src-tauri && cargo build -p lc-mcp` (Sidecar `log-commander-mcp` neben die Debug-App); von Hand `node scripts/e2e/mcp-client.mjs src-tauri/target/debug/log-commander-mcp get_workspace '{}'`; Tools geändert: `LC_MCP_SNAPSHOT=1 cargo test -p lc-mcp the_schemas_match_the_snapshot`, Grenzen in `features/mcp/mcp-limits.ts` mit (`scripts/mcp-limits.test.mjs`) |
+| Sidecar für Releases | `node scripts/mcp-sidecar.mjs [triple]` nach `src-tauri/binaries/`, dann `tauri build --config src-tauri/tauri.sidecar.conf.json` (macht der Release-Workflow) |
 | Icons neu | `npx tauri icon src-tauri/icons/source/app-icon.svg -o src-tauri/icons` (danach `android/`, `ios/` löschen) |
 
 ## Layout
@@ -71,6 +73,11 @@ src/                         Angular 22 (zoneless, Signals, OnPush, Standalone)
                              Ordner-Browser), remote-logic (Prüfen, Labels, nächster Schritt nach einem Fehler)
   app/features/winevent/     Windows-Ereignisse (018, nur Windows): winevent-dialog (lazy), winevent-logic (Prüfen,
                              Labels, Zähler, Spalten-Vorgabe des Profils `winevent`)
+  app/core/mcp/              McpApi, DTOs der KI-Steuerung (022)
+  app/features/mcp/          KI-Steuerung (022): McpService (Root: Brücke, Verlauf, Vorschlag, verbergen), mcp-tools (lazy:
+                             alle Tools über LogSessionService/ActionService), mcp-logic (Argumente, Maskieren, Filterbaum
+                             1-basiert, Zeiten), mcp-limits (= tools.rs), mcp-actions (Positivliste), Badge, Einstellungen,
+                             Vorschlagsdialog
   app/features/database/     Datenbanken (019): database-dialog (lazy: Verbindung, Tabelle wählen, Vorschau),
                              database-logic (Prüfen, Arbeitsstand, Labels, Zähler, Vorschau-Tabelle)
 src-tauri/src/               Rust; alles außer commands.rs und lib.rs ist frei von Tauri
@@ -108,8 +115,12 @@ src-tauri/src/               Rust; alles außer commands.rs und lib.rs ist frei 
                              mysql.rs (sqlx), mssql.rs (tiberius), sqlite.rs (rusqlite read-only), fake.rs (nur Tests)
   sources/syslog.rs          Syslog UDP/TCP: Binden (nur Loopback ohne allowRemote), Absender-Filter, TCP-Framing
                              (RFC 6587), Spool-Zeile (Empfangszeit, Absender, Meldung escaped)
+  mcp.rs                     KI-Steuerung (022): Router (Positivliste, Größen, Zeitgrenzen, 2 Long-Polls) zum Frontend
   e2e.rs                     nur Debug-Build: Szenario im WebView (Fenster im Hintergrund), siehe scripts/e2e/
-scripts/e2e/                 run.mjs (Harness), scenario.js (läuft im WebView), mock-ipc.js (nur für Screenshots)
+src-tauri/mcp/               Crate lc-mcp (022): Sidecar log-commander-mcp (stdio-MCP), Brücke (bridge/client/host), tools.rs
+                             (Schemata, Stufen, Grenzen; Snapshot tools.snapshot.json), guide.rs + guide/*.md (instructions,
+                             help-Themen, MCP-Prompts), probe.rs (Verbindungstest)
+scripts/e2e/                 run.mjs (Harness), mcp-client.mjs (MCP-Client für e2e und von Hand),, scenario.js (läuft im WebView), mock-ipc.js (nur für Screenshots)
 samples/                     Beispiel-Logs
 ```
 
@@ -358,6 +369,26 @@ samples/                     Beispiel-Logs
   und schreibt nur `.lcw`. Lesezeichen/Notizen gehören zur Datei, Anker = Zeile + Offset + Länge + Hash der ersten 256 Byte.
   Details und Grenzen: `prompts/done/015-export-und-arbeitsstand.design.md`.
 
+- **KI-Steuerung über MCP (Prompt 022):** Sidecar `log-commander-mcp` (Crate `lc-mcp`, nur serde) spricht MCP über
+  stdio und leitet über TCP `127.0.0.1` an die App (Token 256 Bit je Start in `<Config>/mcp.json`, 0600, weg beim
+  Ausschalten/Beenden), Architektur aus AppIconic 018. **Aus per Default**, dann kein Port. Rust prüft nur
+  (Positivliste, Argumente ≤ 1 MiB, Antwort ≤ 1 MiB, Zeitgrenze, Rate 20/s je Verbindung, 4 Verbindungen, 2 Long-Polls)
+  und reicht über **einen Channel** (`subscribe_mcp`, `mcp_reply`) ans Frontend: Tabs, Filterbaum, Auswahl, Lesezeichen
+  und Notizen kennt nur das Frontend, und jede Wirkung läuft über `LogSessionService`/`ActionService` wie Tastatur und
+  Menü. Die Tools sind ein Lazy-Chunk (`mcp-tools.ts`), geladen beim ersten Aufruf. Stufen: lesen / Ansicht steuern
+  (sichtbar, umkehrbar) / vorschlagen (Dialog, Enter bestätigt nicht, Fokus auf „Ablehnen“, 5 min); keine Stufe für
+  Quellen, Geheimnisse, Settings, Zwischenablage, beliebige Dateien. Was die KI weiß, kommt aus einer Quelle:
+  `guide.rs` (`instructions` ≤ 2 KB, `help`-Themen aus `guide/*.md`, `tools`/`limits` aus dem Code generiert,
+  MCP-Prompts), `help` beantwortet der Sidecar selbst. Zeilen 1-basiert, jede Antwort mit `epoch`, falsche `epoch` →
+  `stale_view`. Logtext ist Fremddaten: nur in JSON-Feldern, Maskieren bekannter Geheimnisse (Vorgabe an), Tabs „vor
+  der KI verbergen“ (gilt für Filter-Tabs darunter; nicht im Arbeitsstand). `wait_for_lines` öffnet eine verborgene
+  Backend-Ansicht mit dem Muster (Rust-Regex, kein JS-Regex auf Logtext). Notizen der KI beginnen mit `KI: `, sie
+  entfernt nur eigene Marken und schließt nur eigene Filter-Tabs. Details: `prompts/done/022-mcp-ki-steuerung.design.md`,
+  Nutzer-Doku `docs/mcp.md`.
+- **Grenzen KI-Steuerung (022):** `read_lines` 500 Zeilen, Zeile 80–16 000 Zeichen (Vorgabe 2000), Eintrag 256 KB,
+  200 Treffer, 500 Eimer, SQL 1000 Zeilen in der Antwort/64 KB, `wait_for_lines` 120 s/50 Zeilen, Notiz 1996 Zeichen
+  (+„KI: “ = 2000), `propose_open` 16 Dateien, Filter/SQL warten 30 s, Vorschlag 5 min, Verlauf 50 Aufrufe nur im
+  Speicher.
 - **Tastenkürzel nur über Katalog und Keymaps (Prompt 021).** Neue Kürzel: Aktion in `action-catalog.ts`, Default in
   `keymaps/*.json`, Handler per `ActionService.register`, nie ein eigener `keydown`-Handler am `document`. Lokale Tasten von
   Widgets (Baum, Zeitstrahl, Splitter, Panels, Menüs, Dialoge, Diagramm) bleiben am Element; der Dispatcher lässt `view`-Aktionen

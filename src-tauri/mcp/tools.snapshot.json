@@ -1,0 +1,1766 @@
+{
+  "limits": {
+    "answer_bytes_max": 1048576,
+    "args_bytes_max": 1048576,
+    "buckets_max": 500,
+    "calls_per_second": 20.0,
+    "connections_max": 4,
+    "entry_chars_max": 262144,
+    "filter_conditions_max": 64,
+    "filter_depth_max": 16,
+    "filter_tabs_per_file_max": 8,
+    "filter_wait_seconds": 30,
+    "hits_max": 200,
+    "line_chars_default": 2000,
+    "line_chars_max": 16000,
+    "note_chars_max": 1996,
+    "open_paths_max": 16,
+    "pattern_chars_max": 4096,
+    "proposal_wait_seconds": 300,
+    "read_lines_max": 500,
+    "sql_bytes_max": 65536,
+    "sql_rows_max": 1000,
+    "sql_seconds_max": 10,
+    "wait_lines_max": 50,
+    "wait_seconds_max": 120
+  },
+  "tools": [
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "[read] Explains Log Commander for an AI: concepts (tab, view, entry, epoch), the filter tree with examples, the SQL table of the dashboard, field rules, recipes for common questions, limits and error codes. Call it once before a larger task. Works even when the app is closed.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "topic": {
+            "description": "Omit for the overview and the list of topics",
+            "enum": [
+              "overview",
+              "concepts",
+              "filters",
+              "sql",
+              "fields",
+              "workflows",
+              "tools",
+              "limits",
+              "errors"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "name": "help"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "[read] The open tabs: id, title (a filter tab shows its chain 'app.log › ERROR'), kind (file, merge, source), path or source label, profile, lines in the file and in the view, frozen, following, status, and which tab is in front. Start here. Tabs the user hid from AI are not listed.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "name": "get_workspace"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "[read] One tab in detail: everything of get_workspace plus its filter (levels, search, filter tree), its columns (ids for field conditions, fields and SQL), the selected entry, bookmarks and notes, epoch and view_generation, and whether a filter job is still running.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "tab_id": {
+            "description": "Tab id from get_workspace; default: the tab in front",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "name": "get_tab"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "[read] Counts per level for the whole file and for the view of the tab, file size, number of entries and the time span of the file. Cheap: use it before reading any lines.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "tab_id": {
+            "description": "Tab id from get_workspace; default: the tab in front",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "name": "get_stats"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "[read] Lines of the tab's view (filtered as the user sees it), each with line (file, 1-based), pos (position in the view, 1-based), level, continuation (part of a stack trace) and text. Give start (view position; negative counts from the end: -50 = the last 50) or around_line (a file line; the window is centred on it). fields: true adds the columns split ({column id: value}). Never page through a whole log: locate first with get_stats, find_level, search, get_timeline or run_sql.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "around_line": {
+            "description": "Line number of the file, 1-based (as the gutter shows it)",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "count": {
+            "default": 50,
+            "description": "Number of lines",
+            "maximum": 500,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "epoch": {
+            "description": "The epoch of an earlier answer: fails with stale_view if the file was truncated, rotated without keeping or re-sorted since, so line numbers you hold no longer fit",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "fields": {
+            "default": false,
+            "description": "Add the split columns per line",
+            "type": "boolean"
+          },
+          "max_line_chars": {
+            "default": 2000,
+            "description": "Longer lines are cut",
+            "maximum": 16000,
+            "minimum": 80,
+            "type": "integer"
+          },
+          "start": {
+            "description": "View position, 1-based; negative: from the end (-1 = last line). Default -count",
+            "type": "integer"
+          },
+          "tab_id": {
+            "description": "Tab id from get_workspace; default: the tab in front",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "name": "read_lines"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "[read] The whole entry of a line: its head and all continuation lines (stack trace, wrapped JSON), straight from the file, ignoring the filter. Use it to read an exception completely.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "epoch": {
+            "description": "The epoch of an earlier answer: fails with stale_view if the file was truncated, rotated without keeping or re-sorted since, so line numbers you hold no longer fit",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "line": {
+            "description": "Line number of the file, 1-based (as the gutter shows it)",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "max_chars": {
+            "default": 20000,
+            "description": "Longer entries are cut",
+            "maximum": 262144,
+            "minimum": 1000,
+            "type": "integer"
+          },
+          "tab_id": {
+            "description": "Tab id from get_workspace; default: the tab in front",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "line"
+        ],
+        "type": "object"
+      },
+      "name": "get_entry"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "[read] Finds lines in the tab's view containing query (text or regex), from from_line on (default the start; backwards: from the end), stops after limit hits or when it wraps around. Returns line, pos and the line text. Does not change the search of the tab – to show the result to the user use open_filter_tab.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "backwards": {
+            "default": false,
+            "type": "boolean"
+          },
+          "case_sensitive": {
+            "default": false,
+            "type": "boolean"
+          },
+          "epoch": {
+            "description": "The epoch of an earlier answer: fails with stale_view if the file was truncated, rotated without keeping or re-sorted since, so line numbers you hold no longer fit",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "from_line": {
+            "description": "Line number of the file, 1-based (as the gutter shows it)",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "limit": {
+            "default": 20,
+            "description": "Most hits",
+            "maximum": 200,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "max_line_chars": {
+            "default": 300,
+            "description": "Longer lines are cut",
+            "maximum": 16000,
+            "minimum": 80,
+            "type": "integer"
+          },
+          "query": {
+            "description": "Text or regex (Rust syntax)",
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string"
+          },
+          "regex": {
+            "default": false,
+            "type": "boolean"
+          },
+          "tab_id": {
+            "description": "Tab id from get_workspace; default: the tab in front",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      },
+      "name": "search"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "[read] Heads of the next entries with one of levels (default ERROR and FATAL) in the tab's view, from from_line on (default the start; backwards: from the end). Fast (uses the level index, no text scan): the best way to list errors. Follow up with get_entry for the stack trace.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "backwards": {
+            "default": false,
+            "type": "boolean"
+          },
+          "epoch": {
+            "description": "The epoch of an earlier answer: fails with stale_view if the file was truncated, rotated without keeping or re-sorted since, so line numbers you hold no longer fit",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "from_line": {
+            "description": "Line number of the file, 1-based (as the gutter shows it)",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "levels": {
+            "items": {
+              "enum": [
+                "UNKNOWN",
+                "TRACE",
+                "DEBUG",
+                "INFO",
+                "WARN",
+                "ERROR",
+                "FATAL"
+              ],
+              "type": "string"
+            },
+            "type": "array",
+            "uniqueItems": true
+          },
+          "limit": {
+            "default": 20,
+            "description": "Most hits",
+            "maximum": 200,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "max_line_chars": {
+            "default": 300,
+            "description": "Longer lines are cut",
+            "maximum": 16000,
+            "minimum": 80,
+            "type": "integer"
+          },
+          "tab_id": {
+            "description": "Tab id from get_workspace; default: the tab in front",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "name": "find_level"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "[read] Entries of the whole file over time: buckets with counts of all entries, WARN, ERROR and FATAL, plus gaps (stretches without any entry – outages, a stopped service). Without from/to the axis spans the 1st to 99th percentile of the times. Counts are approximate. Use it for 'when did it start' and 'was there an outage'.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "buckets": {
+            "default": 60,
+            "description": "Number of buckets",
+            "maximum": 500,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "from": {
+            "description": "ISO 8601; without zone: local time",
+            "type": "string"
+          },
+          "tab_id": {
+            "description": "Tab id from get_workspace; default: the tab in front",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "to": {
+            "description": "ISO 8601; without zone: local time",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "name": "get_timeline"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "[read] The first entry at or after a time in the tab's view: its line and pos. Then read_lines around_line to see what happened.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "tab_id": {
+            "description": "Tab id from get_workspace; default: the tab in front",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "time": {
+            "description": "ISO 8601; without zone: local time",
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "time"
+        ],
+        "type": "object"
+      },
+      "name": "line_at_time"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "[read] The SQL table of the tab for run_sql: columns with type and meaning (line, ts, level, source and the number fields of the format), and whether it is still being built. Builds it on first use.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "tab_id": {
+            "description": "Tab id from get_workspace; default: the tab in front",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "name": "report_schema"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "[read] One read-only SQLite query over the entry heads of the tab's file (help topic sql): table log(line, ts ms UTC, level, source, fields…), bucket(ts, '1m') for time series. The best tool for counting, grouping, top-N and percentiles. Never contains the message text. Example: SELECT bucket(ts, '1m') AS t, count(*) AS n FROM log WHERE level = 'ERROR' GROUP BY t ORDER BY t",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "default": 200,
+            "description": "Most rows in the answer",
+            "maximum": 1000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "sql": {
+            "description": "One SELECT (or WITH … SELECT)",
+            "maxLength": 65536,
+            "minLength": 1,
+            "type": "string"
+          },
+          "tab_id": {
+            "description": "Tab id from get_workspace; default: the tab in front",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sql"
+        ],
+        "type": "object"
+      },
+      "name": "run_sql"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "[read] Tries an extraction rule (a regex with exactly one group over a column) on the last lines of the tab's view and returns what it would extract per line. Saves nothing – propose_field_rule asks the user to keep it.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "default": "number",
+            "enum": [
+              "text",
+              "number",
+              "percent",
+              "duration",
+              "size"
+            ],
+            "type": "string"
+          },
+          "lines": {
+            "default": 50,
+            "description": "How many lines from the end to try",
+            "maximum": 200,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "pattern": {
+            "description": "Regex with exactly one capture group, e.g. took (\\d+ ?ms)",
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string"
+          },
+          "source_column": {
+            "default": "message",
+            "description": "Column id the regex runs over",
+            "type": "string"
+          },
+          "tab_id": {
+            "description": "Tab id from get_workspace; default: the tab in front",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "pattern"
+        ],
+        "type": "object"
+      },
+      "name": "preview_field_rule"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "[read] The actions of the app run_action may run: id, name (German) and group. Only harmless view actions (next error, freeze, column view, …).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "name": "list_actions"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "[read] Waits for new lines in the tab (live tail) that match query and/or levels, up to timeout_s, and returns the first ones – or timed_out: true. Matching runs in the app (entries with stack traces count as one). Use it for 'tell me when X happens'; call it again to keep watching.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "case_sensitive": {
+            "default": false,
+            "type": "boolean"
+          },
+          "levels": {
+            "items": {
+              "enum": [
+                "UNKNOWN",
+                "TRACE",
+                "DEBUG",
+                "INFO",
+                "WARN",
+                "ERROR",
+                "FATAL"
+              ],
+              "type": "string"
+            },
+            "type": "array",
+            "uniqueItems": true
+          },
+          "limit": {
+            "default": 10,
+            "description": "Most lines",
+            "maximum": 50,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "max_line_chars": {
+            "default": 2000,
+            "description": "Longer lines are cut",
+            "maximum": 16000,
+            "minimum": 80,
+            "type": "integer"
+          },
+          "query": {
+            "maxLength": 4096,
+            "type": "string"
+          },
+          "regex": {
+            "default": false,
+            "type": "boolean"
+          },
+          "tab_id": {
+            "description": "Tab id from get_workspace; default: the tab in front",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "timeout_s": {
+            "default": 30,
+            "description": "Seconds to wait",
+            "maximum": 120,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "name": "wait_for_lines"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "[changes the view, visible to the user] Brings a tab to the front.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "tab_id": {
+            "description": "Tab id from get_workspace; default: the tab in front",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tab_id"
+        ],
+        "type": "object"
+      },
+      "name": "activate_tab"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "[changes the view, visible to the user] Scrolls the tab to a line and selects its entry (the detail panel shows it). Use it to show the user what you are talking about.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "epoch": {
+            "description": "The epoch of an earlier answer: fails with stale_view if the file was truncated, rotated without keeping or re-sorted since, so line numbers you hold no longer fit",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "line": {
+            "description": "Line number of the file, 1-based (as the gutter shows it)",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "select": {
+            "default": true,
+            "type": "boolean"
+          },
+          "tab_id": {
+            "description": "Tab id from get_workspace; default: the tab in front",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "line"
+        ],
+        "type": "object"
+      },
+      "name": "reveal_line"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "[changes the view, visible to the user] Replaces the filter of a tab (level chips, search, filter tree). Prefer open_filter_tab: it leaves the user's filter alone. Omitted parts are reset (levels: all, no search, empty tree). Waits up to 30 s for the filter job.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "levels": {
+            "items": {
+              "enum": [
+                "UNKNOWN",
+                "TRACE",
+                "DEBUG",
+                "INFO",
+                "WARN",
+                "ERROR",
+                "FATAL"
+              ],
+              "type": "string"
+            },
+            "type": "array",
+            "uniqueItems": true
+          },
+          "search": {
+            "additionalProperties": false,
+            "description": "The search of the tab (toolbar). mode filter: only matching entries; highlight: all lines, matches marked",
+            "properties": {
+              "case_sensitive": {
+                "default": false,
+                "type": "boolean"
+              },
+              "mode": {
+                "default": "filter",
+                "enum": [
+                  "filter",
+                  "highlight"
+                ],
+                "type": "string"
+              },
+              "regex": {
+                "default": false,
+                "type": "boolean"
+              },
+              "text": {
+                "maxLength": 4096,
+                "type": "string"
+              }
+            },
+            "required": [
+              "text"
+            ],
+            "type": "object"
+          },
+          "tab_id": {
+            "description": "Tab id from get_workspace; default: the tab in front",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "tree": {
+            "$defs": {
+              "cond": {
+                "oneOf": [
+                  {
+                    "description": "Text in the line",
+                    "properties": {
+                      "caseSensitive": {
+                        "type": "boolean"
+                      },
+                      "isRegex": {
+                        "type": "boolean"
+                      },
+                      "text": {
+                        "maxLength": 4096,
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "type": {
+                        "const": "text"
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "text",
+                      "isRegex",
+                      "caseSensitive"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "description": "Level of the entry",
+                    "properties": {
+                      "levels": {
+                        "items": {
+                          "enum": [
+                            "UNKNOWN",
+                            "TRACE",
+                            "DEBUG",
+                            "INFO",
+                            "WARN",
+                            "ERROR",
+                            "FATAL"
+                          ],
+                          "type": "string"
+                        },
+                        "type": "array",
+                        "uniqueItems": true
+                      },
+                      "type": {
+                        "const": "level"
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "levels"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "description": "A column of the tab (get_tab columns). gt/lt/between compare numbers in base units: took > 500ms is value \"500ms\"",
+                    "properties": {
+                      "caseSensitive": {
+                        "type": "boolean"
+                      },
+                      "column": {
+                        "type": "string"
+                      },
+                      "op": {
+                        "enum": [
+                          "eq",
+                          "contains",
+                          "regex",
+                          "gt",
+                          "lt",
+                          "between"
+                        ],
+                        "type": "string"
+                      },
+                      "type": {
+                        "const": "field"
+                      },
+                      "value": {
+                        "maxLength": 4096,
+                        "type": "string"
+                      },
+                      "value2": {
+                        "description": "Upper bound of between",
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "column",
+                      "op",
+                      "value"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "description": "Time of the entry, ISO 8601 (without zone: local time)",
+                    "properties": {
+                      "from": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "to": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "type": {
+                        "const": "time"
+                      }
+                    },
+                    "required": [
+                      "type"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "description": "Section between a start and an end pattern (e.g. a request from 'begin 42' to 'end 42')",
+                    "properties": {
+                      "end": {
+                        "oneOf": [
+                          {
+                            "properties": {
+                              "caseSensitive": {
+                                "type": "boolean"
+                              },
+                              "isRegex": {
+                                "type": "boolean"
+                              },
+                              "text": {
+                                "maxLength": 4096,
+                                "minLength": 1,
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "text",
+                              "isRegex",
+                              "caseSensitive"
+                            ],
+                            "type": "object"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "inclusive": {
+                        "type": "boolean"
+                      },
+                      "start": {
+                        "properties": {
+                          "caseSensitive": {
+                            "type": "boolean"
+                          },
+                          "isRegex": {
+                            "type": "boolean"
+                          },
+                          "text": {
+                            "maxLength": 4096,
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "text",
+                          "isRegex",
+                          "caseSensitive"
+                        ],
+                        "type": "object"
+                      },
+                      "type": {
+                        "const": "range"
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "start",
+                      "inclusive"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "description": "Line numbers of the file, 1-based like everywhere in these tools; first or last may be null (open end)",
+                    "properties": {
+                      "first": {
+                        "type": [
+                          "integer",
+                          "null"
+                        ]
+                      },
+                      "last": {
+                        "type": [
+                          "integer",
+                          "null"
+                        ]
+                      },
+                      "type": {
+                        "const": "lines"
+                      }
+                    },
+                    "required": [
+                      "type"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              },
+              "cond_node": {
+                "properties": {
+                  "cond": {
+                    "$ref": "#/$defs/cond"
+                  },
+                  "kind": {
+                    "const": "cond"
+                  },
+                  "negate": {
+                    "default": false,
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "cond"
+                ],
+                "type": "object"
+              },
+              "group": {
+                "properties": {
+                  "children": {
+                    "items": {
+                      "$ref": "#/$defs/node"
+                    },
+                    "type": "array"
+                  },
+                  "kind": {
+                    "const": "group"
+                  },
+                  "negate": {
+                    "default": false,
+                    "type": "boolean"
+                  },
+                  "op": {
+                    "enum": [
+                      "and",
+                      "or"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "op",
+                  "children"
+                ],
+                "type": "object"
+              },
+              "node": {
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/group"
+                  },
+                  {
+                    "$ref": "#/$defs/cond_node"
+                  }
+                ]
+              }
+            },
+            "$ref": "#/$defs/group",
+            "description": "Filter tree (help topic filters): a group with op and/or and children; a condition holds for an entry once one of its lines (head or stack trace) meets it. negate: NOT. At most 64 conditions, 16 levels deep."
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "name": "set_filter"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "[changes the view, visible to the user] Opens a filter tab below a tab: it shows the parent's view AND this filter, live, titled like 'app.log › ERROR'. The preferred way to show a result. At most 8 tabs per file. Example tree for 'errors without health checks': {\"kind\":\"group\",\"op\":\"and\",\"children\":[{\"kind\":\"cond\",\"cond\":{\"type\":\"level\",\"levels\":[\"ERROR\",\"FATAL\"]}},{\"kind\":\"cond\",\"negate\":true,\"cond\":{\"type\":\"text\",\"text\":\"/health\",\"isRegex\":false,\"caseSensitive\":false}}]}",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "levels": {
+            "items": {
+              "enum": [
+                "UNKNOWN",
+                "TRACE",
+                "DEBUG",
+                "INFO",
+                "WARN",
+                "ERROR",
+                "FATAL"
+              ],
+              "type": "string"
+            },
+            "type": "array",
+            "uniqueItems": true
+          },
+          "search": {
+            "additionalProperties": false,
+            "description": "The search of the tab (toolbar). mode filter: only matching entries; highlight: all lines, matches marked",
+            "properties": {
+              "case_sensitive": {
+                "default": false,
+                "type": "boolean"
+              },
+              "mode": {
+                "default": "filter",
+                "enum": [
+                  "filter",
+                  "highlight"
+                ],
+                "type": "string"
+              },
+              "regex": {
+                "default": false,
+                "type": "boolean"
+              },
+              "text": {
+                "maxLength": 4096,
+                "type": "string"
+              }
+            },
+            "required": [
+              "text"
+            ],
+            "type": "object"
+          },
+          "tab_id": {
+            "description": "Tab id from get_workspace; default: the tab in front",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "tree": {
+            "$defs": {
+              "cond": {
+                "oneOf": [
+                  {
+                    "description": "Text in the line",
+                    "properties": {
+                      "caseSensitive": {
+                        "type": "boolean"
+                      },
+                      "isRegex": {
+                        "type": "boolean"
+                      },
+                      "text": {
+                        "maxLength": 4096,
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "type": {
+                        "const": "text"
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "text",
+                      "isRegex",
+                      "caseSensitive"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "description": "Level of the entry",
+                    "properties": {
+                      "levels": {
+                        "items": {
+                          "enum": [
+                            "UNKNOWN",
+                            "TRACE",
+                            "DEBUG",
+                            "INFO",
+                            "WARN",
+                            "ERROR",
+                            "FATAL"
+                          ],
+                          "type": "string"
+                        },
+                        "type": "array",
+                        "uniqueItems": true
+                      },
+                      "type": {
+                        "const": "level"
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "levels"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "description": "A column of the tab (get_tab columns). gt/lt/between compare numbers in base units: took > 500ms is value \"500ms\"",
+                    "properties": {
+                      "caseSensitive": {
+                        "type": "boolean"
+                      },
+                      "column": {
+                        "type": "string"
+                      },
+                      "op": {
+                        "enum": [
+                          "eq",
+                          "contains",
+                          "regex",
+                          "gt",
+                          "lt",
+                          "between"
+                        ],
+                        "type": "string"
+                      },
+                      "type": {
+                        "const": "field"
+                      },
+                      "value": {
+                        "maxLength": 4096,
+                        "type": "string"
+                      },
+                      "value2": {
+                        "description": "Upper bound of between",
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "column",
+                      "op",
+                      "value"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "description": "Time of the entry, ISO 8601 (without zone: local time)",
+                    "properties": {
+                      "from": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "to": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "type": {
+                        "const": "time"
+                      }
+                    },
+                    "required": [
+                      "type"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "description": "Section between a start and an end pattern (e.g. a request from 'begin 42' to 'end 42')",
+                    "properties": {
+                      "end": {
+                        "oneOf": [
+                          {
+                            "properties": {
+                              "caseSensitive": {
+                                "type": "boolean"
+                              },
+                              "isRegex": {
+                                "type": "boolean"
+                              },
+                              "text": {
+                                "maxLength": 4096,
+                                "minLength": 1,
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "text",
+                              "isRegex",
+                              "caseSensitive"
+                            ],
+                            "type": "object"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "inclusive": {
+                        "type": "boolean"
+                      },
+                      "start": {
+                        "properties": {
+                          "caseSensitive": {
+                            "type": "boolean"
+                          },
+                          "isRegex": {
+                            "type": "boolean"
+                          },
+                          "text": {
+                            "maxLength": 4096,
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "text",
+                          "isRegex",
+                          "caseSensitive"
+                        ],
+                        "type": "object"
+                      },
+                      "type": {
+                        "const": "range"
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "start",
+                      "inclusive"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "description": "Line numbers of the file, 1-based like everywhere in these tools; first or last may be null (open end)",
+                    "properties": {
+                      "first": {
+                        "type": [
+                          "integer",
+                          "null"
+                        ]
+                      },
+                      "last": {
+                        "type": [
+                          "integer",
+                          "null"
+                        ]
+                      },
+                      "type": {
+                        "const": "lines"
+                      }
+                    },
+                    "required": [
+                      "type"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              },
+              "cond_node": {
+                "properties": {
+                  "cond": {
+                    "$ref": "#/$defs/cond"
+                  },
+                  "kind": {
+                    "const": "cond"
+                  },
+                  "negate": {
+                    "default": false,
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "cond"
+                ],
+                "type": "object"
+              },
+              "group": {
+                "properties": {
+                  "children": {
+                    "items": {
+                      "$ref": "#/$defs/node"
+                    },
+                    "type": "array"
+                  },
+                  "kind": {
+                    "const": "group"
+                  },
+                  "negate": {
+                    "default": false,
+                    "type": "boolean"
+                  },
+                  "op": {
+                    "enum": [
+                      "and",
+                      "or"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "op",
+                  "children"
+                ],
+                "type": "object"
+              },
+              "node": {
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/group"
+                  },
+                  {
+                    "$ref": "#/$defs/cond_node"
+                  }
+                ]
+              }
+            },
+            "$ref": "#/$defs/group",
+            "description": "Filter tree (help topic filters): a group with op and/or and children; a condition holds for an entry once one of its lines (head or stack trace) meets it. negate: NOT. At most 64 conditions, 16 levels deep."
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "name": "open_filter_tab"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "[changes the view, visible to the user] Closes a filter tab this AI connection opened. Other tabs belong to the user.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "tab_id": {
+            "description": "Tab id from get_workspace; default: the tab in front",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tab_id"
+        ],
+        "type": "object"
+      },
+      "name": "close_tab"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "[changes the view, visible to the user] Sets a bookmark on the entry of a line (M/N jump between bookmarks, the overview ruler shows them).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "epoch": {
+            "description": "The epoch of an earlier answer: fails with stale_view if the file was truncated, rotated without keeping or re-sorted since, so line numbers you hold no longer fit",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "line": {
+            "description": "Line number of the file, 1-based (as the gutter shows it)",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "tab_id": {
+            "description": "Tab id from get_workspace; default: the tab in front",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "line"
+        ],
+        "type": "object"
+      },
+      "name": "set_bookmark"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "[changes the view, visible to the user] Removes a bookmark this AI set.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "epoch": {
+            "description": "The epoch of an earlier answer: fails with stale_view if the file was truncated, rotated without keeping or re-sorted since, so line numbers you hold no longer fit",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "line": {
+            "description": "Line number of the file, 1-based (as the gutter shows it)",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "tab_id": {
+            "description": "Tab id from get_workspace; default: the tab in front",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "line"
+        ],
+        "type": "object"
+      },
+      "name": "remove_bookmark"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "[changes the view, visible to the user] Writes a note on the entry of a line; it is shown in the gutter, the ruler and the detail panel and starts with 'KI: '. Good for leaving findings at the place they belong.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "epoch": {
+            "description": "The epoch of an earlier answer: fails with stale_view if the file was truncated, rotated without keeping or re-sorted since, so line numbers you hold no longer fit",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "line": {
+            "description": "Line number of the file, 1-based (as the gutter shows it)",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "tab_id": {
+            "description": "Tab id from get_workspace; default: the tab in front",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "text": {
+            "description": "Short finding, plain text",
+            "maxLength": 1996,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "line",
+          "text"
+        ],
+        "type": "object"
+      },
+      "name": "add_note"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "[changes the view, visible to the user] Removes a note this AI wrote.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "epoch": {
+            "description": "The epoch of an earlier answer: fails with stale_view if the file was truncated, rotated without keeping or re-sorted since, so line numbers you hold no longer fit",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "line": {
+            "description": "Line number of the file, 1-based (as the gutter shows it)",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "tab_id": {
+            "description": "Tab id from get_workspace; default: the tab in front",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "line"
+        ],
+        "type": "object"
+      },
+      "name": "remove_note"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "[changes the view, visible to the user] Freezes reading the file (on) or resumes it (off), like P. While frozen line numbers stay put.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "on": {
+            "type": "boolean"
+          },
+          "tab_id": {
+            "description": "Tab id from get_workspace; default: the tab in front",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "on"
+        ],
+        "type": "object"
+      },
+      "name": "set_frozen"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "[changes the view, visible to the user] Follows the end of the log (on) or stops following (off), like Space.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "on": {
+            "type": "boolean"
+          },
+          "tab_id": {
+            "description": "Tab id from get_workspace; default: the tab in front",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "on"
+        ],
+        "type": "object"
+      },
+      "name": "set_follow"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "[changes the view, visible to the user] Shows the tab as a table with one column per field (columns) or as raw lines (raw), like T.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "mode": {
+            "enum": [
+              "columns",
+              "raw"
+            ],
+            "type": "string"
+          },
+          "tab_id": {
+            "description": "Tab id from get_workspace; default: the tab in front",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "type": "object"
+      },
+      "name": "set_column_mode"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "[changes the view, visible to the user] Runs an action of the app on the tab in front, by id from list_actions (e.g. NEXT_ERROR, TOGGLE_TIMELINE).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "pattern": "^[A-Z][A-Z0-9_]{1,63}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "run_action"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "[proposal: the user confirms in a dialog, the call waits for the answer] Asks the user to open log files (absolute paths) – the only way to get at a file that is not open. merge: true opens them as one tab sorted by time. Answers confirmed (with the new tab ids), cancelled or busy.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "merge": {
+            "default": false,
+            "type": "boolean"
+          },
+          "paths": {
+            "items": {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 16,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "paths"
+        ],
+        "type": "object"
+      },
+      "name": "propose_open"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "[proposal: the user confirms in a dialog, the call waits for the answer] Asks the user to export the tab's view, the whole file or a range of lines as txt, csv or jsonl to an absolute path (extension must fit the format). Answers confirmed (the export then runs as a job), cancelled or busy.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "first_line": {
+            "description": "Line number of the file, 1-based (as the gutter shows it)",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "format": {
+            "enum": [
+              "txt",
+              "csv",
+              "jsonl"
+            ],
+            "type": "string"
+          },
+          "last_line": {
+            "description": "Line number of the file, 1-based (as the gutter shows it)",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "path": {
+            "description": "Absolute target path, e.g. /Users/me/errors.csv",
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string"
+          },
+          "scope": {
+            "enum": [
+              "view",
+              "file",
+              "lines"
+            ],
+            "type": "string"
+          },
+          "tab_id": {
+            "description": "Tab id from get_workspace; default: the tab in front",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "scope",
+          "format",
+          "path"
+        ],
+        "type": "object"
+      },
+      "name": "propose_export"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "[proposal: the user confirms in a dialog, the call waits for the answer] Asks the user to add an extraction rule to the format of the tab: a new column (and SQL column for numbers) from a regex with one group. Try it with preview_field_rule first. Answers confirmed or cancelled.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "default": "number",
+            "enum": [
+              "text",
+              "number",
+              "percent",
+              "duration",
+              "size"
+            ],
+            "type": "string"
+          },
+          "name": {
+            "description": "Column id, must not be a column of the format",
+            "pattern": "^[a-z][a-z0-9_]{0,39}$",
+            "type": "string"
+          },
+          "pattern": {
+            "description": "Regex with exactly one capture group",
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string"
+          },
+          "source_column": {
+            "default": "message",
+            "type": "string"
+          },
+          "tab_id": {
+            "description": "Tab id from get_workspace; default: the tab in front",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "unit": {
+            "description": "Unit of a value written without one (ms, s, KB …)",
+            "maxLength": 8,
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "pattern"
+        ],
+        "type": "object"
+      },
+      "name": "propose_field_rule"
+    }
+  ]
+}

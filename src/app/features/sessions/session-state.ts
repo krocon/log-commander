@@ -128,6 +128,8 @@ export class SessionState {
   readonly pausedAtCount = signal(0);
 
   readonly selection = signal<LineSelection | null>(null);
+  /** Hidden from AI control (prompt 022, design E1): the tab and its filter tabs do not exist for the AI. */
+  readonly aiHidden = signal(false);
   /**
    * Bookmarks (line numbers, prompt 007), kept in memory only; a new epoch clears them. Shared by all tabs of the
    * file (prompt 013): they are line numbers, and one finds them again down the chain.

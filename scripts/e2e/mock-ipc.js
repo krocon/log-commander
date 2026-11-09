@@ -37,7 +37,18 @@
   // Windows events (prompt 018), MOCK ONLY: the real source exists only on Windows. These lines imitate what
   // sources/winevent/line.rs writes, so that the dialog and the tab can be photographed on macOS. Enabled with
   // `setup({ windows: true })`; without it `winevent_supported` is false as on macOS and Linux.
-  const WINEVENT_KEYS = ['timestamp', 'level', 'provider', 'eventId', 'message', 'channel', 'computer', 'task', 'user', 'recordId'];
+  const WINEVENT_KEYS = [
+    'timestamp',
+    'level',
+    'provider',
+    'eventId',
+    'message',
+    'channel',
+    'computer',
+    'task',
+    'user',
+    'recordId',
+  ];
   const WINEVENT_LABELS = {
     timestamp: 'Zeit',
     level: 'Level',
@@ -53,20 +64,105 @@
   const WINEVENT_COLUMNS = WINEVENT_KEYS.map((id) => ({
     id,
     label: WINEVENT_LABELS[id],
-    kind: id === 'timestamp' ? 'timestamp' : id === 'level' ? 'level' : id === 'eventId' || id === 'recordId' ? 'number' : 'text',
+    kind:
+      id === 'timestamp'
+        ? 'timestamp'
+        : id === 'level'
+          ? 'level'
+          : id === 'eventId' || id === 'recordId'
+            ? 'number'
+            : 'text',
   }));
   const WINEVENT_SAMPLES = [
-    ['info', 'Service Control Manager', 7036, 'Der Dienst „Windows Update“ befindet sich jetzt im Status „Ausgeführt“.', 'System', 'None', 'SYSTEM'],
-    ['info', 'Microsoft-Windows-Security-Auditing', 4624, 'Ein Konto wurde erfolgreich angemeldet. Antragsteller: WS01$ Anmeldetyp: 5', 'Security', 'Logon', 'SYSTEM'],
-    ['warn', 'Microsoft-Windows-Time-Service', 129, 'NtpClient konnte keine Domänenpeers als Zeitquelle festlegen. Neuer Versuch in 15 Minuten.', 'System', 'None', 'LOCAL SERVICE'],
-    ['error', 'Application Error', 1000, 'Name der fehlerhaften Anwendung: backup-agent.exe, Version: 4.2.1.0, Ausnahmecode: 0xc0000005', 'Application', '100', ''],
-    ['error', 'Microsoft-Windows-Security-Auditing', 4625, 'Fehler beim Anmelden eines Kontos. Kontoname: admin Fehlerursache: Unbekannter Benutzername oder falsches Kennwort.', 'Security', 'Logon', 'SYSTEM'],
-    ['info', 'MsiInstaller', 11707, 'Produkt: Log Commander -- Installation erfolgreich abgeschlossen.', 'Application', 'None', 'S-1-5-21-3623811015-3361044348-30300820-1013'],
-    ['fatal', 'Microsoft-Windows-Kernel-Power', 41, 'Das System wurde neu gestartet, ohne dass es zuvor ordnungsgemäß heruntergefahren wurde.', 'System', '63', 'SYSTEM'],
-    ['warn', 'Microsoft-Windows-DNS-Client', 1014, 'Timeout bei der Namensauflösung für den Namen updates.example.com, nachdem keiner der konfigurierten DNS-Server geantwortet hat.', 'System', '1014', 'NETWORK SERVICE'],
-    ['debug', 'Microsoft-Windows-PowerShell', 4104, 'Remotebefehl wird erstellt: Get-WinEvent -LogName Application -MaxEvents 10', 'Microsoft-Windows-PowerShell/Operational', 'Ausführen eines Remotebefehls', 'S-1-5-21-3623811015-3361044348-30300820-1013'],
+    [
+      'info',
+      'Service Control Manager',
+      7036,
+      'Der Dienst „Windows Update“ befindet sich jetzt im Status „Ausgeführt“.',
+      'System',
+      'None',
+      'SYSTEM',
+    ],
+    [
+      'info',
+      'Microsoft-Windows-Security-Auditing',
+      4624,
+      'Ein Konto wurde erfolgreich angemeldet. Antragsteller: WS01$ Anmeldetyp: 5',
+      'Security',
+      'Logon',
+      'SYSTEM',
+    ],
+    [
+      'warn',
+      'Microsoft-Windows-Time-Service',
+      129,
+      'NtpClient konnte keine Domänenpeers als Zeitquelle festlegen. Neuer Versuch in 15 Minuten.',
+      'System',
+      'None',
+      'LOCAL SERVICE',
+    ],
+    [
+      'error',
+      'Application Error',
+      1000,
+      'Name der fehlerhaften Anwendung: backup-agent.exe, Version: 4.2.1.0, Ausnahmecode: 0xc0000005',
+      'Application',
+      '100',
+      '',
+    ],
+    [
+      'error',
+      'Microsoft-Windows-Security-Auditing',
+      4625,
+      'Fehler beim Anmelden eines Kontos. Kontoname: admin Fehlerursache: Unbekannter Benutzername oder falsches Kennwort.',
+      'Security',
+      'Logon',
+      'SYSTEM',
+    ],
+    [
+      'info',
+      'MsiInstaller',
+      11707,
+      'Produkt: Log Commander -- Installation erfolgreich abgeschlossen.',
+      'Application',
+      'None',
+      'S-1-5-21-3623811015-3361044348-30300820-1013',
+    ],
+    [
+      'fatal',
+      'Microsoft-Windows-Kernel-Power',
+      41,
+      'Das System wurde neu gestartet, ohne dass es zuvor ordnungsgemäß heruntergefahren wurde.',
+      'System',
+      '63',
+      'SYSTEM',
+    ],
+    [
+      'warn',
+      'Microsoft-Windows-DNS-Client',
+      1014,
+      'Timeout bei der Namensauflösung für den Namen updates.example.com, nachdem keiner der konfigurierten DNS-Server geantwortet hat.',
+      'System',
+      '1014',
+      'NETWORK SERVICE',
+    ],
+    [
+      'debug',
+      'Microsoft-Windows-PowerShell',
+      4104,
+      'Remotebefehl wird erstellt: Get-WinEvent -LogName Application -MaxEvents 10',
+      'Microsoft-Windows-PowerShell/Operational',
+      'Ausführen eines Remotebefehls',
+      'S-1-5-21-3623811015-3361044348-30300820-1013',
+    ],
   ];
-  const WINEVENT_LEVEL = { fatal: 'FATAL', error: 'ERROR', warn: 'WARN', info: 'INFO', debug: 'DEBUG' };
+  const WINEVENT_LEVEL = {
+    fatal: 'FATAL',
+    error: 'ERROR',
+    warn: 'WARN',
+    info: 'INFO',
+    debug: 'DEBUG',
+  };
 
   // Databases (prompt 019), mock for the screenshots: rows of a log table as the JSON lines that
   // sources/database/value.rs writes (time and level renamed, then the other columns).
@@ -74,7 +170,14 @@
   const DB_COLUMNS = DB_KEYS.map((id) => ({
     id,
     label: id,
-    kind: id === 'timestamp' ? 'timestamp' : id === 'level' ? 'level' : id === 'id' || id === 'user_id' ? 'number' : 'text',
+    kind:
+      id === 'timestamp'
+        ? 'timestamp'
+        : id === 'level'
+          ? 'level'
+          : id === 'id' || id === 'user_id'
+            ? 'number'
+            : 'text',
   }));
   const DB_SAMPLES = [
     ['INFO', 'app.orders', 'Bestellung 48211 angelegt (3 Positionen)', 1042],
@@ -105,14 +208,24 @@
       DB_KEYS.forEach((key, k) => {
         text += `${k ? ',' : ''}"${key}":`;
         const value = values[key];
-        const raw = typeof value === 'number' || value === null ? String(value) : JSON.stringify(value);
+        const raw =
+          typeof value === 'number' || value === null ? String(value) : JSON.stringify(value);
         const quoted = typeof value === 'string';
         const from = text.length + (quoted ? 1 : 0);
         text += raw;
         fields.push([from, text.length - (quoted ? 1 : 0)]);
       });
       text += '}';
-      lines.push({ line: i, level, source: 0, text, isContinuation: false, truncated: false, matches: [], fields });
+      lines.push({
+        line: i,
+        level,
+        source: 0,
+        text,
+        isContinuation: false,
+        truncated: false,
+        matches: [],
+        fields,
+      });
     }
     return lines;
   }
@@ -126,7 +239,8 @@
     const lines = [];
     const start = Date.UTC(2026, 10, 8, 7, 30, 0);
     for (let i = 0; i < 160; i++) {
-      const [level, provider, eventId, message, own, task, user] = WINEVENT_SAMPLES[(i * 7 + (i >> 2)) % WINEVENT_SAMPLES.length];
+      const [level, provider, eventId, message, own, task, user] =
+        WINEVENT_SAMPLES[(i * 7 + (i >> 2)) % WINEVENT_SAMPLES.length];
       const values = {
         timestamp: new Date(start + i * 23_417).toISOString().replace('Z', '+00:00'),
         level,
@@ -488,6 +602,7 @@
     { id: 'winevent', name: 'Windows-Ereignisse', builtin: true, patterns: [] },
   ];
 
+  const mcpInfo = { enabled: false, connections: 0, sidecar: null, debug: false };
   const handlers = {
     open_log({ path, onUpdate }) {
       const name = path.split('/').pop();
@@ -549,8 +664,14 @@
     open_source({ config, keep, onUpdate, credentials }) {
       const id = sessions.size + 1;
       if (config.kind === 'winevent') {
-        if (!setupData.windows) throw { code: 'unsupported', message: 'Windows-Ereignisprotokolle gibt es nur unter Windows' };
-        const label = config.computer ? `Ereignisse ${config.computer}: ${config.channel}` : `Ereignisse: ${config.channel}`;
+        if (!setupData.windows)
+          throw {
+            code: 'unsupported',
+            message: 'Windows-Ereignisprotokolle gibt es nur unter Windows',
+          };
+        const label = config.computer
+          ? `Ereignisse ${config.computer}: ${config.channel}`
+          : `Ereignisse: ${config.channel}`;
         const lines = wineventLines(config.channel);
         const session = {
           id,
@@ -735,8 +856,22 @@
       };
     },
     remote_hosts: () => [
-      { alias: 'web-prod', hostName: '10.20.0.5', user: 'deploy', port: 22, identityFiles: [], proxy: false },
-      { alias: 'db', hostName: 'db.internal', user: null, port: 2222, identityFiles: [], proxy: false },
+      {
+        alias: 'web-prod',
+        hostName: '10.20.0.5',
+        user: 'deploy',
+        port: 22,
+        identityFiles: [],
+        proxy: false,
+      },
+      {
+        alias: 'db',
+        hostName: 'db.internal',
+        user: null,
+        port: 2222,
+        identityFiles: [],
+        proxy: false,
+      },
     ],
     remote_list_dir: ({ path }) => ({
       path: path || '/var/log',
@@ -752,7 +887,11 @@
     // Prompt 018 (mock only, see WINEVENT_KEYS).
     winevent_supported: () => setupData.windows === true,
     winevent_channels: () => {
-      if (!setupData.windows) throw { code: 'unsupported', message: 'Windows-Ereignisprotokolle gibt es nur unter Windows' };
+      if (!setupData.windows)
+        throw {
+          code: 'unsupported',
+          message: 'Windows-Ereignisprotokolle gibt es nur unter Windows',
+        };
       return [
         'Application',
         'System',
@@ -1197,6 +1336,28 @@
     set_window_chrome: () => null,
     // Prompt 021: the menu accelerators follow the keymap.
     set_menu_accelerators: () => null,
+    // Prompt 022: AI control, off as in a fresh install.
+    subscribe_mcp: () => mcpInfo,
+    mcp_set_enabled: ({ enabled }) => ({
+      ...mcpInfo,
+      enabled,
+      connections: enabled ? 1 : 0,
+      sidecar: enabled ? '/Applications/Log Commander.app/Contents/MacOS/log-commander-mcp' : null,
+    }),
+    mcp_info: () => mcpInfo,
+    mcp_reply: () => null,
+    mcp_disconnect: () => null,
+    mcp_probe: () => ({
+      ok: true,
+      step: 'app',
+      code: null,
+      server: 'log-commander',
+      version: '1.0.0',
+      protocol: '2025-06-18',
+      tools: 31,
+      app: true,
+      tabs: 2,
+    }),
   };
 
   window.isTauri = true;

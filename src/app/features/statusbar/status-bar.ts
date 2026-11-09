@@ -12,10 +12,13 @@ import { COUNTER_TITLE, sourceCounters, sourcePill } from '../sources/source-log
 import { WINEVENT_COUNTER_TITLE } from '../winevent/winevent-logic';
 import { DATABASE_COUNTER_TITLE } from '../database/database-logic';
 import { REMOTE_COUNTER_TITLE } from '../remote/remote-logic';
+import { McpBadgeComponent } from '../mcp/mcp-badge';
+import { McpService } from '../mcp/mcp.service';
 
 @Component({
   selector: 'app-status-bar',
   changeDetection: ChangeDetectionStrategy.OnPush,
+  imports: [McpBadgeComponent],
   template: `
     @if (session(); as s) {
       <span class="pill" [class]="'pill ' + pill().cls" role="status">
@@ -123,6 +126,12 @@ import { REMOTE_COUNTER_TITLE } from '../remote/remote-logic';
     @if (sessions.notice(); as notice) {
       <span class="notice" role="status">{{ notice }}</span>
     }
+    <!-- Prompt 022: AI control – connections, history, hide a tab, disconnect. -->
+    @if (mcp.visible()) {
+      @defer (on immediate) {
+        <app-mcp-badge />
+      }
+    }
   `,
   styles: `
     :host {
@@ -206,6 +215,7 @@ import { REMOTE_COUNTER_TITLE } from '../remote/remote-logic';
 export class StatusBarComponent {
   protected readonly sessions = inject(LogSessionService);
   protected readonly exports = inject(ExportService);
+  protected readonly mcp = inject(McpService);
   protected readonly progressText = progressText;
   protected readonly session = this.sessions.active;
 

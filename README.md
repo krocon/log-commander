@@ -159,6 +159,15 @@ Like <code>tail -f</code> with a GUI: millions of lines, instant filters, no wai
   „(binär, N Byte)“. The tab is called `db:schema.table`, the status bar shows the rows and the last query with its
   duration. After a broken connection it reconnects (1 … 60 s) and goes on from the last key; a refused login stops.
   See [Reading databases safely](#reading-databases-safely).
+- **AI control (MCP)** – an AI assistant (Claude Code, Claude Desktop, Cursor …) can read and steer the running app
+  over the Model Context Protocol: it sees your tabs, filters and selection, and uses the app's engines instead of
+  reading whole files – level counts, the timeline with outages, `find_level`, search, the filter tree and SQL over
+  the entry heads. It shows results in the window (a filter tab „app.log › …“, a note, a bookmark, the line scrolled
+  into view) and can wait for new lines („tell me when OutOfMemory appears“). It knows what it can do from the
+  instructions, the tool descriptions and a `help` tool with concepts, filter syntax, SQL, recipes and limits. Off by
+  default (no port while off); opening files and exporting ask you in a dialog; tabs can be hidden from the AI; known
+  secrets are masked. Settings → KI-Steuerung shows the one line for `claude mcp add`. See
+  [AI control](#ai-control-mcp) and [docs/mcp.md](docs/mcp.md).
 - **Share** – right click „Als Markdown kopieren“ or „Als Jira kopieren“: file, lines, time span and filter as a head,
   the selected lines as a code block, the notes as a list, up to 64 KB (for more there is the export).
 - **Search** – filter or highlight, regular expressions, case sensitivity, jump between matches.
@@ -191,7 +200,8 @@ Like <code>tail -f</code> with a GUI: millions of lines, instant filters, no wai
 | ![A remote file over SFTP](docs/screenshots/remote.png) | ![Remote dialog: browser and host key](docs/screenshots/remote-dialog.png) |
 | ![Windows events (mock, taken on macOS)](docs/screenshots/winevent.png) | ![Windows events dialog (mock, taken on macOS)](docs/screenshots/winevent-dialog.png) |
 | ![A database table as a log (mock data)](docs/screenshots/database.png) | ![Database dialog with table and preview (mock data)](docs/screenshots/database-dialog.png) |
-| ![Keyboard shortcuts: search, record, reset](docs/screenshots/shortcuts.png) | |
+| ![Keyboard shortcuts: search, record, reset](docs/screenshots/shortcuts.png) | ![AI control in the settings](docs/screenshots/mcp-settings.png) |
+| ![AI badge with the call history](docs/screenshots/mcp-badge.png) | |
 
 ## Receiving syslog safely
 
@@ -294,6 +304,23 @@ Remote files (SSH/SFTP) touch credentials and other people's servers. Log Comman
   control characters, bidi marks and line separators are escaped (`\xNN`, `\u{XXXX}`) before it reaches the spool;
   lines over 1 MB are cut and marked.
 
+## AI control (MCP)
+
+Settings → KI-Steuerung (MCP) → „Eine KI … darf Log Commander lesen und steuern“, then connect your AI app with the
+line the settings show, e.g. for Claude Code:
+
+```bash
+claude mcp add --scope user log-commander -- "/Applications/Log Commander.app/Contents/MacOS/log-commander-mcp"
+```
+
+Then ask things like „What went wrong in app.log in the last 30 minutes?“, „Open a tab with all requests slower than
+500 ms without health checks“ or „Watch the log and tell me when OutOfMemory appears“. 31 tools in three tiers:
+reading (no visible effect), changing the view (filter tabs, notes starting with `KI: `, bookmarks – visible and
+undone by you), and proposals (open files, export, a new field) that wait for your answer in a dialog. There is no
+tool for sources, passwords, settings, the clipboard or arbitrary files. What the AI reads goes to its provider: hide
+sensitive tabs (status bar → KI), known secrets are masked. Details, all tools and the safety model:
+[docs/mcp.md](docs/mcp.md).
+
 ## Install
 
 Packages for each platform are built by the [release workflow](.github/workflows/release.yml) (unsigned until the signing
@@ -366,6 +393,9 @@ Plain keys act in the log only, not in text fields, dialogs or the widgets below
 | `Esc` | In the search field: clear it |
 | `Cmd/Ctrl+Shift+K` | Keyboard shortcuts: view, record, remove, reset (also Help → Keyboard Shortcuts…) |
 | `?` | Keyboard shortcuts as an overview |
+| – | Show the AI control history (no default key) |
+| – | Disconnect the AI (no default key) |
+| – | Hide the tab in front from the AI, or show it again (no default key) |
 <!-- keymap:end -->
 
 Keys of single widgets are fixed and stay with them:
