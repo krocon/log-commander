@@ -85,6 +85,21 @@ export interface DrawState {
   total: number;
   marks: string;
   follow: boolean;
+  /**
+   * The lines on screen as the cache holds them (`null` = still loading). The cache's `revision` rises with every
+   * page that arrives, also the new end far below a reader; equal objects here mean the cells on screen stay.
+   */
+  rows?: readonly (LogLine | null)[];
+}
+
+/** Same rows on screen: the same line objects (a reloaded page brings new ones, a cleared cache `null`). */
+export function sameRows(
+  a: readonly (LogLine | null)[] | undefined,
+  b: readonly (LogLine | null)[] | undefined,
+): boolean {
+  if (!a || !b || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
 }
 
 /**
@@ -109,7 +124,7 @@ export function drawKey(state: DrawState, forced: readonly number[]): string {
 
 /**
  * True if the only change is lines arriving behind the view while the reader is not following: the cells on
- * screen stay, only the scroll bar grows. Such draws can wait (one per second is enough).
+ * screen stay (same line objects, whatever else the cache loaded), only the scroll bar grows. Such draws go through the table's `rowsAppended` (no render).
  */
 export function growsOnlyBehindView(
   prev: DrawState | null,
@@ -121,7 +136,7 @@ export function growsOnlyBehindView(
   if (!prev || prev.follow || next.follow || next.count <= prev.count) return false;
   if (prevForced !== nextForced || prev.rowH !== next.rowH || prev.left !== next.left) return false;
   if (prev.pos.top !== next.pos.top || prev.pos.subPx !== next.pos.subPx) return false;
-  if (prev.revision !== next.revision || prev.marks !== next.marks) return false;
+  if (prev.marks !== next.marks || !sameRows(prev.rows, next.rows)) return false;
   if (String(prev.total).length !== String(next.total).length) return false;
   return prev.pos.top + visibleRows + 1 < prev.count;
 }

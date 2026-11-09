@@ -1070,6 +1070,19 @@
     await waitFor('resumed for the reader', () => pill() === 'Pausiert');
     await waitFor('the badge counts what came', () => $('.new-lines')?.textContent.includes('1 neue Zeile'));
     await waitFor('the reader stays in place', () => topLine() === readingAt);
+    // Lines far behind the reader: the table only learns the count (rowsAppended), the drawn cells stay the same
+    // elements (a click or a marked text survives), the scroll bar grows at once.
+    press('Home');
+    await waitFor('reader at the start', () => topLine() === 0 && pill() !== 'Live');
+    await sleep(300);
+    const firstCell = rows()[0];
+    const rangeBefore = scroller().scrollHeight;
+    const appendsBefore = window.__lcTable.appends();
+    await act('bulk 200');
+    await waitFor('lines behind the reader: scroll bar grows, cells not rebuilt', () =>
+      scroller().scrollHeight > rangeBefore && window.__lcTable.appends() > appendsBefore &&
+      firstCell.isConnected && rows()[0] === firstCell && topLine() === 0,
+    );
     press('End');
     await waitFor('following again', () => pill() === 'Live');
 
