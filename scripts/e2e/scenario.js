@@ -315,7 +315,11 @@
     await waitFor('saved filter in the tree, marked as in use', () =>
       treeItem('Bestellungen')?.classList.contains('current'),
     );
-    const filteredWithSearch = stat('Zeilen', 'view');
+    // The search runs as a filter job: read the count once it applied, not while the view still shows all.
+    const filteredWithSearch = await waitFor(
+      'the search filters the view',
+      () => stat('Zeilen', 'view') < 15 && stat('Zeilen', 'view'),
+    );
     click(treeKind('filter-query').querySelector('.remove'));
     await waitFor(
       '× removes the search, the toolbar shows it',
