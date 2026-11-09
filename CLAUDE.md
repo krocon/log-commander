@@ -131,6 +131,10 @@ samples/                     Beispiel-Logs
   `getColspanAt` ab der ersten **sichtbaren** Datenspalte (`spanFrom`), ihr Text rückt um deren x nach links: Die Tabelle
   zeichnet einen Colspan nur aus einer Zelle, die sie zeichnet, und `getMaxColspan` > 0 hieße alle Zeilen scannen.
   Kein Sortieren. Details: `prompts/done/009-tabellen-header.design.md`.
+  Ziehen in der Kopfzeile über die Ereignisse der Tabelle (ab 1.1.110), keine eigenen DOM-Listener: Zeilennummern
+  `resizable: false, movable: false`, `(columnResizeEnd)`/`(columnMoveEnd)` speichern das Layout (`syncFromTable`),
+  `isColumnDragging()` hält das Zeichnen an (es setzt selbst Breiten), der Doppelklick auf den Griff misst über
+  `columnAutoWidth.getWidth` nur die Zeilen auf dem Schirm (die Vorgabe fragte bis 10 000 meist ungeladene Zeilen).
   Editlicious ist als Editor mit Rope nicht passend: Der Text liegt hier bewusst nicht im Speicher.
 - **Virtuelle Offsets und Segmente:** Jede Datei einer Sitzung (vor/nach Rotation) belegt einen eigenen Offset-Bereich, der
   Handle bleibt offen. So bleiben Zeilennummern bei „alte Zeilen behalten“ gültig, höchstens 32 Dateien, dann Neubeginn.
