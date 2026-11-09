@@ -15,8 +15,11 @@ import {
 import { WINEVENT_PROFILE, defaultColumnLayout } from '../winevent/winevent-logic';
 import { TableSignalComponent } from '@guiexpert/angular-table';
 import {
+  ColumnAutoWidthContextIf,
   ColumnDef,
   FalseFn,
+  GeColumnMoveEvent,
+  GeColumnResizeEvent,
   GeMouseEvent,
   GeScrollEvent,
   Size,
@@ -172,6 +175,8 @@ const BASE_OPTIONS: TableOptionsIf = {
       (mouseDragging)="onTableDragging($event)"
       (mouseDraggingEnded)="onTableDraggingEnded()"
       (contextMenu)="onTableContextMenu($event)"
+      (columnResizeEnd)="onColumnDragEnd($event)"
+      (columnMoveEnd)="onColumnDragEnd($event)"
     />
     @if (session().filteredLines() === 0) {
       <div class="lt-empty">{{ emptyText() }}</div>
@@ -288,8 +293,6 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
   private drawnModel: unknown = null;
   private drawnState: DrawState | null = null;
   private drawnForcedKey = '';
-  /** A mouse drag in the header (resize or move) is running: drawing waits, the table owns the columns. */
-  private headerBusy = false;
   private holds = 0;
   /** Draws that went through `rowsAppended` (lines behind the view), for e2e. */
   private appends = 0;
@@ -402,9 +405,6 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
     const host = this.host.nativeElement;
     // Own scroll model: the wheel moves the line position, the table only draws it.
     host.addEventListener('wheel', this.onWheel, { passive: false, capture: true });
-    host.addEventListener('mousedown', this.onHeaderMouseDown, { capture: true });
-    host.addEventListener('dblclick', this.onHeaderDblClick, { capture: true });
-    window.addEventListener('mouseup', this.onMouseUp, { capture: true });
     document.addEventListener('mousedown', this.onOutsideMouseDown, { capture: true });
     this.resizeObserver = new ResizeObserver(() => {
       this.viewportH.set(host.clientHeight);
@@ -425,7 +425,6 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
 
   ngOnDestroy(): void {
     this.resizeObserver?.disconnect();
-    window.removeEventListener('mouseup', this.onMouseUp, { capture: true });
     document.removeEventListener('mousedown', this.onOutsideMouseDown, { capture: true });
     this.offActions();
     document.removeEventListener('selectionchange', this.onSelectionChange);
@@ -465,6 +464,9 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
       width: new Size(60, 'px'),
       sortable: FalseFn,
       headerClasses: ['lt-head', 'lt-head-gutter'],
+      // The gutter is no column to move or resize.
+      resizable: false,
+      movable: false,
     });
     if (!this.columnView() || !set) {
       const area = new LogAreaModel(
@@ -510,6 +512,9 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
         columnsResizable: true,
         columnsDraggable: true,
         columnResizeHandleWidthInPx: 6,
+        // Double click on a column's edge: measured on the rows on screen (the default would ask the model for
+        // up to 10 000 lines, most of them not loaded).
+        columnAutoWidth: { getWidth: (ctx) => this.fitWidth(ctx) },
       },
       model: TableFactory.createTableModel({
         bodyAreaModel: area,
@@ -545,7 +550,7 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
     // marked text, so this needs neither a throttle nor a hold.
     const grows =
       model === this.drawnModel &&
-      !this.headerBusy &&
+      !this.columnDragging() &&
       growsOnlyBehindView(
         this.drawnState,
         state,
@@ -558,7 +563,7 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
       return;
     }
     const dragging = this.dragged || this.dragSelected;
-    if (this.headerBusy || holdForSelection(state.follow, this.selectionInTable(), dragging)) {
+    if (this.columnDragging() || holdForSelection(state.follow, this.selectionInTable(), dragging)) {
       this.heldForSelection = true;
       this.holds++;
       return;
@@ -740,7 +745,7 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
     if (this.selectionInTable()) return;
     // A released selection lets the view catch up; the next selection holds only once dragged again.
     if (!this.dragged) this.dragSelected = false;
-    if (this.heldForSelection && !this.headerBusy) this.redraw.update((r) => r + 1);
+    if (this.heldForSelection && !this.columnDragging()) this.redraw.update((r) => r + 1);
   };
 
   /** Drops a text selection (stale, or one the user is done with) so it neither blocks nor holds anything. */
@@ -809,7 +814,7 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
       ids.filter((id) => id !== ID_NUMBER),
       widths,
     );
-    // The gutter stays in front (the table lets a column be dropped before it): the state puts it back.
+    // The gutter is locked in front (`movable: false`); should it ever not be, the state puts it back.
     if (ids[0] !== ID_NUMBER) this.applyColumns(next);
     else {
       this.columns = next;
@@ -846,11 +851,16 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
     );
   }
 
-  /** Double click on a column's edge: as wide as its content in the rows on screen (no file scan). */
-  private fitColumn(index: number): void {
+  /**
+   * Double click on a column's edge: as wide as its content in the rows on screen (no file scan). The column that
+   * fills the view keeps its width.
+   */
+  private fitWidth(ctx: ColumnAutoWidthContextIf): number | undefined {
+    const index = ctx.columnIndex;
     const area = this.config().area;
     const id = area.columnAt(index).id;
-    if (!area.columnView || id === ID_NUMBER || id === this.filled?.id) return;
+    const current = this.api()?.getTableModel().getColumnWidth(index);
+    if (!area.columnView || id === ID_NUMBER || id === this.filled?.id) return current;
     const root = this.host.nativeElement;
     let widest = 0;
     for (const el of Array.from(
@@ -870,7 +880,7 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
       range.selectNodeContents(title);
       widest = Math.max(widest, range.getBoundingClientRect().width);
     }
-    this.applyColumns(setWidth(this.columns, id, clampWidth(widest + CELL_PADDING)));
+    return clampWidth(widest + CELL_PADDING);
   }
 
   // ---------------------------------------------------------------- menu
@@ -1100,33 +1110,19 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
     );
   }
 
-  private readonly onHeaderMouseDown = (event: MouseEvent): void => {
-    const target = event.target as HTMLElement;
-    const head = target.closest?.('[data-area="header"]');
-    if (!head || event.button !== 0) return;
-    // The gutter is no column to move or resize.
-    if (head.getAttribute('data-col-index') === String(COL_NUMBER)) {
-      event.stopPropagation();
-      return;
-    }
-    this.headerBusy = true;
-  };
+  /**
+   * The user ended a resize or move in the header (also the double click on an edge): store order and widths.
+   * Drawing waited while the table owned the columns (`columnDragging`); a cancel only lets it catch up.
+   */
+  protected onColumnDragEnd(event: GeColumnResizeEvent | GeColumnMoveEvent): void {
+    if (event.type === 'end') this.syncFromTable();
+    else if (this.heldForSelection) this.redraw.update((r) => r + 1);
+  }
 
-  private readonly onMouseUp = (): void => {
-    if (!this.headerBusy) return;
-    // The table handles the end of the drag in this event, the result is read afterwards.
-    setTimeout(() => {
-      this.headerBusy = false;
-      this.syncFromTable();
-    });
-  };
-
-  private readonly onHeaderDblClick = (event: MouseEvent): void => {
-    const handle = (event.target as HTMLElement).closest?.('[data-ge-action="resize-column"]');
-    if (!handle) return;
-    event.stopPropagation();
-    this.fitColumn(Number(handle.getAttribute('data-col-index')));
-  };
+  /** A resize or move in the header is running: drawing would set widths of its own (the filled column). */
+  private columnDragging(): boolean {
+    return this.api()?.isColumnDragging() ?? false;
+  }
 
   // ---------------------------------------------------------------- input
 
@@ -1155,7 +1151,7 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
 
   /** The table's drag of a press (text being marked in the rows): from 4 px on it is no click any more. */
   protected onTableDragging(event: GeMouseEvent): void {
-    if (this.headerBusy || this.dragged) return;
+    if (this.columnDragging() || this.dragged) return;
     this.dragged = isDrag(event.draggingX, event.draggingY);
   }
 
