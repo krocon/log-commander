@@ -13,6 +13,7 @@ use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -168,6 +169,12 @@ impl Bucket {
     }
 }
 
+/// One line in one write (`writeln!` writes the newline on its own, a second small segment).
+fn send_line(w: &mut TcpStream, mut text: String) -> io::Result<()> {
+    text.push('\n');
+    w.write_all(text.as_bytes())
+}
+
 fn read_line(r: &mut BufReader<TcpStream>, line: &mut String, max: usize) -> io::Result<usize> {
     line.clear();
     let n = r.by_ref().take(max as u64 + 1).read_line(line)?;
@@ -216,28 +223,30 @@ fn serve(stream: TcpStream, ctx: &Conn<'_>) {
     };
     // The hello has one deadline, not a timeout per read: a byte every few seconds cannot hold the socket
     // (review 022 #7). A watchdog closes the socket when the deadline passes.
-    let said_hello = Arc::new(AtomicBool::new(false));
+    // It ends as soon as the hello is read (dropping `said_hello` wakes it): sleeping out the deadline kept a
+    // clone of every socket open for 5 s, past `MAX_OPEN`.
+    let (said_hello, hello_done) = mpsc::channel::<()>();
     if let Ok(killer) = w.try_clone() {
-        let said_hello = said_hello.clone();
         std::thread::spawn(move || {
-            std::thread::sleep(HELLO_TIMEOUT);
-            if !said_hello.load(Ordering::SeqCst) {
+            if hello_done.recv_timeout(HELLO_TIMEOUT) == Err(RecvTimeoutError::Timeout) {
                 let _ = killer.shutdown(Shutdown::Both);
             }
         });
     }
+    // Answers are small lines: without this, Nagle and a delayed ACK cost ~40 ms per call on Linux.
+    let _ = w.set_nodelay(true);
     let _ = stream.set_read_timeout(Some(HELLO_TIMEOUT));
     let mut r = BufReader::new(stream);
     let mut line = String::new();
     if read_line(&mut r, &mut line, MAX_HELLO_BYTES).unwrap_or(0) == 0
         || stop.load(Ordering::SeqCst)
     {
-        said_hello.store(true, Ordering::SeqCst);
+        drop(said_hello);
         forget();
         let _ = w.shutdown(Shutdown::Both);
         return;
     }
-    said_hello.store(true, Ordering::SeqCst);
+    drop(said_hello);
     let ok =
         serde_json::from_str::<Hello>(&line).is_ok_and(|h| bridge::same_token(&h.token, token));
     let full = ok && connections.load(Ordering::SeqCst) >= MAX_CONNECTIONS;
@@ -248,7 +257,7 @@ fn serve(stream: TcpStream, ctx: &Conn<'_>) {
         }),
     })
     .unwrap_or_default();
-    if writeln!(w, "{answer}").is_err() || !ok || full {
+    if send_line(&mut w, answer).is_err() || !ok || full {
         forget();
         let _ = w.shutdown(Shutdown::Both);
         return;
@@ -290,7 +299,7 @@ fn serve(stream: TcpStream, ctx: &Conn<'_>) {
             },
         };
         let text = serde_json::to_string(&resp).unwrap_or_default();
-        if writeln!(w, "{text}").is_err() {
+        if send_line(&mut w, text).is_err() {
             break;
         }
     }

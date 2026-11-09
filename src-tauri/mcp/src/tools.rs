@@ -605,7 +605,10 @@ mod tests {
         if std::env::var_os("LC_MCP_SNAPSHOT").is_some() {
             std::fs::write(path, &now).unwrap();
         }
-        let saved = std::fs::read_to_string(path).unwrap_or_default();
+        // A Windows checkout may turn the newlines into CRLF (core.autocrlf).
+        let saved = std::fs::read_to_string(path)
+            .unwrap_or_default()
+            .replace("\r\n", "\n");
         assert_eq!(
             saved, now,
             "tools changed: regenerate the snapshot (see doc comment)"
