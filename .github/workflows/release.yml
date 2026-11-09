@@ -50,15 +50,34 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - uses: tauri-apps/tauri-action@v0
+      # Missing secrets arrive as empty strings, and Tauri then tries to import an empty certificate and fails.
+      # So the Apple variables are only set when the certificate is there; otherwise the app is signed ad hoc.
+      - name: Apple signing (only with secrets)
+        if: runner.os == 'macOS'
+        shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -z "$APPLE_CERTIFICATE" ]; then
+            echo "::notice::No APPLE_CERTIFICATE secret: macOS packages are signed ad hoc, not notarised."
+            exit 0
+          fi
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY \
+                      APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            value="${!name}"
+            if [ -n "$value" ]; then
+              delimiter="EOF_$(openssl rand -hex 8)"
+              { echo "$name<<$delimiter"; echo "$value"; echo "$delimiter"; } >> "$GITHUB_ENV"
+            fi
+          done
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
           releaseName: 'Log Commander ${{ github.ref_name }}'
