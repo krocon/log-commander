@@ -137,9 +137,20 @@ describe('growsOnlyBehindView', () => {
     total: 754,
     marks: '-',
     follow: false,
+    rows: [line(12), line(13)],
   };
   it('is true when lines arrive behind a reader in the middle', () => {
     expect(growsOnlyBehindView(prev, { ...prev, count: 800, total: 800 }, 'f', 'f', 30)).toBe(true);
+  });
+  it('ignores pages that arrive elsewhere (the new end), not the rows on screen', () => {
+    const more = { ...prev, count: 800, total: 800, revision: 5 };
+    expect(growsOnlyBehindView(prev, more, 'f', 'f', 30)).toBe(true);
+    // a reloaded page brings new objects, a cleared cache placeholders
+    expect(growsOnlyBehindView(prev, { ...more, rows: [line(12), line(13)] }, 'f', 'f', 30)).toBe(
+      false,
+    );
+    expect(growsOnlyBehindView(prev, { ...more, rows: [null, null] }, 'f', 'f', 30)).toBe(false);
+    expect(growsOnlyBehindView({ ...prev, rows: undefined }, more, 'f', 'f', 30)).toBe(false);
   });
   it('is false when following, scrolling, at the end, or anything else changes', () => {
     const more = { ...prev, count: 800, total: 800 };
@@ -149,7 +160,6 @@ describe('growsOnlyBehindView', () => {
       false,
     );
     expect(growsOnlyBehindView(prev, { ...more, marks: 'x' }, 'f', 'f', 30)).toBe(false);
-    expect(growsOnlyBehindView(prev, { ...more, revision: 5 }, 'f', 'f', 30)).toBe(false);
     expect(growsOnlyBehindView(prev, more, 'f', 'g', 30)).toBe(false);
     // the last rows are on screen: new lines become visible
     expect(growsOnlyBehindView(prev, more, 'f', 'f', 745)).toBe(false);

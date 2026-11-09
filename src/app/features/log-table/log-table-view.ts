@@ -79,8 +79,15 @@ import {
 } from './columns-logic';
 
 const LINE_HEIGHT_FACTOR = 1.5;
-/** Lines arriving behind the view redraw the scroll bar at most this often. */
-const GROW_DRAW_MS = 1000;
+
+/** The cache's objects of the lines on screen (and one more for a partly shown row). */
+function visibleLines(session: SessionState): (LogLine | null)[] {
+  const top = session.scroll().top;
+  const end = Math.min(session.displayedLines(), top + session.visibleRows());
+  const rows: (LogLine | null)[] = [];
+  for (let row = top; row < end; row++) rows.push(session.cache.line(row));
+  return rows;
+}
 const WHEEL_LINE_PX = 40;
 /** Width of a digit of the monospaced font relative to its size, roughly. */
 const CHAR_WIDTH_FACTOR = 0.62;
@@ -281,12 +288,11 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
   private drawnModel: unknown = null;
   private drawnState: DrawState | null = null;
   private drawnForcedKey = '';
-  /** When lines arriving behind the view were last drawn (scroll bar only), and the pending catch-up. */
-  private grownAt = -Infinity;
-  private growTimer: ReturnType<typeof setTimeout> | undefined;
   /** A mouse drag in the header (resize or move) is running: drawing waits, the table owns the columns. */
   private headerBusy = false;
   private holds = 0;
+  /** Draws that went through `rowsAppended` (lines behind the view), for e2e. */
+  private appends = 0;
   private resizeObserver: ResizeObserver | null = null;
   /** When a click last selected an entry: the double click that follows shows that one. */
   private clickedAt = -Infinity;
@@ -382,6 +388,7 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
         total: session.update().totalLines,
         marks: `${JSON.stringify(session.selection())}|${session.currentHitLine()}|${session.bookmarks().size}|${session.notes().size}`,
         follow: session.follow(),
+        rows: visibleLines(session),
       };
       const forced = [this.viewportW(), this.bodyH(), this.redraw()];
       // Between a new build and the table's answer the api is still the old table's.
@@ -412,11 +419,11 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
       drawTimes: this.drawTimes,
       api: () => this.api(),
       holds: () => this.holds,
+      appends: () => this.appends,
     };
   }
 
   ngOnDestroy(): void {
-    if (this.growTimer !== undefined) clearTimeout(this.growTimer);
     this.resizeObserver?.disconnect();
     window.removeEventListener('mouseup', this.onMouseUp, { capture: true });
     document.removeEventListener('mousedown', this.onOutsideMouseDown, { capture: true });
@@ -527,30 +534,18 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
 
   // ---------------------------------------------------------------- drawing
 
-  private draw(
-    api: TableApi,
-    state: {
-      count: number;
-      rowH: number;
-      pos: { top: number; subPx: number };
-      left: number;
-      revision: number;
-      total: number;
-      marks: string;
-      follow: boolean;
-    },
-    key: string,
-    forcedKey: string,
-  ): void {
+  private draw(api: TableApi, state: DrawState, key: string, forcedKey: string): void {
     // Every backend update re-runs the effect (also in a freeze, where filter jobs report through tick()),
     // but log lines never change: only a new picture is drawn. Each render rebuilds the visible cells, and a
     // render between mousedown and mouseup swallows the table's click.
     const model = api.getTableModel();
     if (key === this.drawnKey && model === this.drawnModel) return;
-    // Reading in the middle while lines arrive behind the view: only the scroll bar would change. Draw that at
-    // most once a second instead of rebuilding the cells on every update.
+    // Reading in the middle while lines arrive behind the view: only the scroll bar changes. `rowsAppended`
+    // (1.1.108) updates the row count without a render: the cells stay, and with them a click in progress and a
+    // marked text, so this needs neither a throttle nor a hold.
     const grows =
       model === this.drawnModel &&
+      !this.headerBusy &&
       growsOnlyBehindView(
         this.drawnState,
         state,
@@ -558,14 +553,8 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
         forcedKey,
         this.session().visibleRows(),
       );
-    const wait = grows ? GROW_DRAW_MS - (performance.now() - this.grownAt) : 0;
-    if (wait > 0) {
-      if (this.growTimer === undefined) {
-        this.growTimer = setTimeout(() => {
-          this.growTimer = undefined;
-          this.redraw.update((r) => r + 1);
-        }, wait);
-      }
+    if (grows) {
+      this.appendBehindView(api, state, key);
       return;
     }
     const dragging = this.dragged || this.dragSelected;
@@ -579,7 +568,6 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
     this.drawnModel = model;
     this.drawnState = state;
     this.drawnForcedKey = forcedKey;
-    if (grows) this.grownAt = performance.now();
     const start = performance.now();
     const area = this.config().area;
     // A new height or width (window, detail panel, sidebar) as well: the table follows its host only
@@ -635,6 +623,25 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
       width: this.viewportW(),
     };
     this.measureText(area);
+    this.drawTimes.push(performance.now() - start);
+    if (this.drawTimes.length > 5000) this.drawTimes.splice(0, 1000);
+  }
+
+  /**
+   * New lines behind the view, nothing else changed: the table only learns the new row count and keeps the drawn
+   * cells and the position (`follow: false` – following is the app's scroll model, not the table's). Should
+   * something on screen depend on the count after all, the table falls back to one `repaintHard` at that position.
+   */
+  private appendBehindView(api: TableApi, state: DrawState, key: string): void {
+    const start = performance.now();
+    const scrollTop = this.scrollViewport()?.scrollTop ?? 0;
+    this.expectedScrollTop = -1;
+    api.rowsAppended(state.count - this.drawn.count, { follow: false });
+    this.appends++;
+    this.expectedScrollTop = this.scrollViewport()?.scrollTop ?? scrollTop;
+    this.drawnKey = key;
+    this.drawnState = state;
+    this.drawn = { ...this.drawn, count: state.count };
     this.drawTimes.push(performance.now() - start);
     if (this.drawTimes.length > 5000) this.drawTimes.splice(0, 1000);
   }

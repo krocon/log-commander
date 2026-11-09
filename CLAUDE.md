@@ -119,7 +119,8 @@ samples/                     Beispiel-Logs
   macht ein Element so hoch wie alle Zeilen und endet am Browser-Limit (~33 Mio. px). Die Tabelle kappt die Scrollhöhe bei
   8 Mio. px; die Position bleibt trotzdem Zeile + Pixel-Offset (`viewport-logic.ts`), die Tabelle zeichnet sie nur:
   `repaintHard({ px, py })` bei neuer Zeilenzahl (ein Render), sonst `scrollToPixel`. So wandert die Ansicht beim
-  Anhängen nicht. Das Rad läuft über das eigene Modell; Ziehen an der Scrollleiste rechnet `onTableScroll` auf eine Zeile um.
+  Anhängen nicht. Kommen Zeilen nur hinter der Ansicht dazu (nicht folgen, sonst nichts geändert), meldet
+  `rowsAppended(n, { follow: false })` (ab 1.1.108) nur die Zeilenzahl: kein Render, Klick und markierter Text bleiben. Das Rad läuft über das eigene Modell; Ziehen an der Scrollleiste rechnet `onTableScroll` auf eine Zeile um.
   Feste Zeilenhöhe, kein Zeilenumbruch. `getValueAt` ist synchron: Nicht geladene Zeilen sind Platzhalter (`loading`).
   Messwerte und Abwägung: `prompts/done/003-gui-expert-table.design.md`.
   **Spaltenansicht (Prompt 009) auf derselben Tabelle**, nicht auf einem eigenen Viewport: je Feld eine Tabellenspalte, Kopfzeile
