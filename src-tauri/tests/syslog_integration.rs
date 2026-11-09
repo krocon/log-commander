@@ -736,16 +736,19 @@ fn tcp_connections_are_capped_per_sender() {
 
 #[test]
 fn at_the_limit_the_longest_idle_connection_makes_room() {
+    const EVICT_AFTER: Duration = Duration::from_secs(2);
     let fx = fixture();
     let info = open_tcp(
         &fx,
         log_commander_lib::sources::syslog::TcpLimits {
             max_connections: 2,
-            evict_after: Duration::from_millis(200),
+            // Wide enough that a slow CI runner still sees both connections as fresh below.
+            evict_after: EVICT_AFTER,
             ..limits()
         },
     );
     let port = port_of(&info);
+    let started = std::time::Instant::now();
     let mut oldest = TcpStream::connect(("127.0.0.1", port)).unwrap();
     std::thread::sleep(Duration::from_millis(100));
     let mut busy = TcpStream::connect(("127.0.0.1", port)).unwrap();
@@ -755,7 +758,13 @@ fn at_the_limit_the_longest_idle_connection_makes_room() {
     // Both too fresh: the new one is refused.
     let mut early = TcpStream::connect(("127.0.0.1", port)).unwrap();
     assert!(closed_by_peer(&mut early));
-    std::thread::sleep(Duration::from_millis(300));
+    assert!(
+        started.elapsed() < EVICT_AFTER,
+        "too slow to test the refusal: {:?}",
+        started.elapsed()
+    );
+    // Now the oldest one has been idle long enough.
+    std::thread::sleep(EVICT_AFTER.saturating_sub(started.elapsed()) + Duration::from_millis(300));
     busy.write_all(b"<14>busy\n").unwrap();
     fx.wait(&info, "busy message", |s| s.total_lines == 1);
     let mut new = TcpStream::connect(("127.0.0.1", port)).unwrap();

@@ -382,6 +382,14 @@ export class SessionState {
     this.jumpMark = { position, line, scroll };
   }
 
+  /** Moves to `pos` without ending a jump: the next `E`/`W` still goes on from the jump's target. */
+  settleScroll(pos: ScrollPos): void {
+    const mark = this.jumpMark;
+    const kept = mark !== null && mark.scroll === this.scroll();
+    this.scroll.set(pos);
+    if (kept) this.jumpMark = { ...mark, scroll: pos };
+  }
+
   private onViewChanged(): void {
     // Stay on the line that was on top; positions changed but line numbers did not.
     const anchor = this.cache.line(this.scroll().top)?.line;

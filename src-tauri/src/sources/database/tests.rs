@@ -72,7 +72,11 @@ fn configs_are_checked() {
     lite.engine = Dialect::Sqlite;
     lite.path = "relative.db".into();
     assert!(lite.validate().is_err());
-    lite.path = "/var/log/app.db".into();
+    // Absolute on every platform ("/var/log/app.db" is not absolute on Windows).
+    lite.path = std::env::temp_dir()
+        .join("app.db")
+        .to_string_lossy()
+        .into_owned();
     lite.query = "SELECT 1 AS id".into();
     assert!(lite.validate().is_ok());
     assert_eq!(lite.label(), "db:app.db");
