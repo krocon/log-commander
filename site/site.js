@@ -212,6 +212,24 @@
     }
   }
 
+  /* ── video: a local poster, YouTube only after the click (the short on narrow screens) ── */
+  for (const box of $$('.video[data-wide]')) {
+    const poster = $('.video-poster', box);
+    poster.addEventListener('click', (ev) => {
+      if (ev.metaKey || ev.ctrlKey || ev.shiftKey || location.protocol === 'file:') return; // YouTube refuses to embed without a referrer
+      ev.preventDefault();
+      const tall = !!box.dataset.tall && matchMedia('(max-width: 640px)').matches;
+      const frame = doc.createElement('iframe');
+      frame.src = `https://www.youtube-nocookie.com/embed/${tall ? box.dataset.tall : box.dataset.wide}?autoplay=1&rel=0`;
+      frame.title = 'Log Commander – video';
+      frame.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen';
+      frame.allowFullscreen = true;
+      frame.referrerPolicy = 'strict-origin-when-cross-origin';
+      box.classList.toggle('tall', tall);
+      poster.replaceWith(frame);
+    });
+  }
+
   /* ── screenshots open large ── */
   const zoomable = $$('.win img:not([data-nozoom])').filter((im) => !im.closest('.scheme-stage'));
   if (zoomable.length && typeof HTMLDialogElement !== 'undefined') {

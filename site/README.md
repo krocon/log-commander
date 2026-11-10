@@ -37,4 +37,8 @@ und sollte nach dem Hochladen auf die absolute Adresse gesetzt werden.
 - **Motion:** Jede Bewegung hat eine Fassung für `prefers-reduced-motion` (die Demo steht dann still und gefüllt).
 - **Die Seite als Log:** Jeder Abschnitt hat `data-lv` und `data-title`; daraus baut `site.js` den Ruler am rechten
   Rand (wie der Overview Ruler der App). Neue Abschnitte brauchen dazu eine `id`.
+- **Video:** Der Abschnitt „Watch it run“ auf der Startseite zeigt zuerst ein lokales Standbild. Erst der Klick lädt
+  den Player von `youtube-nocookie.com` (16:9, auf schmalen Bildschirmen das Short 9:16; IDs in `data-wide` und
+  `data-tall`). Ohne JavaScript und über `file://` führt der Klick zu YouTube. Das ist die einzige Stelle mit einem
+  fremden Server; der Fuß der Startseite sagt es.
 - **Demo:** rein im Browser erzeugt (`liveDemo` in `site.js`), sie liest nichts und sendet nichts.
