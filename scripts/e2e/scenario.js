@@ -23,7 +23,7 @@
       }
       if (Date.now() - start > timeoutMs) {
         const state = document.body.innerText.slice(0, 1500).replace(/\n/g, ' | ');
-        await report(`visibility=${document.visibilityState}`);
+        await report(`INFO visibility=${document.visibilityState}`);
         const bar = document.querySelector('app-status-bar')?.innerText.replace(/\n/g, ' | ');
         throw new Error(`timeout: ${what} STATUS: ${bar} UI: ${state}`);
       }
@@ -1183,11 +1183,28 @@
     const lastError = rulerMarks()
       .filter((m) => m.level === 'ERROR')
       .at(-1);
+    // What the click sees, for a failure on another platform (red under Xvfb only).
+    const rulerState = () =>
+      JSON.stringify({
+        trackH: Math.round(track().getBoundingClientRect().height),
+        count: ruler().dataset.count,
+        errors: rulerMarks().filter((m) => m.level !== 'WARN'),
+        pins: pins(),
+        top: topLine(),
+        find: $('.find-message')?.textContent ?? null,
+      });
+    await report(`INFO ruler before the click: target ${lastError.y} ${rulerState()}`);
     clickRuler(lastError.y);
-    await waitFor(
-      'a click on an error mark shows its entry',
-      () => rowTexts().some((t) => t.includes('after the filter')) && status().includes('Pausiert'),
-    );
+    try {
+      await waitFor(
+        'a click on an error mark shows its entry',
+        () =>
+          rowTexts().some((t) => t.includes('after the filter')) && status().includes('Pausiert'),
+      );
+    } catch (e) {
+      await report(`INFO ruler after the click: ${rulerState()}`);
+      throw e;
+    }
     await waitFor('the click leaves the selection alone', () => pin('selection')?.line === 0);
     clickRuler(2);
     await waitFor('a click near the top goes there', () => topLine() < 10);

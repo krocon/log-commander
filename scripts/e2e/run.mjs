@@ -577,6 +577,9 @@ createInterface({ input: app.stdout }).on('line', (line) => {
   if (message.startsWith('PASS')) {
     passed++;
     console.log(`  ok  ${message.slice(5)}`);
+  } else if (message.startsWith('INFO')) {
+    // diagnostics of the scenario, shown as they are
+    console.log(`  info ${message.slice(5)}`);
   } else if (message.startsWith('SKIP')) {
     console.log(`  skip ${message.slice(5)}`);
   } else if (message.startsWith('ACTION')) {
