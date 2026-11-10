@@ -191,6 +191,22 @@ describe('ruler-logic', () => {
     expect(clickTarget(70.5, view)).toMatchObject({ kind: 'level', from: 6999, fallback: 7000 });
   });
 
+  it('a click on the last bucket also finds a line that begins in the bucket before (no edge between)', () => {
+    // 755 lines on 531 buckets: line 753 reaches buckets 529 and 530 (as `LevelSummary::buckets` marks it).
+    const buckets = new Array<Densities>(531).fill(none);
+    buckets[529] = E;
+    buckets[530] = E;
+    const view = {
+      marks: rulerMarks(dens(buckets), 531),
+      pins: [],
+      count: 755,
+      height: 531,
+      buckets: 531,
+    };
+    // The search starts after `from`: at 753, not at 754 (where bucket 530 begins).
+    expect(clickTarget(530.5, view)).toMatchObject({ kind: 'level', from: 752, fallback: 754 });
+  });
+
   it('tells in words what the marks or a pin are', () => {
     const buckets = new Array<Densities>(100).fill(none);
     buckets[10] = { ERROR: 0.3, WARN: 0.002 };

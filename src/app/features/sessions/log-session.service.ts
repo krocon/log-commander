@@ -773,7 +773,8 @@ export class LogSessionService {
   ): Promise<void> {
     try {
       const hit = await this.api.findLevel(session.sessionId, from, true, levels, session.viewId);
-      if (hit) session.jumpTo(hit.position, hit.line);
+      // A hit from the start again is not what was clicked: then the clicked place itself.
+      if (hit && !hit.wrapped) session.jumpTo(hit.position, hit.line);
       else session.jumpTo(fallback, null);
     } catch (e) {
       this.showError(toAppError(e));
