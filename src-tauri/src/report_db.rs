@@ -1687,7 +1687,15 @@ mod tests {
             let db = Arc::clone(&db);
             thread::spawn(move || db.query(slow, "panel"))
         };
-        thread::sleep(Duration::from_millis(200));
+        // Until it runs: a thread that starts late (Windows CI) would be the newer query itself.
+        let waiting = Instant::now();
+        while !db.readers.lock().values().any(|(slot, _)| slot == "panel") {
+            assert!(
+                waiting.elapsed() < Duration::from_secs(10),
+                "the slow query never opened"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
         // Another slot does not stop it, the same one does.
         assert!(db.query("SELECT 1", "other").is_ok());
         let started = Instant::now();
