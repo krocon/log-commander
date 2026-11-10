@@ -361,7 +361,9 @@ fn a_provisional_line_that_took_an_entry_out_is_withdrawn_and_taken_again() {
     });
     // It grows: withdrawing it puts the entry back (checkpoint), the complete line takes it out again.
     append(&path, "_x\n");
-    fx.wait("completed", |s| s.total_lines == 3);
+    // Three lines there were already (the provisional one): wait until the file is read to its end.
+    let size = fs::metadata(&path).unwrap().len();
+    fx.wait("completed", |s| s.total_lines == 3 && s.file_size == size);
     let (incremental, job, _, _) = fx.incremental_and_job(&expr);
     assert_eq!(incremental, job);
     assert!(job.is_empty());
