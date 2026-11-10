@@ -1,0 +1,372 @@
+<!doctype html>
+<!--
+  Log Commander – product site, start page. Static: site.css + site.js next to this file, pictures in img/
+  (built by `node site/build.mjs` from docs/screenshots). No web fonts, no trackers, no external requests.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Log Commander – a live log viewer for macOS, Windows and Linux</title>
+<meta name="description" content="Log Commander is a fast, colourful live log viewer: millions of lines, instant filters, timeline, dashboard, syslog, SSH, databases and AI control. Free and open source (MIT).">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#0f1216" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f4f5f7" media="(prefers-color-scheme: light)">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Log Commander – read logs at the speed they are written">
+<meta property="og:description" content="A live log viewer for macOS, Windows and Linux. Millions of lines, instant filters, no waiting. Free and open source.">
+<meta property="og:image" content="img/dark.webp">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" type="image/png" href="favicon.png">
+<link rel="stylesheet" href="site.css">
+<script src="site.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to the content</a>
+
+<header class="nav">
+  <div class="wrap nav-in">
+    <a class="brand" href="index.html" aria-current="page"><img src="img/icon.png" width="30" height="30" alt=""><span>Log Commander</span></a>
+    <nav class="nav-links" aria-label="Pages">
+      <a href="features.html">Features</a>
+      <a href="sources.html">Sources</a>
+      <a href="ai.html">AI control</a>
+      <a href="keyboard.html">Keyboard</a>
+      <a class="gh" href="https://github.com/krocon/log-commander">GitHub</a>
+      <a class="btn btn-primary btn-sm" href="https://github.com/krocon/log-commander/releases/latest">Download</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <section class="hero" id="top" data-lv="info" data-title="Log Commander">
+    <div class="wrap">
+      <p class="eyebrow reveal"><b class="lv lv-info">INFO</b> live log viewer · macOS · Windows · Linux</p>
+      <h1 class="h1 split">Read logs at the speed they are <span class="accent">written.</span></h1>
+      <p class="lead reveal" style="--d:3">Like <code>tail -f</code> with a window around it. <b>Five million lines open in 25 milliseconds</b>, a level filter answers in 15, and a stack trace stays in one piece.</p>
+      <div class="actions reveal" style="--d:4">
+        <a class="btn btn-primary" href="https://github.com/krocon/log-commander/releases/latest">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11m0 0l-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg>
+          Download 1.0
+        </a>
+        <a class="btn btn-ghost" href="features.html">All features</a>
+      </div>
+      <p class="note reveal" style="--d:5">Free and open source (MIT). No account, no telemetry.</p>
+
+      <div class="hero-stage reveal" style="--d:2">
+        <div class="win demo" id="demo" aria-label="Live demo of Log Commander, simulated in your browser">
+          <div class="demo-tabs" aria-hidden="true">
+            <span class="dots"><i></i><i></i><i></i></span>
+            <span class="tab on">app.log <i class="dot"></i></span>
+            <span class="tab">worker.log</span>
+            <span class="tab">⇣ Syslog :5514</span>
+          </div>
+          <div class="demo-bar">
+            <button class="dbtn" type="button" data-act="freeze" aria-pressed="false">Freeze</button>
+            <button class="dbtn" type="button" data-preset="trace">All</button>
+            <button class="dbtn" type="button" data-preset="warn">WARN+</button>
+            <button class="dbtn" type="button" data-preset="error">ERROR+</button>
+            <div class="chips" role="group" aria-label="Levels">
+              <button class="chip lv-trace" type="button" data-lv="trace" aria-pressed="true">TRACE <b>0</b></button>
+              <button class="chip lv-debug" type="button" data-lv="debug" aria-pressed="true">DEBUG <b>0</b></button>
+              <button class="chip lv-info" type="button" data-lv="info" aria-pressed="true">INFO <b>0</b></button>
+              <button class="chip lv-warn" type="button" data-lv="warn" aria-pressed="true">WARN <b>0</b></button>
+              <button class="chip lv-error" type="button" data-lv="error" aria-pressed="true">ERROR <b>0</b></button>
+              <button class="chip lv-fatal" type="button" data-lv="fatal" aria-pressed="true">FATAL <b>0</b></button>
+            </div>
+            <input class="demo-search" type="search" placeholder="Search … try “order” or “pool”" aria-label="Search the demo log" autocomplete="off" spellcheck="false">
+          </div>
+          <canvas class="demo-tl" aria-hidden="true"></canvas>
+          <div class="demo-body">
+            <div class="demo-rows" aria-hidden="true"></div>
+            <canvas class="demo-ruler" aria-hidden="true"></canvas>
+            <div class="demo-empty">No line matches. That was quick, though.</div>
+          </div>
+          <div class="demo-status">
+            <span class="live">Live</span>
+            <span>/var/log/shop/app.log</span>
+            <span class="sp">UTF-8</span>
+            <span data-size>500 MB</span>
+            <span data-lines>5,104,000 lines</span>
+          </div>
+        </div>
+        <p class="demo-hint"><span><b>Try it:</b> click a level, Alt-click for only that level, type in the search, freeze.</span><span>Simulated in your browser. The real one reads real files.</span></p>
+      </div>
+    </div>
+  </section>
+
+  <div class="marquee sec-tight" aria-label="Formats that are recognised" style="padding-block:18px;margin-top:clamp(56px,8vw,110px)">
+    <ul>
+      <li>Log4j</li><li>Logback</li><li>Spring Boot</li><li>Python logging</li><li>Serilog</li><li>syslog</li><li>nginx</li><li>Apache</li><li>JSON Lines</li><li>Pino / Bunyan</li><li>access logs</li><li>W3C / IIS</li><li>NLog</li><li>Java GC</li><li>FIX</li><li>logfmt</li><li>your own regex</li>
+      <li aria-hidden="true">Log4j</li><li aria-hidden="true">Logback</li><li aria-hidden="true">Spring Boot</li><li aria-hidden="true">Python logging</li><li aria-hidden="true">Serilog</li><li aria-hidden="true">syslog</li><li aria-hidden="true">nginx</li><li aria-hidden="true">Apache</li><li aria-hidden="true">JSON Lines</li><li aria-hidden="true">Pino / Bunyan</li><li aria-hidden="true">access logs</li><li aria-hidden="true">W3C / IIS</li><li aria-hidden="true">NLog</li><li aria-hidden="true">Java GC</li><li aria-hidden="true">FIX</li><li aria-hidden="true">logfmt</li><li aria-hidden="true">your own regex</li>
+    </ul>
+  </div>
+
+  <section class="sec" id="speed" data-lv="debug" data-title="Speed">
+    <div class="wrap">
+      <p class="eyebrow reveal"><b class="lv lv-debug">DEBUG</b> took 25ms</p>
+      <h2 class="h2 split">An index, not the text.</h2>
+      <p class="lead reveal">The Rust backend keeps 16 bytes per line in memory and leaves the rest on disk. That is why half a gigabyte feels like a small file.</p>
+      <div class="stats reveal">
+        <div class="stat"><b data-count="25">25<small>ms</small></b><span>until the first lines are on screen</span></div>
+        <div class="stat"><b data-count="2.2">2.2<small>s</small></b><span>until 5.1 million lines are indexed</span></div>
+        <div class="stat"><b data-count="78">78<small>MB</small></b><span>of memory for the index of 500 MB</span></div>
+        <div class="stat"><b data-count="15">15<small>ms</small></b><span>for a level filter over all lines</span></div>
+      </div>
+      <p class="note reveal">500 MB, 5.1 million lines, Apple Silicon, release build. <a href="keyboard.html#performance">All measurements</a></p>
+    </div>
+  </section>
+
+  <section class="sec sec-line" id="tour" data-lv="info" data-title="The tour">
+    <div class="wrap">
+      <p class="eyebrow reveal"><b class="lv lv-info">INFO</b> seven ways to find it</p>
+      <h2 class="h2 split">From “something is wrong” to the line that says why.</h2>
+
+      <div class="story">
+        <div class="story-pin" aria-hidden="true">
+          <figure class="win">
+            <div class="win-bar"><i></i><i></i><i></i><span>app.log</span></div>
+            <div class="stack">
+              <img class="on" src="img/dark.webp" width="1600" height="877" alt="" data-nozoom>
+              <img src="img/filter-tree.webp" width="1600" height="877" alt="" loading="lazy" data-nozoom>
+              <img src="img/drilldown.webp" width="1600" height="877" alt="" loading="lazy" data-nozoom>
+              <img src="img/timeline.webp" width="1600" height="877" alt="" loading="lazy" data-nozoom>
+              <img src="img/ruler-dense.webp" width="1600" height="877" alt="" loading="lazy" data-nozoom>
+              <img src="img/detail.webp" width="1600" height="877" alt="" loading="lazy" data-nozoom>
+              <img src="img/dashboard.webp" width="1600" height="877" alt="" loading="lazy" data-nozoom>
+            </div>
+            <span class="story-count">1 / 7</span>
+          </figure>
+        </div>
+
+        <div class="story-steps">
+          <article class="step" data-title="app.log">
+            <p class="eyebrow"><b class="lv lv-error">ERROR</b> levels</p>
+            <h3>Colour first. Stack traces in one piece.</h3>
+            <p>TRACE to FATAL, with chips that count while the file grows. Continuation lines inherit the level of their entry, so a filter never tears an exception apart.</p>
+            <p>A recognised format becomes a table with one column per field: time, level, thread, logger, message.</p>
+            <div class="keys"><kbd>T</kbd> <kbd>E</kbd> <kbd>W</kbd></div>
+            <figure class="win"><img src="img/dark.webp" width="1600" height="877" loading="lazy" alt="A Spring Boot log as a table with coloured levels and a stack trace across the full width"></figure>
+          </article>
+          <article class="step" data-title="app.log · filter tree">
+            <p class="eyebrow"><b class="lv lv-warn">WARN</b> filter tree</p>
+            <h3>AND, OR, NOT. On the whole entry.</h3>
+            <p>Text or regex, levels, a field, a time span, a section between two markers. A request id in the head and “Timeout” in its stack trace match together.</p>
+            <p>Mark text and press a key to filter on it, or to exclude it.</p>
+            <div class="keys"><kbd>I</kbd> <kbd>Shift+I</kbd> <kbd>&gt;</kbd> <kbd>&lt;</kbd></div>
+            <figure class="win"><img src="img/filter-tree.webp" width="1600" height="877" loading="lazy" alt="The filter tree in the sidebar with nested conditions"></figure>
+          </article>
+          <article class="step" data-title="app.log › ERROR › OrderService › 4711">
+            <p class="eyebrow"><b class="lv lv-info">INFO</b> filter tabs</p>
+            <h3>Drill down, and keep every step.</h3>
+            <p>A filter opens as a tab of its own and filters further: <span class="mono">app.log › ERROR › OrderService › 4711</span>. Change a filter above and every tab below follows live.</p>
+            <div class="keys"><kbd>Cmd/Ctrl+Shift+T</kbd></div>
+            <figure class="win"><img src="img/drilldown.webp" width="1600" height="877" loading="lazy" alt="A chain of filter tabs next to their file"></figure>
+          </article>
+          <article class="step" data-title="shop.log · timeline">
+            <p class="eyebrow"><b class="lv lv-fatal">FATAL</b> timeline</p>
+            <h3>See the outage before you read a line.</h3>
+            <p>A strip above the log stacks the entries of the whole file over time. Peaks and bursts of errors stand out, a silence is hatched: “no entries 10:04–10:51”.</p>
+            <p>Click to jump there, drag a window and make it a filter.</p>
+            <div class="keys"><kbd>Z</kbd></div>
+            <figure class="win"><img src="img/timeline.webp" width="1600" height="877" loading="lazy" alt="The timeline with a peak of errors, a hatched outage and a marked window"></figure>
+          </article>
+          <article class="step" data-title="busy.log · overview ruler">
+            <p class="eyebrow"><b class="lv lv-error">ERROR</b> overview ruler</p>
+            <h3>One error in five million lines is still a mark.</h3>
+            <p>The bar right of the log shows where errors and warnings lie, as density and not as one solid colour. Bookmarks are flags, notes are diamonds.</p>
+            <p>This page has one too. Look right.</p>
+            <div class="keys"><kbd>M</kbd> <kbd>N</kbd> <kbd>Shift+M</kbd></div>
+            <figure class="win"><img src="img/ruler-dense.webp" width="1600" height="877" loading="lazy" alt="The overview ruler on a busy log"></figure>
+          </article>
+          <article class="step" data-title="app.log · detail">
+            <p class="eyebrow"><b class="lv lv-debug">DEBUG</b> detail panel</p>
+            <h3>The whole entry, formatted.</h3>
+            <p>Head line and stack trace without the cut at the screen edge. Embedded JSON or XML is indented and coloured by its own tokenizer, so 64-bit ids stay exact.</p>
+            <div class="keys"><kbd>D</kbd> <kbd>Enter</kbd> <kbd>G</kbd></div>
+            <figure class="win"><img src="img/detail.webp" width="1600" height="877" loading="lazy" alt="The detail panel below the log with formatted JSON"></figure>
+          </article>
+          <article class="step" data-title="app.log · dashboard">
+            <p class="eyebrow"><b class="lv lv-info">INFO</b> dashboard</p>
+            <h3>Charts from SQL, on a log file.</h3>
+            <p>Errors per minute, the error rate, <code>took</code> as mean and maximum. Panels start from templates and show their SQL to change. Click a bar to land on its first line.</p>
+            <div class="keys"><kbd>Cmd/Ctrl+Shift+D</kbd></div>
+            <figure class="win"><img src="img/dashboard.webp" width="1600" height="877" loading="lazy" alt="A dashboard with charts over time"></figure>
+            <a class="more" href="features.html">Every feature in detail</a>
+          </article>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec sec-line" id="more" data-lv="info" data-title="And more">
+    <div class="wrap">
+      <p class="eyebrow reveal"><b class="lv lv-info">INFO</b> and the rest of the toolbox</p>
+      <h2 class="h2 split">The details you miss everywhere else.</h2>
+      <div class="bento">
+        <article class="card w4 tall reveal">
+          <span class="glyph">cpu=72.3% mem=1.2GB took 340ms</span>
+          <h3>Fields from the message</h3>
+          <p>Measurements in the text become columns of their own. The app suggests them on opening; units are converted, so <code>took &gt; 500 ms</code> also finds <code>1.2s</code>.</p>
+          <figure class="win"><img src="img/extracted.webp" width="1600" height="877" loading="lazy" alt="Extracted fields cpu, mem and took as columns"></figure>
+        </article>
+        <article class="card reveal" style="--d:1"><span class="glyph">a.log + b.log → one</span><h3>Merge files</h3><p>Up to 16 logs in one tab, sorted by timestamp, each with a colour stripe. New lines keep coming in live.</p></article>
+        <article class="card reveal"><span class="glyph">❄ freeze</span><h3>Freeze and follow</h3><p>Stay at the end while you are there, scroll up and it pauses. Freeze holds a tab still while filters and search keep working.</p></article>
+        <article class="card reveal" style="--d:1"><span class="glyph">.* Aa</span><h3>Search</h3><p>Filter or highlight, regular expressions, case, jump between matches. Full text over 5 million lines in 0.7 s.</p></article>
+        <article class="card reveal" style="--d:2"><span class="glyph">⤓ txt · csv · jsonl</span><h3>Export</h3><p>The selection, the view or the whole file. Written by the backend in the background: 500 MB as text in half a second.</p></article>
+        <article class="card reveal" style="--d:3"><span class="glyph">⚑ M · N</span><h3>Bookmarks</h3><p>One key sets a flag in the gutter and on the ruler, another jumps to the next. They survive in a workspace.</p></article>
+        <article class="card w3 reveal"><span class="glyph">❖ .lcw</span><h3>Workspaces</h3><p>Files, merges, every filter tab, bookmarks, notes and layout in one file. Paths are kept relative too, so a folder with logs can be shared.</p></article>
+        <article class="card w3 reveal" style="--d:1"><span class="glyph">✎ notes · markdown · jira</span><h3>Notes and sharing</h3><p>Put a note on an entry, then copy lines with file, time span and filter as Markdown or Jira markup for the ticket.</p></article>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec sec-line" id="sources" data-lv="warn" data-title="Sources">
+    <div class="wrap">
+      <p class="eyebrow reveal"><b class="lv lv-warn">WARN</b> not every log is a file</p>
+      <h2 class="h2 split">Syslog, servers, databases. Same window.</h2>
+      <p class="lead reveal">Every source without a file writes into a spool on disk, and the app tails that like any log. So filters, timeline, dashboard, export and merge work for all of them.</p>
+
+      <div class="flow reveal">
+        <svg viewBox="0 0 1200 412" role="img" aria-label="Local files go straight into Log Commander; syslog, SSH/SFTP, Windows events and databases go through a spool on disk">
+          <path class="wire" d="M240 42 C 620 42, 700 130, 920 160"/>
+          <path class="wire" d="M240 124 C 400 124, 380 206, 520 206"/>
+          <path class="wire" d="M240 206 L 520 206"/>
+          <path class="wire" d="M240 288 C 400 288, 380 206, 520 206"/>
+          <path class="wire" d="M240 370 C 420 370, 380 206, 520 206"/>
+          <path class="wire" d="M700 206 L 920 206"/>
+          <path class="pulse" style="--c:var(--info)" d="M240 42 C 620 42, 700 130, 920 160"/>
+          <path class="pulse" style="--c:var(--warn);--dl:-.6s" d="M240 124 C 400 124, 380 206, 520 206"/>
+          <path class="pulse" style="--c:var(--accent);--dl:-1.4s" d="M240 206 L 520 206"/>
+          <path class="pulse" style="--c:var(--fatal);--dl:-2.1s" d="M240 288 C 400 288, 380 206, 520 206"/>
+          <path class="pulse" style="--c:var(--debug);--dl:-2.7s" d="M240 370 C 420 370, 380 206, 520 206"/>
+          <path class="pulse" style="--c:var(--error);--dl:-1s" d="M700 206 L 920 206"/>
+          <g class="node"><rect x="0" y="10" width="240" height="64" rx="10"/><text x="18" y="38">Local files</text><text class="sub" x="18" y="58">tail · rotation · truncation</text></g>
+          <g class="node"><rect x="0" y="92" width="240" height="64" rx="10"/><text x="18" y="120">Syslog</text><text class="sub" x="18" y="140">UDP · TCP · RFC 3164/5424</text></g>
+          <g class="node"><rect x="0" y="174" width="240" height="64" rx="10"/><text x="18" y="202">SSH / SFTP</text><text class="sub" x="18" y="222">host:/var/log/app.log</text></g>
+          <g class="node"><rect x="0" y="256" width="240" height="64" rx="10"/><text x="18" y="284">Windows events</text><text class="sub" x="18" y="304">Application · System · Security</text></g>
+          <g class="node"><rect x="0" y="338" width="240" height="64" rx="10"/><text x="18" y="366">Databases</text><text class="sub" x="18" y="386">PostgreSQL · MySQL · MSSQL · SQLite</text></g>
+          <g class="node"><rect x="520" y="170" width="180" height="72" rx="10"/><text x="540" y="202">Spool</text><text class="sub" x="540" y="222">a file, bounded</text></g>
+          <g class="node app">
+            <rect x="920" y="96" width="280" height="220" rx="12"/>
+            <rect x="920" y="96" width="280" height="30" rx="12" style="fill:var(--panel);stroke:none"/>
+            <text x="940" y="116" style="font-size:13px">Log Commander</text>
+            <rect class="bar" x="940" y="146" width="150" height="8" rx="4" style="fill:var(--trace)"/>
+            <rect class="bar" x="940" y="166" width="220" height="8" rx="4" style="fill:var(--info);--dl:-.3s"/>
+            <rect class="bar" x="940" y="186" width="180" height="8" rx="4" style="fill:var(--info);--dl:-.9s"/>
+            <rect class="bar" x="940" y="206" width="200" height="8" rx="4" style="fill:var(--warn);--dl:-.5s"/>
+            <rect class="bar" x="940" y="226" width="240" height="8" rx="4" style="fill:var(--error);--dl:-1.2s"/>
+            <rect class="bar" x="940" y="246" width="170" height="8" rx="4" style="fill:var(--error);--dl:-.2s"/>
+            <rect class="bar" x="940" y="266" width="120" height="8" rx="4" style="fill:var(--debug);--dl:-.7s"/>
+            <rect class="bar" x="940" y="286" width="210" height="8" rx="4" style="fill:var(--info);--dl:-1s"/>
+          </g>
+        </svg>
+        <ul class="flow-list">
+          <li style="--c:var(--info)"><b>Local files</b><span>tail, rotation, truncation</span></li>
+          <li style="--c:var(--warn)"><b>Syslog</b><span>UDP, TCP, RFC 3164/5424</span></li>
+          <li style="--c:var(--accent)"><b>SSH / SFTP</b><span>follow a file on a server</span></li>
+          <li style="--c:var(--fatal)"><b>Windows events</b><span>this computer or another one</span></li>
+          <li style="--c:var(--debug)"><b>Databases</b><span>PostgreSQL, MySQL, SQL Server, SQLite</span></li>
+        </ul>
+      </div>
+      <a class="more reveal" href="sources.html">How each source works, and how it stays safe</a>
+    </div>
+  </section>
+
+  <section class="sec sec-line" id="ai" data-lv="fatal" data-title="AI control">
+    <div class="wrap duo">
+      <div>
+        <p class="eyebrow reveal"><b class="lv lv-fatal">FATAL</b> OutOfMemory, explained</p>
+        <h2 class="h2 split">Let your AI drive the viewer.</h2>
+        <p class="lead reveal">Over the Model Context Protocol, Claude Code, Claude Desktop or Cursor see your tabs and use the app’s engines instead of reading whole files. The answer shows up in the window: a filter tab, a note, the line scrolled into view.</p>
+        <p class="note reveal">Off by default. No port while it is off. Opening files and exporting ask you first.</p>
+        <a class="more reveal" href="ai.html">31 tools, three tiers, the safety model</a>
+      </div>
+      <div class="chat" aria-label="Example conversation">
+        <p class="msg you">What went wrong in app.log in the last 30 minutes?</p>
+        <p class="tool"><b>get_timeline</b> 1 outage, 1 burst of errors at 10:07</p>
+        <p class="tool"><b>run_sql</b> errors by logger since 09:40</p>
+        <p class="tool view"><b>open_filter_tab</b> app.log › ERROR › ConnectionPool</p>
+        <p class="tool view"><b>add_note</b> line 4,538 “KI: first exhausted pool”</p>
+        <p class="msg ai">The connection pool ran out at 10:07:33. 450 errors follow, all from <span class="mono">OrderService.place</span>. I opened a tab with them and left a note on the first one.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec sec-line center" id="schemes" data-lv="debug" data-title="Colour schemes">
+    <div class="wrap">
+      <p class="eyebrow reveal"><b class="lv lv-debug">DEBUG</b> theme = …</p>
+      <h2 class="h2 split">Seventeen colour schemes. All pass WCAG AA.</h2>
+      <p class="lead reveal">From One Dark to Solarized Light to a C64. The window frame follows, and “follow system” takes a light and a dark one of your choice.</p>
+      <div class="schemes reveal" role="group" aria-label="Colour scheme">
+        <button class="swatch" type="button" aria-pressed="true" data-src="img/dark.webp" style="--a:#14171c;--b:#5aa2f7"><i></i>Dark</button>
+        <button class="swatch" type="button" aria-pressed="false" data-src="img/light.webp" style="--a:#fbfbfc;--b:#1a66d6"><i></i>Light</button>
+        <button class="swatch" type="button" aria-pressed="false" data-src="img/schemes/one-dark.webp" style="--a:#282c34;--b:#6091f3"><i></i>One Dark</button>
+        <button class="swatch" type="button" aria-pressed="false" data-src="img/schemes/one-dark-vivid.webp" style="--a:#282c34;--b:#6a98f4"><i></i>One Dark Vivid</button>
+        <button class="swatch" type="button" aria-pressed="false" data-src="img/schemes/true-dark.webp" style="--a:#121212;--b:#a07af7"><i></i>True Dark</button>
+        <button class="swatch" type="button" aria-pressed="false" data-src="img/schemes/true-black.webp" style="--a:#000000;--b:#ffffff"><i></i>True Black</button>
+        <button class="swatch" type="button" aria-pressed="false" data-src="img/schemes/true-light.webp" style="--a:#f2f4fe;--b:#275ccf"><i></i>True Light</button>
+        <button class="swatch" type="button" aria-pressed="false" data-src="img/schemes/matrix.webp" style="--a:#0c0c0c;--b:#88ff88"><i></i>Matrix</button>
+        <button class="swatch" type="button" aria-pressed="false" data-src="img/schemes/amber.webp" style="--a:#0f0b05;--b:#ffb000"><i></i>Amber</button>
+        <button class="swatch" type="button" aria-pressed="false" data-src="img/schemes/solarized-light.webp" style="--a:#fdf6e3;--b:#7a5c00"><i></i>Solarized Light</button>
+        <button class="swatch" type="button" aria-pressed="false" data-src="img/schemes/mystico-c64.webp" style="--a:#3c319c;--b:#b9e893"><i></i>Mystico – C64</button>
+        <button class="swatch" type="button" aria-pressed="false" data-src="img/schemes/crimson.webp" style="--a:#1c1c21;--b:#ec7083"><i></i>Crimson</button>
+        <button class="swatch" type="button" aria-pressed="false" data-src="img/schemes/rainglow-bold.webp" style="--a:#2a2626;--b:#72acaf"><i></i>Bold</button>
+        <button class="swatch" type="button" aria-pressed="false" data-src="img/schemes/rainglow-earthsong.webp" style="--a:#36312c;--b:#95cc5e"><i></i>Earthsong</button>
+        <button class="swatch" type="button" aria-pressed="false" data-src="img/schemes/rainglow-legacy.webp" style="--a:#212933;--b:#67a5cb"><i></i>Legacy</button>
+        <button class="swatch" type="button" aria-pressed="false" data-src="img/schemes/rainglow-heroku.webp" style="--a:#1b1b24;--b:#8e8ca9"><i></i>Heroku</button>
+        <button class="swatch" type="button" aria-pressed="false" data-src="img/schemes/rainglow-piggy.webp" style="--a:#3d2f34;--b:#f98eaa"><i></i>Piggy</button>
+      </div>
+      <figure class="win scheme-stage reveal">
+        <div class="win-bar"><i></i><i></i><i></i><span>Dark</span></div>
+        <div class="stack"><img src="img/dark.webp" width="1600" height="877" loading="lazy" alt="Log Commander in the colour scheme Dark"></div>
+      </figure>
+    </div>
+  </section>
+
+  <section class="sec sec-line" id="platforms" data-lv="info" data-title="Platforms">
+    <div class="wrap">
+      <p class="eyebrow reveal"><b class="lv lv-info">INFO</b> started on 3 platforms</p>
+      <h2 class="h2 split">macOS, Windows and Linux.</h2>
+      <p class="lead reveal">One app, built with Tauri, Rust and Angular. The automated tests run on all three systems.</p>
+      <div class="os">
+        <article class="card reveal"><h3>macOS</h3><p>Apple Silicon and Intel in one universal app.</p><b>.dmg</b></article>
+        <article class="card reveal" style="--d:1"><h3>Windows</h3><p>Reads the Windows event logs too, of this computer or another one.</p><b>installer · .msi</b></article>
+        <article class="card reveal" style="--d:2"><h3>Linux</h3><p>For desktops with WebKitGTK.</p><b>.deb · AppImage</b></article>
+      </div>
+
+      <div class="pages">
+        <a class="card reveal" href="features.html"><span class="glyph">01</span><h3>Features</h3><p>Everything the viewer does, with pictures.</p></a>
+        <a class="card reveal" style="--d:1" href="sources.html"><span class="glyph">02</span><h3>Sources</h3><p>Syslog, SSH, Windows events, databases.</p></a>
+        <a class="card reveal" style="--d:2" href="ai.html"><span class="glyph">03</span><h3>AI control</h3><p>MCP: what an AI can do, and what it cannot.</p></a>
+        <a class="card reveal" style="--d:3" href="keyboard.html"><span class="glyph">04</span><h3>Keyboard</h3><p>All shortcuts, and the measurements.</p></a>
+      </div>
+    </div>
+  </section>
+
+  <section class="cta sec-line" id="get" data-lv="info" data-title="Download">
+    <div class="wrap">
+      <p class="prompt reveal">$ log-commander /var/log/app.log</p>
+      <h2 class="h2 split">Open the log.</h2>
+      <div class="actions reveal">
+        <a class="btn btn-primary" href="https://github.com/krocon/log-commander/releases/latest">Download 1.0 from GitHub</a>
+        <a class="btn btn-ghost" href="https://github.com/krocon/log-commander">Read the source</a>
+      </div>
+      <p class="note reveal">Free and open source under the MIT license. The packages are not signed yet.</p>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <ul>
+      <li><a href="https://github.com/krocon/log-commander">Source on GitHub</a></li>
+      <li><a href="https://github.com/krocon/log-commander/issues">Report a problem</a></li>
+      <li><a href="https://github.com/krocon/log-commander/blob/main/LICENSE">MIT license</a></li>
+      <li><a href="https://krocon.de">Imprint and privacy (krocon.de)</a></li>
+    </ul>
+    <p>© Marc Kronberg. This page loads nothing from other servers and sets no cookies.</p>
+  </div>
+</footer>
+</body>
+</html>

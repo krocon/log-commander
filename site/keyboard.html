@@ -1,0 +1,238 @@
+<!doctype html>
+<!--
+  Log Commander – product site, keyboard and measurements. See index.html for how the site is built.
+  The rows between the keymap markers are written by `node site/build.mjs` from README.md – do not edit them here.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Keyboard and performance – Log Commander</title>
+<meta name="description" content="All default keyboard shortcuts of Log Commander, and the measurements on a 500 MB log with 5.1 million lines.">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#0f1216" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f4f5f7" media="(prefers-color-scheme: light)">
+<meta property="og:title" content="Keyboard and performance – Log Commander">
+<meta property="og:image" content="img/shortcuts.webp">
+<link rel="icon" type="image/png" href="favicon.png">
+<link rel="stylesheet" href="site.css">
+<script src="site.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to the content</a>
+
+<header class="nav">
+  <div class="wrap nav-in">
+    <a class="brand" href="index.html"><img src="img/icon.png" width="30" height="30" alt=""><span>Log Commander</span></a>
+    <nav class="nav-links" aria-label="Pages">
+      <a href="features.html">Features</a>
+      <a href="sources.html">Sources</a>
+      <a href="ai.html">AI control</a>
+      <a href="keyboard.html" aria-current="page">Keyboard</a>
+      <a class="gh" href="https://github.com/krocon/log-commander">GitHub</a>
+      <a class="btn btn-primary btn-sm" href="https://github.com/krocon/log-commander/releases/latest">Download</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <section class="sub-hero" id="top" data-lv="debug" data-title="Keyboard" style="--hue:var(--debug)">
+    <div class="wrap">
+      <p class="eyebrow reveal"><b class="lv lv-debug">DEBUG</b> keyboard</p>
+      <h1 class="h1 split">Hands on the keys.</h1>
+      <p class="lead reveal">Single letters for what you do all day: <kbd>E</kbd> next error, <kbd>F</kbd> follow, <kbd>P</kbd> freeze, <kbd>G</kbd> to the whole log. Every shortcut is an action you can rebind in the app.</p>
+    </div>
+  </section>
+
+  <section class="sec-tight" id="shortcuts" data-lv="info" data-title="Shortcuts">
+    <div class="wrap">
+      <p class="eyebrow reveal"><b class="lv lv-info">INFO</b> default shortcuts</p>
+      <h2 class="h2 split">The defaults.</h2>
+      <p class="lead reveal">Plain keys act in the log only, not in text fields or dialogs. Change them under Help → Keyboard Shortcuts, <kbd>Cmd/Ctrl+Shift+K</kbd>.</p>
+      <input class="filter reveal" type="search" placeholder="Filter … try “bookmark”" aria-label="Filter the shortcuts" data-filter="#keymap tbody tr" data-none="#keymap-none" autocomplete="off" spellcheck="false">
+      <div class="table-scroll reveal">
+        <table id="keymap">
+          <thead><tr><th scope="col">Key</th><th scope="col">Action</th></tr></thead>
+          <tbody>
+            <!-- keymap:start -->
+            <tr><td><kbd>Cmd/Ctrl+O</kbd></td><td>Open a file</td></tr>
+            <tr><td><kbd>Cmd/Ctrl+Shift+O</kbd></td><td>Type or paste a path to open (<code>~</code> works)</td></tr>
+            <tr><td><kbd>Cmd/Ctrl+Shift+L</kbd></td><td>Open a source: receive syslog over UDP/TCP, a database query (kind „Datenbank“)</td></tr>
+            <tr><td><kbd>Cmd/Ctrl+Shift+H</kbd></td><td>Open a remote file over SSH/SFTP</td></tr>
+            <tr><td><kbd>Cmd/Ctrl+Shift+M</kbd></td><td>Merge files into one tab, sorted by time</td></tr>
+            <tr><td><kbd>Cmd/Ctrl+Shift+E</kbd></td><td>Export the selection, the view or the file</td></tr>
+            <tr><td>–</td><td>Open a workspace (<code>.lcw</code>)</td></tr>
+            <tr><td>–</td><td>Save the workspace: files, filter tabs, bookmarks, notes, layout</td></tr>
+            <tr><td><kbd>Cmd/Ctrl+,</kbd></td><td>Settings</td></tr>
+            <tr><td><kbd>Cmd/Ctrl+W</kbd></td><td>Close the tab</td></tr>
+            <tr><td><kbd>Ctrl+Tab</kbd></td><td>Next tab</td></tr>
+            <tr><td><kbd>Ctrl+Shift+Tab</kbd></td><td>Previous tab</td></tr>
+            <tr><td><kbd>Cmd/Ctrl+Shift+T</kbd></td><td>The result of the tab as a new filter tab, to filter further there (<code>T</code> on a filter in the tree)</td></tr>
+            <tr><td><kbd>Cmd/Ctrl+B</kbd></td><td>Show or hide the sidebar</td></tr>
+            <tr><td><kbd>Cmd/Ctrl+Shift+D</kbd></td><td>Dashboard of the tab, or back to the log</td></tr>
+            <tr><td><kbd>T</kbd></td><td>Columns or raw lines</td></tr>
+            <tr><td><kbd>D</kbd></td><td>Detail panel with the whole entry (also a double click on a line); in it the arrows scroll the panel</td></tr>
+            <tr><td><kbd>Z</kbd></td><td>Show or hide the timeline above the log</td></tr>
+            <tr><td><kbd>Shift+F10</kbd>, <kbd>ContextMenu</kbd></td><td>Column menu (show, hide, move, resize, reset)</td></tr>
+            <tr><td><kbd>Cmd/Ctrl+Alt+T</kbd></td><td>Colour scheme picker (arrows try, <code>Enter</code> keeps, <code>Esc</code> goes back)</td></tr>
+            <tr><td><kbd>End</kbd>, <kbd>F</kbd></td><td>Go to the end and follow</td></tr>
+            <tr><td><kbd>Space</kbd></td><td>Pause or resume following</td></tr>
+            <tr><td><kbd>P</kbd></td><td>Freeze: hold or resume reading the file of this tab</td></tr>
+            <tr><td><kbd>Home</kbd></td><td>Go to the first line</td></tr>
+            <tr><td><kbd>PageUp</kbd></td><td>One page up</td></tr>
+            <tr><td><kbd>PageDown</kbd></td><td>One page down</td></tr>
+            <tr><td><kbd>↑</kbd></td><td>With a selection: the previous entry (a stack trace is one), scrolled into view; without: one line up</td></tr>
+            <tr><td><kbd>↓</kbd></td><td>With a selection: the next entry; without: one line down</td></tr>
+            <tr><td><kbd>E</kbd></td><td>Next error (ERROR, FATAL) in the view; the selection stays</td></tr>
+            <tr><td><kbd>Shift+E</kbd></td><td>Previous error</td></tr>
+            <tr><td><kbd>W</kbd></td><td>Next warning or worse</td></tr>
+            <tr><td><kbd>Shift+W</kbd></td><td>Previous warning or worse</td></tr>
+            <tr><td><kbd>N</kbd></td><td>Next bookmark</td></tr>
+            <tr><td><kbd>Shift+N</kbd></td><td>Previous bookmark</td></tr>
+            <tr><td><kbd>Cmd/Ctrl+C</kbd></td><td>Copy the selected lines (marked text copies itself)</td></tr>
+            <tr><td><kbd>Esc</kbd></td><td>Drop marked text in the log, then the selection</td></tr>
+            <tr><td><kbd>Shift+↑</kbd></td><td>Extend the selection by one entry upwards (or shrink it)</td></tr>
+            <tr><td><kbd>Shift+↓</kbd></td><td>Extend the selection by one entry downwards (or shrink it)</td></tr>
+            <tr><td><kbd>Enter</kbd></td><td>Detail panel for the selection (stays open when it is)</td></tr>
+            <tr><td><kbd>M</kbd></td><td>Bookmark on the selected entry, or off again</td></tr>
+            <tr><td><kbd>Shift+M</kbd></td><td>Note on the selected entry (write, change, delete)</td></tr>
+            <tr><td><kbd>G</kbd></td><td>Selected line in the whole log (filter lifted and kept, the filter tree too), again: back to the filter</td></tr>
+            <tr><td><kbd>I</kbd></td><td>Filter on the marked text (filter tree); also by right click on a line</td></tr>
+            <tr><td><kbd>Shift+I</kbd></td><td>Exclude the marked text</td></tr>
+            <tr><td><kbd>&gt;</kbd></td><td>Section from the selected entry (filter tree)</td></tr>
+            <tr><td><kbd>&lt;</kbd></td><td>Section up to the selected entry</td></tr>
+            <tr><td><kbd>Cmd/Ctrl+F</kbd></td><td>Search</td></tr>
+            <tr><td><kbd>Enter</kbd></td><td>In the search field: next match</td></tr>
+            <tr><td><kbd>Shift+Enter</kbd></td><td>In the search field: previous match</td></tr>
+            <tr><td><kbd>Esc</kbd></td><td>In the search field: clear it</td></tr>
+            <tr><td><kbd>Cmd/Ctrl+Shift+K</kbd></td><td>Keyboard shortcuts: view, record, remove, reset (also Help → Keyboard Shortcuts…)</td></tr>
+            <tr><td><kbd>?</kbd></td><td>Keyboard shortcuts as an overview</td></tr>
+            <tr><td>–</td><td>Show the AI control history (no default key)</td></tr>
+            <tr><td>–</td><td>Disconnect the AI (no default key)</td></tr>
+            <tr><td>–</td><td>Hide the tab in front from the AI, or show it again (no default key)</td></tr>
+            <!-- keymap:end -->
+          </tbody>
+        </table>
+      </div>
+      <p class="note" id="keymap-none" hidden>No shortcut matches.</p>
+    </div>
+  </section>
+
+  <section class="sec-tight sec-line" id="widgets" data-lv="info" data-title="Widgets">
+    <div class="wrap">
+      <p class="eyebrow reveal"><b class="lv lv-info">INFO</b> keys of single widgets</p>
+      <h2 class="h2 split">Where the focus is.</h2>
+      <p class="lead reveal">These are fixed and stay with their widget.</p>
+      <div class="table-scroll reveal">
+        <table>
+          <thead><tr><th scope="col">Where</th><th scope="col">Key</th><th scope="col">Action</th></tr></thead>
+          <tbody>
+            <tr><td>Timeline</td><td><kbd>←</kbd> <kbd>→</kbd> <kbd>Shift+←/→</kbd> <kbd>Enter</kbd> <kbd>+</kbd> <kbd>-</kbd> <kbd>Esc</kbd></td><td>Move the cursor, mark a window, jump to its time, zoom, drop the window</td></tr>
+            <tr><td>Bars between panes</td><td><kbd>↑</kbd> <kbd>↓</kbd> <kbd>Home</kbd> <kbd>End</kbd></td><td>Height of the detail panel, width of the sidebar. <kbd>Shift</kbd> for bigger steps, double click for the default</td></tr>
+            <tr><td>Tree</td><td><kbd>↑</kbd> <kbd>↓</kbd> <kbd>←</kbd> <kbd>→</kbd> <kbd>Enter</kbd> <kbd>Space</kbd> <kbd>Delete</kbd></td><td>Move, open and close nodes, activate, remove a filter</td></tr>
+            <tr><td>Filter tree</td><td><kbd>A</kbd> <kbd>Shift+A</kbd> <kbd>T</kbd> <kbd>N</kbd> <kbd>Alt+↑</kbd> <kbd>Alt+↓</kbd></td><td>Add a condition or a group, a filter as a new tab, negate, move among its siblings</td></tr>
+            <tr><td>Chart of the dashboard</td><td><kbd>←</kbd> <kbd>→</kbd> <kbd>Home</kbd> <kbd>End</kbd> <kbd>Enter</kbd></td><td>Pick a point, jump to its first line</td></tr>
+            <tr><td>SQL of a panel, note</td><td><kbd>Cmd/Ctrl+Enter</kbd></td><td>Run the query, save the note</td></tr>
+            <tr><td>Log</td><td>Click, <kbd>Shift</kbd>+click</td><td>Select an entry, or a range</td></tr>
+            <tr><td>Overview ruler</td><td>Click</td><td>Go to the next marked entry from there, a bookmark, the selection or that place</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec sec-line" id="performance" data-lv="warn" data-title="Performance">
+    <div class="wrap">
+      <p class="eyebrow reveal"><b class="lv lv-warn">WARN</b> took 0.13ms</p>
+      <h2 class="h2 split">Measured, not promised.</h2>
+      <p class="lead reveal">On an Apple Silicon Mac, release build, with a log of 500 MB and 5.1 million lines. The tests that measure this are in the repository.</p>
+      <div class="stats reveal">
+        <div class="stat"><b data-count="25">25<small>ms</small></b><span>first lines</span></div>
+        <div class="stat"><b data-count="2.2">2.2<small>s</small></b><span>fully indexed</span></div>
+        <div class="stat"><b data-count="78">78<small>MB</small></b><span>index in memory</span></div>
+        <div class="stat"><b data-count="43">43<small>µs</small></b><span>200 lines at a random position</span></div>
+      </div>
+      <div class="table-scroll reveal">
+        <table>
+          <thead><tr><th scope="col">What</th><th scope="col" style="text-align:right">Time or size</th></tr></thead>
+          <tbody>
+            <tr><td>Level filter over all lines</td><td class="num">15 ms</td></tr>
+            <tr><td>Full text search over all lines</td><td class="num">0.7 s</td></tr>
+            <tr><td>Filter tree with 1 / 5 / 20 text conditions</td><td class="num">0.8 / 0.8 / 1.0 s</td></tr>
+            <tr><td>Overview ruler (800 px, 1000 bookmarks)</td><td class="num">0.3 ms</td></tr>
+            <tr><td>Next FATAL, none in 5.1 million lines</td><td class="num">0.13 ms</td></tr>
+            <tr><td>Timeline with 1000 buckets / position at a time</td><td class="num">0.6 ms / 0.13 ms</td></tr>
+            <tr><td>5000 lines with 0 / 4 / 16 extracted fields</td><td class="num">7.8 / 11.8 / 12.8 ms</td></tr>
+            <tr><td>Dashboard database: build / size / errors per minute</td><td class="num">12.8 s / 226 MB / 1.0 s</td></tr>
+            <tr><td>Read and filter with 1 / 4 / 8 filter tabs open</td><td class="num">2.2 / 3.6 / 4.6 s</td></tr>
+            <tr><td>Export of all lines as text / CSV with 5 columns</td><td class="num">0.55 / 9.8 s</td></tr>
+            <tr><td>Syslog over UDP without loss</td><td class="num">100,000 messages/s</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="note reveal">At 10,000 lines per second the event loop of the UI was never blocked for more than 8 ms (debug build, end-to-end test).</p>
+    </div>
+  </section>
+
+  <section class="sec sec-line" id="faq" data-lv="info" data-title="Questions">
+    <div class="wrap">
+      <p class="eyebrow reveal"><b class="lv lv-info">INFO</b> questions</p>
+      <h2 class="h2 split">Good to know.</h2>
+      <div class="faq">
+        <details class="reveal">
+          <summary>Is it free?</summary>
+          <p>Yes. Log Commander is open source under the MIT license. Use it at home and at work, read the code, change it.</p>
+        </details>
+        <details class="reveal">
+          <summary>Where can I download it?</summary>
+          <p>Version 1.0.0 is on the <a href="https://github.com/krocon/log-commander/releases/latest">GitHub releases page</a>: a universal .dmg for macOS, an installer or .msi for Windows, .deb or AppImage for Linux. You can also build it from source with Node.js and Rust; the steps are in the <a href="https://github.com/krocon/log-commander#development">README</a>.</p>
+        </details>
+        <details class="reveal">
+          <summary>Are the packages signed?</summary>
+          <p>Not yet. On macOS open the app with right click, Open. On Windows choose More info, Run anyway in SmartScreen.</p>
+        </details>
+        <details class="reveal">
+          <summary>What happens with my logs?</summary>
+          <p>They stay on your computer. The app has no account, no telemetry and does not phone home. If you turn on AI control, what the AI reads goes to the provider of your AI app, and you can hide tabs from it.</p>
+        </details>
+        <details class="reveal">
+          <summary>How large can a file be?</summary>
+          <p>Up to 2³² lines per file. The index takes 16 bytes per line, the text stays on disk. A line is shown up to 128 KB and searched up to 1 MB.</p>
+        </details>
+        <details class="reveal">
+          <summary>Can it sort by a column?</summary>
+          <p>No. The view stays in file order, because a log is a sequence. To see “the slowest requests”, filter on a field or ask the dashboard with SQL.</p>
+        </details>
+        <details class="reveal">
+          <summary>Which language is the interface?</summary>
+          <p>German for now, as the pictures on this site show.</p>
+        </details>
+      </div>
+    </div>
+  </section>
+
+  <section class="cta sec-line" id="get" data-lv="info" data-title="Download">
+    <div class="wrap">
+      <p class="prompt reveal">$ log-commander /var/log/app.log</p>
+      <h2 class="h2 split">Open the log.</h2>
+      <div class="actions reveal">
+        <a class="btn btn-primary" href="https://github.com/krocon/log-commander/releases/latest">Download 1.0 from GitHub</a>
+        <a class="btn btn-ghost" href="index.html">Back to the start</a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <ul>
+      <li><a href="https://github.com/krocon/log-commander">Source on GitHub</a></li>
+      <li><a href="https://github.com/krocon/log-commander/issues">Report a problem</a></li>
+      <li><a href="https://github.com/krocon/log-commander/blob/main/LICENSE">MIT license</a></li>
+      <li><a href="https://krocon.de">Imprint and privacy (krocon.de)</a></li>
+    </ul>
+    <p>© Marc Kronberg. This page loads nothing from other servers and sets no cookies.</p>
+  </div>
+</footer>
+</body>
+</html>
