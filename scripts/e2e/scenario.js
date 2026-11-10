@@ -7,6 +7,20 @@
   const act = (action) => report(`ACTION ${action}`);
   const $ = (selector) => document.querySelector(selector);
   const $$ = (selector) => [...document.querySelectorAll(selector)];
+  // Errors of the page (Angular's ErrorHandler only logs them), reported with a timeout.
+  const pageErrors = [];
+  const keepError = (text) => pageErrors.length < 20 && pageErrors.push(String(text).slice(0, 500));
+  window.addEventListener('error', (e) =>
+    keepError(`error: ${e.message} ${e.filename}:${e.lineno}`),
+  );
+  window.addEventListener('unhandledrejection', (e) =>
+    keepError(`rejection: ${e.reason?.stack ?? e.reason}`),
+  );
+  const consoleError = console.error.bind(console);
+  console.error = (...args) => {
+    keepError(`console: ${args.map((a) => a?.stack ?? a).join(' ')}`);
+    consoleError(...args);
+  };
 
   async function waitFor(what, condition, timeoutMs = 15000) {
     const start = Date.now();
@@ -24,6 +38,7 @@
       if (Date.now() - start > timeoutMs) {
         const state = document.body.innerText.slice(0, 1500).replace(/\n/g, ' | ');
         await report(`INFO visibility=${document.visibilityState}`);
+        for (const error of pageErrors) await report(`INFO ${error}`);
         const bar = document.querySelector('app-status-bar')?.innerText.replace(/\n/g, ' | ');
         throw new Error(`timeout: ${what} STATUS: ${bar} UI: ${state}`);
       }
