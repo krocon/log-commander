@@ -271,10 +271,13 @@ export function clickTarget(y: number, view: RulerView): RulerTarget {
   const here = hereAt(y, view);
   if (here) {
     const { start } = bucketPositions(here.from, here.from + 1, view.buckets, view.count);
+    // The backend marks a bucket with every line that reaches into it: the first may begin in the bucket
+    // before (its start is not on a bucket edge). `from` is exclusive, the search starts one later.
+    const first = view.buckets > 0 ? Math.floor((here.from * view.count) / view.buckets) : 0;
     const levels = new Set<Level>(here.marks.flatMap((m) => levelsFrom(m.level)));
     return {
       kind: 'level',
-      from: start > 0 ? start - 1 : null,
+      from: first > 0 ? first - 1 : null,
       levels: [...RULER_LEVELS].reverse().filter((l) => levels.has(l)),
       fallback: start,
     };

@@ -220,6 +220,20 @@ describe('SessionState navigation (prompt 007)', () => {
     expect(session.jumpMark).toBeNull();
   });
 
+  it('settling the scroll position (clamped to the bottom) keeps the jump going on from its target', () => {
+    const session = make(() => Promise.resolve(0));
+    session.jumpTo(95, 95);
+    session.settleScroll({ top: 70, subPx: 4 });
+    expect(session.scroll()).toEqual({ top: 70, subPx: 4 });
+    expect(session.follow()).toBe(false);
+    expect(session.jumpMark?.position).toBe(95);
+    expect(session.jumpMark?.scroll).toBe(session.scroll());
+    // Scrolled by the reader in between: the jump is over, settling does not bring it back.
+    session.scroll.set({ top: 10, subPx: 0 });
+    session.settleScroll({ top: 12, subPx: 0 });
+    expect(session.jumpMark?.scroll).not.toBe(session.scroll());
+  });
+
   it('keeps bookmarks when only the view changes', () => {
     const session = make(() => Promise.resolve(0));
     session.bookmarks.set(new Set([3]));

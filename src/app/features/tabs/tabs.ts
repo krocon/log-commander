@@ -3,6 +3,7 @@ import { SessionMarksComponent } from '../../shared/session-marks';
 import { LogSessionService } from '../sessions/log-session.service';
 import { WorkspaceService } from '../workspace/workspace.service';
 import { ActionService } from '../../core/actions/action.service';
+import { McpService } from '../mcp/mcp.service';
 
 @Component({
   selector: 'app-tabs',
@@ -58,6 +59,16 @@ import { ActionService } from '../../core/actions/action.service';
               }
             }
             <app-session-marks [session]="session" />
+            @if (mcp.isHidden(session)) {
+              <!-- Prompt 022: hidden from AI control. -->
+              <span
+                class="ai-hidden"
+                role="img"
+                aria-label="vor der KI verborgen"
+                title="Vor der KI verborgen"
+                >⊘</span
+              >
+            }
             {{ session.tabLabel() }}
           </button>
           <button
@@ -159,6 +170,9 @@ import { ActionService } from '../../core/actions/action.service';
     .src {
       color: var(--accent);
     }
+    .ai-hidden {
+      color: var(--text-dim);
+    }
     .tab.active {
       background: var(--bg-panel);
       color: var(--text);
@@ -190,6 +204,7 @@ export class TabsComponent {
   protected readonly sessions = inject(LogSessionService);
   protected readonly workspace = inject(WorkspaceService);
   protected readonly actions = inject(ActionService);
+  protected readonly mcp = inject(McpService);
   readonly openFile = output<void>();
   readonly openPath = output<void>();
   readonly merge = output<void>();

@@ -12,6 +12,11 @@ rust-version = "1.89"
 name = "log_commander_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+# The MCP sidecar `log-commander-mcp` and the bridge the app runs (prompt 022). A workspace member, so the debug
+# sidecar lands in target/debug next to the app, where the settings look for it.
+[workspace]
+members = ["mcp"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -67,6 +72,8 @@ tauri-plugin-dialog = "2"
 tauri-plugin-store = "2"
 tauri-plugin-window-state = "2"
 thiserror = "2"
+# AI control over MCP (prompt 022): bridge server, tool list, connection test. Only serde/serde_json.
+lc-mcp = { path = "mcp" }
 
 # Free disk space before building the dashboard database (prompt 012).
 [target.'cfg(unix)'.dependencies]

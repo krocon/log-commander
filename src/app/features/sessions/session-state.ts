@@ -128,6 +128,8 @@ export class SessionState {
   readonly pausedAtCount = signal(0);
 
   readonly selection = signal<LineSelection | null>(null);
+  /** Hidden from AI control (prompt 022, design E1): the tab and its filter tabs do not exist for the AI. */
+  readonly aiHidden = signal(false);
   /**
    * Bookmarks (line numbers, prompt 007), kept in memory only; a new epoch clears them. Shared by all tabs of the
    * file (prompt 013): they are line numbers, and one finds them again down the chain.
@@ -378,6 +380,14 @@ export class SessionState {
     const scroll = jumpScroll(position);
     this.scroll.set(scroll);
     this.jumpMark = { position, line, scroll };
+  }
+
+  /** Moves to `pos` without ending a jump: the next `E`/`W` still goes on from the jump's target. */
+  settleScroll(pos: ScrollPos): void {
+    const mark = this.jumpMark;
+    const kept = mark !== null && mark.scroll === this.scroll();
+    this.scroll.set(pos);
+    if (kept) this.jumpMark = { ...mark, scroll: pos };
   }
 
   private onViewChanged(): void {

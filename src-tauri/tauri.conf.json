@@ -41,7 +41,7 @@
     "homepage": "https://github.com/krocon/log-commander",
     "category": "DeveloperTool",
     "shortDescription": "Fast, colourful live log viewer",
-    "longDescription": "Log Commander opens log files that other processes keep writing to and shows new lines immediately. Filter by level, search, follow – on files with millions of lines.",
+    "longDescription": "Log Commander opens log files that other processes keep writing to and shows new lines immediately. Filter by level, search, follow – on files with millions of lines. Optionally an AI assistant can read and steer it over MCP (Model Context Protocol).",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

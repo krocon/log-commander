@@ -1687,7 +1687,15 @@ mod tests {
             let db = Arc::clone(&db);
             thread::spawn(move || db.query(slow, "panel"))
         };
-        thread::sleep(Duration::from_millis(200));
+        // Until it runs: a thread that starts late (Windows CI) would be the newer query itself.
+        let waiting = Instant::now();
+        while !db.readers.lock().values().any(|(slot, _)| slot == "panel") {
+            assert!(
+                waiting.elapsed() < Duration::from_secs(10),
+                "the slow query never opened"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
         // Another slot does not stop it, the same one does.
         assert!(db.query("SELECT 1", "other").is_ok());
         let started = Instant::now();
@@ -1782,13 +1790,16 @@ mod tests {
         let r = db.query(&format!("SELECT {worst}"), "a").unwrap();
         assert_eq!(r.rows[0][0], 0);
         let single = started.elapsed();
-        // 50 of them in one row: done, or stopped by the time limit between columns; never minutes.
+        // 50 of them in one row: done, or stopped by the time limit; never minutes. SQLite asks the progress
+        // handler at jumps, and a row of plain expressions has few, so it may run through all columns: the
+        // bound follows the measured column (57 ms in a local debug build, 110 ms on a CI runner).
         let many = vec![worst; MAX_COLUMNS as usize].join(", ");
+        let bound = Duration::from_secs(5).max(single * MAX_COLUMNS as u32 * 2);
         let started = Instant::now();
         let _ = db.query(&format!("SELECT {many}"), "a");
         assert!(
-            started.elapsed() < Duration::from_secs(5),
-            "{:?} (one: {single:?})",
+            started.elapsed() < bound,
+            "{:?} (one: {single:?}, bound {bound:?})",
             started.elapsed()
         );
         // More columns than that are refused.

@@ -45,6 +45,8 @@ Thumbs.db
 
 # Rust / Tauri
 /src-tauri/target
+# Prompt 022: the release sidecar (scripts/mcp-sidecar.mjs)
+/src-tauri/binaries
 /src-tauri/gen
 
 # Tool folders of other assistants

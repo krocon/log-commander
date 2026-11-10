@@ -1,6 +1,6 @@
 # Architektur
 
-Stand: Aktionen und Kürzel-Editor (Prompt 021), Farbschemata (Prompt 020), Logs aus Datenbanken (Prompt 019), Windows-Ereignisprotokolle (Prompt 018), Remote-Dateien über SSH/SFTP (Prompt 017), Quellen ohne Datei mit Spool und Syslog-Empfang (Prompt 016), Export und Arbeitsstand (Prompt 015), Zeitstrahl (Prompt 014), Filter als eigener Tab (Prompt 013), Dashboard und SQL-Timeline (Prompt 012), Felder aus der Nachricht (Prompt 011), Verkettete Filter (Prompt 010), Overview Ruler und Navigation (Prompt 007), Dateien zusammenführen (Prompt 006), Seitenleiste (Prompt 005), Detail-Panel (Prompt 004), Spaltenansicht (Prompt 009) und Formaterkennung (Prompt 008) auf Basis des Startauftrags, des Flacker-Fixes (001), des Freeze-Buttons (002) und
+Stand: KI-Steuerung über MCP (Prompt 022), Aktionen und Kürzel-Editor (Prompt 021), Farbschemata (Prompt 020), Logs aus Datenbanken (Prompt 019), Windows-Ereignisprotokolle (Prompt 018), Remote-Dateien über SSH/SFTP (Prompt 017), Quellen ohne Datei mit Spool und Syslog-Empfang (Prompt 016), Export und Arbeitsstand (Prompt 015), Zeitstrahl (Prompt 014), Filter als eigener Tab (Prompt 013), Dashboard und SQL-Timeline (Prompt 012), Felder aus der Nachricht (Prompt 011), Verkettete Filter (Prompt 010), Overview Ruler und Navigation (Prompt 007), Dateien zusammenführen (Prompt 006), Seitenleiste (Prompt 005), Detail-Panel (Prompt 004), Spaltenansicht (Prompt 009) und Formaterkennung (Prompt 008) auf Basis des Startauftrags, des Flacker-Fixes (001), des Freeze-Buttons (002) und
 der GuiExpert Table (003). Dieses Dokument beschreibt
 Entscheidungen, nicht Wünsche. Geplantes steht in `docs/roadmap.md` und in `prompts/`.
 
@@ -126,6 +126,7 @@ Entscheidungen, nicht Wünsche. Geplantes steht in `docs/roadmap.md` und in `pro
 | Capabilities | Nur für `main`: Events, Pfad-Auflösung, Fenstertitel, Öffnen-Dialog, Store, CLI. Kein `tauri-plugin-fs`, keine Shell | Alle Dateizugriffe laufen über eigene Commands, das Frontend kann keine beliebigen Pfade lesen. |
 | Öffnen | Dialog, Menü (`Cmd/Ctrl+O`, für einen Pfad `Cmd/Ctrl+Shift+O`), Datei-Drop, Kommandozeile (`tauri-plugin-cli`), zuletzt geöffnete Dateien; Zusammenführen per Dialog (`Cmd/Ctrl+Shift+M`, Menü `menu-merge`, Tab-Leiste, Startseite) | Ein Weg im Service (`tryOpen`, für Merges `openMerged`), eine schon offene Datei aktiviert ihren Tab; ein Merge wird über seine sortierten Pfade erkannt und landet nicht in „zuletzt geöffnet“. |
 | Ende-zu-Ende | Debug-Build mit `e2e.rs`: Das Szenario aus `LC_E2E_SCRIPT` läuft im echten WebView gegen das echte Backend und meldet über stdout. Der Harness ändert die Datei auf Zuruf | Prüft Tail, Rotation und Truncation so, wie Nutzer sie erleben. Release-Builds enthalten das Modul nicht. |
+| KI-Steuerung (022) | Sidecar `log-commander-mcp` (stdio-MCP) → TCP `127.0.0.1` mit Token → `mcp.rs` (Router) → Channel → `McpService`/`mcp-tools.ts` im Frontend | Wie AppIconic 018. Der Zustand der Tabs lebt im Frontend; Tools laufen über dieselben Services wie Tastatur und Menü. Aus per Default, kein HTTP (keine Angriffsfläche für Webseiten), Bestätigung im Fenster für alles mit Dateien. Doku `docs/mcp.md`. |
 | Screenshots | Gebautes Frontend in Playwright-WebKit mit IPC-Mock (`scripts/e2e/mock-ipc.js`), Daten aus `samples/` | Gleiche Bilder auf jedem OS, ohne Rust-Build und ohne Fensterrechte. |
 
 ## Grenzen
@@ -198,6 +199,7 @@ Entscheidungen, nicht Wünsche. Geplantes steht in `docs/roadmap.md` und in `pro
 | `tiberius` 0.13 (`rustls`, `tds73`, `chrono`, ohne `native-tls`/`winauth`), `tokio-util` 0.7 (`compat`) | SQL Server (Prompt 019) | Einzige reine Rust-Implementierung von TDS, kein ODBC-Treiber nötig. Bringt aws-lc-rs in rustls mit (gebündeltes C, keine Systembibliothek); ring wird als Prozess-Provider gesetzt. |
 | `rustls` 0.23 (`ring`, `std`, `tls12`), `futures-util` 0.3 | Prozess-Provider für TLS setzen; Zeilen aus den Streams der Treiber | Waren über die Treiber im Baum. |
 | `rusqlite` Feature `column_decltype` | Deklarierte Spaltentypen der SQLite-Quelle (019) | Nur eine Rust-Funktion mehr; SQLite selbst unverändert. |
+| `lc-mcp` (eigenes Crate, nur `serde`/`serde_json`) | KI-Steuerung über MCP (Prompt 022): Sidecar, Brücke, Schemata, Hilfe | Eigene JSON-RPC-Schicht aus AppIconic statt `rmcp`: kein Tokio/Makro-Baum im Sidecar (2 MB Debug), voll getestet. Workspace-Mitglied, damit der Debug-Sidecar neben der Debug-App liegt. |
 | Angular 22, `@tauri-apps/api` samt Plugin-Paketen, `rxjs` | Oberfläche | Vorgabe. Kein UI-Framework, kein CDK. |
 | Dev: Vitest + jsdom, angular-eslint, Prettier, `playwright` (nur Screenshots), `tempfile` | Tests und Werkzeuge | Kein Laufzeitcode. |
 

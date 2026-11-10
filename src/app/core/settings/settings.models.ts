@@ -79,6 +79,16 @@ export interface Settings {
   spoolLimitMb: number;
   /** Own shortcuts (prompt 021): only the actions that differ from the default keymap, `[]` = none. */
   keymap: KeymapSetting;
+  /** AI control over MCP (prompt 022): off by default; no port while off. */
+  mcp: McpSettings;
+}
+
+export interface McpSettings {
+  enabled: boolean;
+  /** Replace known secrets (Bearer, JWT, password= …) before log text leaves for the AI (design E2). */
+  maskSecrets: boolean;
+  /** Proposals that write files (export) run without asking; opening files always asks (design E6). */
+  skipConfirm: boolean;
 }
 
 export interface KeymapSetting {
@@ -115,6 +125,7 @@ export const DEFAULT_SETTINGS: Settings = {
   savedSources: [],
   spoolLimitMb: 2048,
   keymap: { version: KEYMAP_VERSION, bindings: {} },
+  mcp: { enabled: false, maskSecrets: true, skipConfirm: false },
 };
 
 export const MIN_FONT_SIZE = 9;
@@ -209,7 +220,21 @@ export function mergeSettings(saved: Partial<Settings> | null | undefined): Sett
     ? Math.round(Math.min(MAX_SPOOL_LIMIT_MB, Math.max(MIN_SPOOL_LIMIT_MB, spool)))
     : DEFAULT_SETTINGS.spoolLimitMb;
   merged.keymap = mergeKeymap(merged.keymap).keymap;
+  merged.mcp = mergeMcp(merged.mcp);
   return merged;
+}
+
+/** AI control (prompt 022): only booleans, anything else is the default (off, masked, asking). */
+export function mergeMcp(raw: unknown): McpSettings {
+  const d = DEFAULT_SETTINGS.mcp;
+  const v = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {};
+  const flag = (key: keyof McpSettings) =>
+    typeof v[key] === 'boolean' ? (v[key] as boolean) : d[key];
+  return {
+    enabled: flag('enabled'),
+    maskSecrets: flag('maskSecrets'),
+    skipConfirm: flag('skipConfirm'),
+  };
 }
 
 /**

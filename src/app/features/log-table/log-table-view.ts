@@ -329,6 +329,19 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
         }
       }
     });
+    // A jump into the last screenful (a ruler mark, `E` near the end) asks for a top below the bottom. Left
+    // alone, the browser clamps the table's scroll bar itself, WebKitGTK only after the draw, and that scroll
+    // event reads as a drag to the end: following would start again. Once every line is here, clamp it in the
+    // model; while lines are still on their way the jump target may become reachable, so it stays.
+    effect(() => {
+      const session = this.session();
+      const pos = session.scroll();
+      if (session.follow() || session.displayedLines() < session.filteredLines()) return;
+      const clamped = clampToBottom(pos, untracked(this.metrics));
+      if (clamped.atBottom && (clamped.pos.top !== pos.top || clamped.pos.subPx !== pos.subPx)) {
+        untracked(() => session.settleScroll(clamped.pos));
+      }
+    });
     effect(() => {
       this.session().visibleRows.set(visibleRowCount(this.bodyH(), this.rowH()));
     });
@@ -563,7 +576,10 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
       return;
     }
     const dragging = this.dragged || this.dragSelected;
-    if (this.columnDragging() || holdForSelection(state.follow, this.selectionInTable(), dragging)) {
+    if (
+      this.columnDragging() ||
+      holdForSelection(state.follow, this.selectionInTable(), dragging)
+    ) {
       this.heldForSelection = true;
       this.holds++;
       return;

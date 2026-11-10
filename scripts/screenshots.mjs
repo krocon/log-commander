@@ -209,6 +209,28 @@ await dark.waitForSelector('.lt-gutter.lt-src');
 await dark.waitForTimeout(300);
 await shot(dark, 'merge');
 
+// Prompt 022: AI control on, an AI connected – the settings section and the badge in the status bar.
+{
+  const ai = await page(browser, {
+    theme: 'dark',
+    extra: { settings: { mcp: { enabled: true, maskSecrets: true, skipConfirm: false } } },
+  });
+  await ai.click('.tab .title >> text=app.log');
+  await ai.waitForSelector('app-mcp-badge .badge.on');
+  await ai.click('app-mcp-badge .badge');
+  await ai.waitForTimeout(150);
+  await shot(ai, 'mcp-badge');
+  await ai.click('app-mcp-badge .badge');
+  await ai.click('button[title=Einstellungen]');
+  await ai.waitForSelector('app-mcp-settings input[readonly]');
+  await ai.evaluate(() =>
+    document.querySelector('app-mcp-settings')?.scrollIntoView({ block: 'start' }),
+  );
+  await ai.waitForTimeout(150);
+  await shot(ai, 'mcp-settings');
+  await ai.context().close();
+}
+
 const light = await page(browser, { theme: 'light' });
 await light.click('.tab .title >> text=app.log');
 await light.waitForTimeout(150);

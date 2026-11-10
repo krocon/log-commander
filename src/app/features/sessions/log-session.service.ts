@@ -464,9 +464,20 @@ export class LogSessionService {
    * Sends the tab's filter to the backend. A filter set by hand forgets the one `revealInFullLog` kept;
    * `keep` is for that way and back.
    */
-  private async applyFilter(session: SessionState, keep = false): Promise<FilterInfo | null> {
+  private applyFilter(session: SessionState, keep = false): Promise<FilterInfo | null> {
     if (!keep) session.keptFilter.set(null);
     this.cancelTreeTimer(session);
+    // One after the other per tab: the backend runs commands in parallel, an older filter that came last
+    // would stay (WARN+ and an Alt-click right after). Each call reads the tab when its turn comes.
+    const previous = this.filterCalls.get(session) ?? Promise.resolve(null);
+    const next = previous.catch(() => null).then(() => this.sendFilter(session));
+    this.filterCalls.set(session, next);
+    return next;
+  }
+
+  private readonly filterCalls = new WeakMap<SessionState, Promise<FilterInfo | null>>();
+
+  private async sendFilter(session: SessionState): Promise<FilterInfo | null> {
     const expr = compileTree(session.filterTree());
     try {
       const info = await this.api.setFilter(
@@ -773,7 +784,8 @@ export class LogSessionService {
   ): Promise<void> {
     try {
       const hit = await this.api.findLevel(session.sessionId, from, true, levels, session.viewId);
-      if (hit) session.jumpTo(hit.position, hit.line);
+      // A hit from the start again is not what was clicked: then the clicked place itself.
+      if (hit && !hit.wrapped) session.jumpTo(hit.position, hit.line);
       else session.jumpTo(fallback, null);
     } catch (e) {
       this.showError(toAppError(e));

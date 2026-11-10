@@ -81,6 +81,36 @@ describe('LogSessionService.applyPreset', () => {
   });
 });
 
+describe('LogSessionService filter calls', () => {
+  it('sends one after the other, so the last change is the one that stays', async () => {
+    const answers: (() => void)[] = [];
+    const setFilter = vi.fn(
+      () => new Promise((resolve) => answers.push(() => resolve({ viewGeneration: 1 }))),
+    );
+    const { service, session } = setup(setFilter as never);
+    const first = service.setLevels(session, new Set(['WARN', 'ERROR', 'FATAL']));
+    const second = service.setLevels(session, new Set(['ERROR']));
+    await new Promise((r) => setTimeout(r));
+    // The second waits for the first: the backend may run two calls in any order.
+    expect(setFilter).toHaveBeenCalledTimes(1);
+    answers.shift()?.();
+    await first;
+    await new Promise((r) => setTimeout(r));
+    expect(setFilter).toHaveBeenCalledTimes(2);
+    expect(setFilter).toHaveBeenLastCalledWith(
+      1,
+      ['ERROR'],
+      expect.anything(),
+      expect.anything(),
+      null,
+      null,
+      0,
+    );
+    answers.shift()?.();
+    await second;
+  });
+});
+
 describe('LogSessionService.openMerged', () => {
   function mergeSetup() {
     const openMerged = vi.fn((sources: { path: string }[]) =>

@@ -25,10 +25,12 @@ import { ThemeService } from '../../core/theme/theme.service';
 import { LogSessionService } from '../sessions/log-session.service';
 import { formatMapping, newProfileId, parseMapping } from './profile-logic';
 import { draftFromInference, parseLayouts } from '../sessions/format-logic';
+import { McpSettingsComponent } from '../mcp/mcp-settings';
 
 @Component({
   selector: 'app-settings-dialog',
   changeDetection: ChangeDetectionStrategy.OnPush,
+  imports: [McpSettingsComponent],
   template: `
     <dialog #dialog (close)="closed.emit()" aria-label="Einstellungen">
       <header>
@@ -117,6 +119,9 @@ import { draftFromInference, parseLayouts } from '../sessions/format-logic';
             }
           </p>
         </section>
+
+        <!-- Prompt 022: AI control over MCP. -->
+        <app-mcp-settings />
 
         <section>
           <h3>Eigene Level-Farben (über jedem Farbschema)</h3>
