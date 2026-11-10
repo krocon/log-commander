@@ -15,9 +15,10 @@ use std::fs;
 use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
-const TIMEOUT: Duration = Duration::from_secs(15);
+#[path = "../src/test_support.rs"]
+mod test_support;
 
 fn rule(name: &str, pattern: &str, kind: ValueKind, unit: Option<&str>) -> ExtractRule {
     ExtractRule {
@@ -43,16 +44,13 @@ fn open(manager: &SessionManager, path: &Path) -> Arc<LogSession> {
     session
 }
 
+#[track_caller]
 fn wait(session: &LogSession, what: &str, condition: impl Fn(&SessionUpdate) -> bool) {
-    let start = Instant::now();
-    loop {
-        let stats = session.stats();
-        if condition(&stats) {
-            return;
-        }
-        assert!(start.elapsed() < TIMEOUT, "timeout: {what}: {stats:?}");
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    test_support::wait_until_or(
+        what,
+        || format!("{:?}", session.stats()),
+        || condition(&session.stats()),
+    );
 }
 
 /// The text of a column of a line, by column id.

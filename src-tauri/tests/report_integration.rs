@@ -17,7 +17,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-const TIMEOUT: Duration = Duration::from_secs(20);
+#[path = "../src/test_support.rs"]
+mod test_support;
+use test_support::{stays_false, wait_until_or};
 
 fn profile(id: &str) -> Profile {
     builtin_profiles().into_iter().find(|p| p.id == id).unwrap()
@@ -48,16 +50,13 @@ fn open(path: &Path, reports: &Path, keep_on_rotate: bool) -> LogSession {
     session
 }
 
+#[track_caller]
 fn wait(session: &LogSession, what: &str, condition: impl Fn(&SessionUpdate) -> bool) {
-    let start = Instant::now();
-    loop {
-        let stats = session.stats();
-        if condition(&stats) {
-            return;
-        }
-        assert!(start.elapsed() < TIMEOUT, "timeout: {what}: {stats:?}");
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    wait_until_or(
+        what,
+        || format!("{:?}", session.stats()),
+        || condition(&session.stats()),
+    );
 }
 
 /// Waits until the table covers every line there is and is ready.
@@ -314,10 +313,14 @@ fn tail_rotation_truncation_and_freeze() {
 
     // Freeze: nothing new is read, so nothing new comes in.
     session.set_frozen(true);
-    wait(&session, "frozen", |s| s.frozen);
-    append(&path, "2026-01-15 10:00:04,001 INFO e\n");
-    std::thread::sleep(Duration::from_millis(500));
-    assert_eq!(session.stats().report.unwrap().rows, 4);
+    let held = "2026-01-15 10:00:04,001 INFO e\n";
+    append(&path, held);
+    wait(&session, "the frozen worker sees the line", |s| {
+        s.frozen && s.pending_bytes == held.len() as u64
+    });
+    assert!(stays_false(Duration::from_millis(500), || {
+        session.stats().report.unwrap().rows != 4
+    }));
     session.set_frozen(false);
     wait(&session, "resumed", |s| {
         s.report.as_ref().is_some_and(|r| r.rows == 5)
@@ -377,11 +380,18 @@ fn only_while_open_and_closing_the_session_stops_the_build() {
     fs::write(&path, &text).unwrap();
     let session = open(&path, &reports, true);
     session.open_report(None).unwrap();
-    // Closing the dashboard pauses the builder; opening it again goes on from there.
-    std::thread::sleep(Duration::from_millis(30));
+    // Closing the dashboard pauses the builder; opening it again goes on from there. The builder
+    // has begun its table when it says so; 200 000 lines take it a while from there.
+    wait(&session, "the builder has begun", |s| s.report.is_some());
     session.close_report();
     let paused = session.stats().report.unwrap();
     assert_eq!(session.report_active(), (true, false));
+    assert!(
+        stays_false(Duration::from_millis(100), || {
+            session.stats().report.as_ref() != Some(&paused)
+        }),
+        "paused: the table does not go on"
+    );
     session.open_report(None).unwrap();
     let done = wait_ready(&session, "built");
     assert_eq!(done.rows, 200_000);
@@ -390,14 +400,43 @@ fn only_while_open_and_closing_the_session_stops_the_build() {
         "went on, did not start over"
     );
     // Closing the tab while building stops at the next batch and deletes the file.
-    append(&path, &text);
-    wait(&session, "more lines", |s| s.total_lines == 400_000);
-    session.open_report(Some(vec!["thread".into()])).unwrap();
-    std::thread::sleep(Duration::from_millis(20));
-    let started = Instant::now();
-    drop(session);
-    assert!(started.elapsed() < Duration::from_secs(2));
+    // How long is "at the next batch"? Not a number of seconds (that depends on the machine and
+    // on what else it does), but far less than the whole build: a second session builds the
+    // same table from the same file at the same time, and begins first. Had closing waited for
+    // the build to finish, this one would be done as well.
+    let other_reports = dir.path().join("other-reports");
+    let other = open(&path, &other_reports, true);
+    assert_eq!(other.stats().total_lines, 200_000);
+    let fields = || Some(vec!["thread".to_string()]);
+    other.open_report(fields()).unwrap();
+    session.open_report(fields()).unwrap();
+    wait(&session, "the table starts over for the field", |s| {
+        s.report
+            .as_ref()
+            .is_some_and(|r| r.generation > done.generation)
+    });
+    // The builder has stopped when the file of the table is gone. Closing the session does
+    // more after that (it lets go of the file watcher, which takes macOS seconds when the
+    // machine is busy), so the other session is looked at then, not when the drop returns.
+    let racing = std::thread::scope(|scope| {
+        scope.spawn(move || drop(session));
+        wait_until_or(
+            "the file of the table to go",
+            || format!("{:?}", files_in(&reports)),
+            || files_in(&reports).is_empty(),
+        );
+        other.stats().report
+    });
+    assert!(
+        racing
+            .as_ref()
+            .is_none_or(|r| r.state != ReportState::Ready && r.rows < 200_000),
+        "closing took as long as building the whole table: {racing:?}"
+    );
     assert!(files_in(&reports).is_empty());
+    // The other one was building all of it, and goes on undisturbed.
+    let whole = wait_ready(&other, "the other session builds the table");
+    assert_eq!(whole.rows, 200_000);
 }
 
 #[test]
@@ -706,19 +745,13 @@ fn measure_report() {
     );
 }
 
+/// For the measurement on 500 MB: ten minutes, whatever `LC_TEST_TIMEOUT` says.
 fn wait_long(session: &LogSession, what: &str, condition: impl Fn(&SessionUpdate) -> bool) {
-    let start = Instant::now();
-    loop {
-        let stats = session.stats();
-        if condition(&stats) {
-            return;
-        }
-        assert!(
-            start.elapsed() < Duration::from_secs(600),
-            "timeout: {what}: {stats:?}"
-        );
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    assert!(
+        test_support::holds_within(Duration::from_secs(600), || condition(&session.stats())),
+        "timeout: {what}: {:?}",
+        session.stats()
+    );
 }
 
 #[allow(dead_code)]

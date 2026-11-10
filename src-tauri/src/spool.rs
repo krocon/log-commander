@@ -161,13 +161,22 @@ impl SpoolFiles {
         Ok(())
     }
 
-    /// Renames the current file away, starts a new one and deletes the oldest files beyond
-    /// `max_files`.
+    /// Deletes the oldest files so that one more fits into `max_files`, renames the current file
+    /// away and starts a new one. In this order the folder never holds more than `max_files`
+    /// files, not even for a moment.
     pub fn rotate(&mut self) -> io::Result<()> {
         if let Some(mut out) = self.out.take() {
             out.flush()?;
         }
         self.dirty = false;
+        // The current file becomes a rotated one, and a new current one joins.
+        while self.rotated.len() + 2 > self.config.max_files {
+            let Some((oldest, _)) = self.rotated.pop_front() else {
+                break;
+            };
+            // Gone already (removed by hand) is fine.
+            let _ = std::fs::remove_file(oldest);
+        }
         self.seq += 1;
         let rotated = self.config.dir.join(format!("spool-{:06}.log", self.seq));
         std::fs::rename(self.config.current_path(), &rotated)?;
@@ -175,12 +184,6 @@ impl SpoolFiles {
         self.current_len = 0;
         let file = create_private_file(&self.config.current_path(), false)?;
         self.out = Some(BufWriter::with_capacity(WRITE_BUFFER, file));
-        while self.rotated.len() + 1 > self.config.max_files {
-            if let Some((oldest, _)) = self.rotated.pop_front() {
-                // Gone already (removed by hand) is fine.
-                let _ = std::fs::remove_file(oldest);
-            }
-        }
         Ok(())
     }
 
@@ -733,13 +736,11 @@ mod tests {
         let spool = Spool::start(config.clone()).unwrap();
         let writer = spool.writer();
         assert!(writer.try_line(b"hello".to_vec()));
-        let start = Instant::now();
-        while read(&config.current_path()) != "hello\n" {
-            assert!(start.elapsed() < Duration::from_secs(5), "not flushed");
-            std::thread::sleep(Duration::from_millis(5));
-        }
-        // Generous bound: the machine may be busy.
-        assert!(start.elapsed() < Duration::from_secs(2));
+        // Nobody closes the spool or asks for a flush: only the writer thread's interval can put
+        // the line into the file. That it gets there is the proof, not how fast.
+        crate::test_support::wait_until("the writer thread to flush", || {
+            read(&config.current_path()) == "hello\n"
+        });
         assert_eq!(spool.stats().lines.load(Ordering::Relaxed), 1);
     }
 

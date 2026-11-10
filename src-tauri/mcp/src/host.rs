@@ -156,7 +156,11 @@ impl Bucket {
     }
 
     fn take(&mut self) -> bool {
-        let now = Instant::now();
+        self.take_at(Instant::now())
+    }
+
+    /// `take` at the time `now` (the tests pass it).
+    fn take_at(&mut self, now: Instant) -> bool {
         let refill = now.duration_since(self.at).as_secs_f64() * CALLS_PER_SECOND;
         self.tokens = (self.tokens + refill).min(CALLS_PER_SECOND);
         self.at = now;
@@ -315,6 +319,7 @@ mod tests {
     use super::*;
     use crate::client::BridgeClient;
     use crate::server::Tools as _;
+    use crate::test_support::{timeout, wait_until, wait_until_or};
     use serde_json::json;
 
     #[derive(Default)]
@@ -419,16 +424,16 @@ mod tests {
         assert_eq!(resp.error.unwrap().code, "invalid_request");
     }
 
+    /// The host's answer to a hello, empty if it closed the socket (also before the hello could
+    /// be written: a host without a free place closes at once, the write then fails).
     fn hello(w: &mut TcpStream, r: &mut BufReader<TcpStream>, token: &str) -> String {
-        writeln!(
-            w,
-            "{}",
-            serde_json::to_string(&Hello {
-                token: token.into()
-            })
-            .unwrap()
-        )
+        let hello = serde_json::to_string(&Hello {
+            token: token.into(),
+        })
         .unwrap();
+        if writeln!(w, "{hello}").is_err() {
+            return String::new();
+        }
         let mut line = String::new();
         r.read_line(&mut line).unwrap_or(0);
         line
@@ -466,14 +471,14 @@ mod tests {
         )
     }
 
-    fn wait_until(mut f: impl FnMut() -> bool) -> bool {
-        for _ in 0..200 {
-            if f() {
-                return true;
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        f()
+    /// Connects and says hello with the right token; the socket halves, if the host took it.
+    fn connect(ep: &Endpoint) -> Option<(TcpStream, BufReader<TcpStream>)> {
+        let s = TcpStream::connect(("127.0.0.1", ep.port)).ok()?;
+        let mut w = s.try_clone().ok()?;
+        let mut r = BufReader::new(s);
+        hello(&mut w, &mut r, &ep.token)
+            .contains("true")
+            .then_some((w, r))
     }
 
     #[test]
@@ -497,17 +502,27 @@ mod tests {
             hello(&mut w, &mut r, &token);
         }
         let streams = host.streams.clone();
-        assert!(
-            wait_until(|| streams.lock().unwrap().is_empty()),
-            "no kept clones"
+        wait_until_or(
+            "no kept clones",
+            || format!("{} kept", streams.lock().unwrap().len()),
+            || streams.lock().unwrap().is_empty(),
         );
-        assert!(wait_until(|| host.connections() == 0));
+        wait_until_or(
+            "no connection",
+            || format!("{} connections", host.connections()),
+            || host.connections() == 0,
+        );
         if let Some(before) = before {
             // sockets close asynchronously
-            assert!(
-                wait_until(|| port_sockets(ep.port).unwrap() <= before),
-                "descriptors leak: {:?} sockets on the port, {before} before",
-                port_sockets(ep.port)
+            wait_until_or(
+                "the sockets of the port to close (descriptors leak)",
+                || {
+                    format!(
+                        "{:?} sockets on the port, {before} before",
+                        port_sockets(ep.port)
+                    )
+                },
+                || port_sockets(ep.port).unwrap() <= before,
             );
         }
     }
@@ -538,12 +553,21 @@ mod tests {
         let _host = Host::start(Arc::new(Echo::default()), &file).unwrap();
         let ep = bridge::read_endpoint(&file).unwrap();
         let s = TcpStream::connect(("127.0.0.1", ep.port)).unwrap();
-        s.set_read_timeout(Some(HELLO_TIMEOUT * 3)).unwrap();
-        let t = std::time::Instant::now();
+        // The read ends because the host closes the socket, not because the test gives up: its
+        // own limit is far away and would end the read with an error of another kind.
+        s.set_read_timeout(Some(timeout().max(HELLO_TIMEOUT * 4)))
+            .unwrap();
         let mut line = String::new();
-        let n = BufReader::new(s).read_line(&mut line).unwrap_or(0);
-        assert_eq!(n, 0);
-        assert!(t.elapsed() < HELLO_TIMEOUT * 2);
+        match BufReader::new(s).read_line(&mut line) {
+            Ok(n) => assert_eq!(n, 0, "closed without an answer: {line}"),
+            Err(e) => assert!(
+                !matches!(
+                    e.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                ),
+                "the host did not drop the silent client: {e}"
+            ),
+        }
     }
 
     #[test]
@@ -564,13 +588,7 @@ mod tests {
         assert_eq!(n, 0, "closed at once");
         drop(held);
         // places free up again
-        let ok = wait_until(|| {
-            let s = TcpStream::connect(("127.0.0.1", ep.port)).unwrap();
-            let mut w = s.try_clone().unwrap();
-            let mut r = BufReader::new(s);
-            hello(&mut w, &mut r, &ep.token).contains("true")
-        });
-        assert!(ok);
+        wait_until("a place for a new client", || connect(&ep).is_some());
     }
 
     #[test]
@@ -584,14 +602,48 @@ mod tests {
         for c in &mut clients {
             c.call("x", json!({})).unwrap();
         }
-        assert!(wait_until(|| host.connections() == MAX_CONNECTIONS));
+        wait_until_or(
+            "all clients connected",
+            || format!("{} connections", host.connections()),
+            || host.connections() == MAX_CONNECTIONS,
+        );
         let e = BridgeClient::new(Some(file.clone()))
             .call("x", json!({}))
             .unwrap_err();
         assert_eq!(e.code, "limit_exceeded");
         drop(clients);
-        assert!(wait_until(|| host.connections() == 0));
+        wait_until_or(
+            "the clients to be gone",
+            || format!("{} connections", host.connections()),
+            || host.connections() == 0,
+        );
         BridgeClient::new(Some(file)).call("x", json!({})).unwrap();
+    }
+
+    #[test]
+    fn the_bucket_allows_a_burst_and_refills_with_time() {
+        // The clock is passed in: what the bucket allows must not depend on how fast the test runs.
+        let mut bucket = Bucket::new();
+        let start = bucket.at;
+        let burst = CALLS_PER_SECOND as usize;
+        // A burst may use the whole second at once, then it is over.
+        assert!((0..burst).all(|_| bucket.take_at(start)));
+        assert!(!bucket.take_at(start));
+        // One call's worth of time gives one call, not two.
+        let one = Duration::from_secs_f64(1.0 / CALLS_PER_SECOND);
+        assert!(!bucket.take_at(start + one / 2));
+        assert!(bucket.take_at(start + one + one / 2));
+        assert!(!bucket.take_at(start + one + one / 2));
+        // A long pause fills it up, but never beyond one second's worth.
+        let later = start + Duration::from_secs(3600);
+        assert!((0..burst).all(|_| bucket.take_at(later)));
+        assert!(!bucket.take_at(later));
+        // Half a second later: half of them.
+        let half = later + Duration::from_millis(500);
+        assert_eq!(
+            (0..burst).filter(|_| bucket.take_at(half)).count(),
+            burst / 2
+        );
     }
 
     #[test]
@@ -599,16 +651,46 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("mcp.json");
         let _host = Host::start(Arc::new(Echo::default()), &file).unwrap();
-        let mut c = BridgeClient::new(Some(file));
-        let refused = (0..(CALLS_PER_SECOND as usize) * 3)
-            .filter(|_| {
-                c.call("x", json!({}))
-                    .is_err_and(|e| e.code == "limit_exceeded")
-            })
-            .count();
-        assert!(refused > 0, "some calls are refused");
+        let ep = bridge::read_endpoint(&file).unwrap();
+        let (mut w, mut r) = connect(&ep).unwrap();
+        // Three seconds' worth of calls in one write: the host finds them all in its buffer, so
+        // how many it refuses does not depend on how fast this thread and the network are. Should
+        // the host's thread be held up so long that the bucket refills in between, the next
+        // flood comes.
+        let burst = CALLS_PER_SECOND as usize * 3;
+        let flood: String = (0..burst)
+            .map(|id| format!("{}\n", json!({"id": id, "tool": "x", "args": {}})))
+            .collect();
+        let mut passed = 0;
+        wait_until("a flood with refused calls", || {
+            w.write_all(flood.as_bytes()).unwrap();
+            let mut refused = 0;
+            for _ in 0..burst {
+                let mut line = String::new();
+                r.read_line(&mut line).unwrap();
+                let resp: Response = serde_json::from_str(&line).unwrap();
+                match resp.error {
+                    Some(e) => {
+                        assert_eq!(e.code, "limit_exceeded");
+                        refused += 1;
+                    }
+                    None => passed += 1,
+                }
+            }
+            refused > 0
+        });
+        // Not everything is refused: the calls the bucket had went through.
+        assert!(
+            passed >= CALLS_PER_SECOND as usize,
+            "the burst passes: {passed}"
+        );
+        // The limit is per second, not for good: time fills the bucket again (300 ms: 6 calls).
         std::thread::sleep(Duration::from_millis(300));
-        c.call("x", json!({})).unwrap();
+        writeln!(w, "{}", json!({"id": 0, "tool": "x", "args": {}})).unwrap();
+        let mut line = String::new();
+        r.read_line(&mut line).unwrap();
+        let resp: Response = serde_json::from_str(&line).unwrap();
+        assert!(resp.error.is_none(), "{line}");
     }
 
     #[test]
@@ -619,8 +701,9 @@ mod tests {
         let ep = bridge::read_endpoint(&file).unwrap();
         let s = TcpStream::connect(("127.0.0.1", ep.port)).unwrap();
         let mut w = s.try_clone().unwrap();
-        let t = std::time::Instant::now();
-        // one byte a second: each read is within the timeout, the whole hello is not
+        // one byte a second: each read is within the timeout, the whole hello is not. With a
+        // timeout per read the socket would live as long as the bytes come; the number of bytes
+        // is the limit here, a slow machine only gives the host more time.
         let mut closed = false;
         for _ in 0..(HELLO_TIMEOUT.as_secs() * 3) {
             if w.write_all(b"{").is_err() {
@@ -630,7 +713,6 @@ mod tests {
             std::thread::sleep(Duration::from_secs(1));
         }
         assert!(closed, "closed by the deadline");
-        assert!(t.elapsed() < HELLO_TIMEOUT * 3);
     }
 
     #[test]

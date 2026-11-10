@@ -9,6 +9,10 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::Duration;
 
+/// A hanging call gives up by itself after this long (so a test without the cancel fails
+/// instead of hanging), far beyond the 50 ms a cancel takes even on a busy machine.
+const HANG: Duration = Duration::from_secs(120);
+
 #[derive(Debug, Clone)]
 pub struct FakeEvent {
     pub record: u64,
@@ -30,6 +34,10 @@ pub struct FakeState {
     pub hang: bool,
     /// A call of `next` is blocked by `hang` right now.
     pub hanging: bool,
+    /// Hanging calls that a cancel ended.
+    pub hangs_cancelled: u32,
+    /// Hanging calls nobody cancelled: they gave up after `HANG`.
+    pub hangs_timed_out: u32,
     pub reconnects: u32,
     pub queries: u32,
     /// The bookmark of each subscription.
@@ -109,12 +117,26 @@ impl EventStream for FakeStream {
     fn next(&mut self, max: usize, wait: Duration) -> ApiResult<Vec<RawEvent>> {
         let mut out = Vec::new();
         if self.state.lock().hang {
+            // Like a remote call that does not come back: only a cancel ends it. The fake says
+            // which of the two it was, so no test has to read that off a clock.
             self.state.lock().hanging = true;
             let start = std::time::Instant::now();
-            while self.state.lock().cancels == 0 && start.elapsed() < Duration::from_secs(10) {
+            let cancelled = loop {
+                if self.state.lock().cancels > 0 {
+                    break true;
+                }
+                if start.elapsed() >= HANG {
+                    break false;
+                }
                 std::thread::sleep(Duration::from_millis(5));
+            };
+            let mut s = self.state.lock();
+            s.hanging = false;
+            if cancelled {
+                s.hangs_cancelled += 1;
+            } else {
+                s.hangs_timed_out += 1;
             }
-            self.state.lock().hanging = false;
             return Err(ApiError::new(code::CANCELLED, "EvtNext"));
         }
         {
@@ -224,9 +246,7 @@ mod flow {
     use crate::remote::Credentials;
     use crate::session::{OpenOptions, SessionManager};
     use crate::spool::{SpoolConfig, SpoolRoot};
-    use std::time::Instant;
-
-    const TIMEOUT: Duration = Duration::from_secs(30);
+    use crate::test_support::wait_until_or;
 
     struct Fixture {
         _cache: tempfile::TempDir,
@@ -291,18 +311,16 @@ mod flow {
                 .collect()
         }
 
+        #[track_caller]
         fn wait(&self, info: &SessionInfo, what: &str, done: impl Fn(&Self) -> bool) {
-            let start = Instant::now();
-            while !done(self) {
-                let status = self.manager.session(info.session_id).unwrap().stats();
-                assert!(
-                    start.elapsed() < TIMEOUT,
-                    "timeout waiting for {what}: {:?} {:?}",
-                    status.total_lines,
-                    status.source_status
-                );
-                std::thread::sleep(Duration::from_millis(10));
-            }
+            wait_until_or(
+                what,
+                || {
+                    let status = self.manager.session(info.session_id).unwrap().stats();
+                    format!("{} lines, {:?}", status.total_lines, status.source_status)
+                },
+                || done(self),
+            );
         }
 
         fn state(&self, info: &SessionInfo) -> SourceState {
@@ -387,15 +405,14 @@ mod flow {
         fx.log.state.lock().hang = true;
         // The round running now may still wait up to 200 ms and end normally when closed: no cancel then.
         fx.wait(&info, "a hanging call", |f| f.log.state.lock().hanging);
-        let start = Instant::now();
         fx.manager.close(info.session_id).unwrap();
-        // Without the cancel the fake hangs 10 s; the rest is the session closing under load.
-        assert!(
-            start.elapsed() < Duration::from_secs(8),
-            "{:?}",
-            start.elapsed()
-        );
-        assert_eq!(fx.log.state.lock().cancels, 1);
+        // The fake says what ended the call: the cancel, not its own patience. How long closing
+        // took says nothing: measured under load, the cancel ended the call within 60 ms, and the
+        // rest of up to two minutes was the session waiting for its file watcher (macOS: the
+        // FSEvents thread of `notify` in a call to a busy fseventsd).
+        let s = fx.log.state.lock();
+        assert_eq!((s.cancels, s.hangs_cancelled, s.hangs_timed_out), (1, 1, 0));
+        assert!(!s.hanging);
     }
 
     #[test]
@@ -419,8 +436,10 @@ mod flow {
             s.fail_next.push_back(code::RPC_SERVER_UNAVAILABLE);
             s.add(3, "während der Störung");
         }
-        fx.wait(&info, "reconnecting", |f| {
-            matches!(f.state(&info), SourceState::Reconnecting { .. })
+        // Broken once the error was taken. Not the state `Reconnecting`: it lasts a second, and a
+        // slow test thread misses it.
+        fx.wait(&info, "the broken connection", |f| {
+            f.log.state.lock().fail_next.is_empty()
         });
         fx.log.state.lock().add(3, "danach");
         fx.wait(&info, "back", |f| f.lines(&info).len() == 302);
@@ -469,12 +488,12 @@ mod flow {
         }
         let info = fx.open(config());
         fx.wait(&info, "live", |f| f.state(&info) == SourceState::Listening);
-        std::thread::sleep(Duration::from_millis(300));
-        assert!(fx.lines(&info).is_empty());
         let subscribed = fx.log.state.lock().subscribed.clone();
         assert!(subscribed[0].as_deref().unwrap().contains("RecordId='1'"));
+        // Only the new event arrives: the old one would stand before it.
         fx.log.state.lock().add(4, "neu");
-        fx.wait(&info, "live event", |f| f.records(&info) == [2]);
+        fx.wait(&info, "live event", |f| !f.lines(&info).is_empty());
+        assert_eq!(fx.records(&info), [2]);
     }
 
     #[test]
@@ -528,17 +547,14 @@ mod flow {
             .lock()
             .fail_next
             .extend([31, 31, 31, 31, 31, 31]);
-        let start = Instant::now();
         fx.wait(&info, "error", |f| {
             matches!(f.state(&info), SourceState::Error { .. })
         });
-        // 1 + 2 + 4 s of backoff, then it stops instead of logging in again and again.
-        assert!(
-            start.elapsed() < Duration::from_secs(15),
-            "{:?}",
-            start.elapsed()
-        );
-        assert_eq!(fx.log.state.lock().reconnects, 3);
+        // Three tries (after 1 + 2 + 4 s), then it stops instead of logging in again and again:
+        // two of the six errors are never asked for.
+        let s = fx.log.state.lock();
+        assert_eq!(s.reconnects, 3);
+        assert_eq!(s.fail_next.len(), 2);
     }
 
     #[test]

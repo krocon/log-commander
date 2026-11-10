@@ -239,8 +239,20 @@ export function levelsFrom(level: RulerLevel): Level[] {
 export type RulerTarget =
   /** Scroll to this position. */
   | { kind: 'position'; position: number }
-  /** Look for the first entry of `levels` after `from` (exclusive, null = from the start); else `fallback`. */
-  | { kind: 'level'; from: number | null; levels: Level[]; fallback: number };
+  /**
+   * Look for the first entry of `levels` after `from` (exclusive, null = from the start) and before `until`.
+   * None there: the mark comes from the lines of an entry that begins further up (a stack trace), so the
+   * last entry before; else `fallback`.
+   */
+  | { kind: 'level'; from: number | null; until: number; levels: Level[]; fallback: number };
+
+/** Whether a hit of the search forward is one of the clicked buckets, not the next one somewhere below. */
+export function hitInClick(
+  hit: { position: number; wrapped: boolean } | null,
+  target: { until: number },
+): boolean {
+  return hit !== null && !hit.wrapped && hit.position < target.until;
+}
 
 interface RulerView {
   marks: readonly RulerMark[];
@@ -271,6 +283,7 @@ export function clickTarget(y: number, view: RulerView): RulerTarget {
   const here = hereAt(y, view);
   if (here) {
     const { start } = bucketPositions(here.from, here.from + 1, view.buckets, view.count);
+    const { end } = bucketPositions(here.from, here.to, view.buckets, view.count);
     // The backend marks a bucket with every line that reaches into it: the first may begin in the bucket
     // before (its start is not on a bucket edge). `from` is exclusive, the search starts one later.
     const first = view.buckets > 0 ? Math.floor((here.from * view.count) / view.buckets) : 0;
@@ -278,6 +291,7 @@ export function clickTarget(y: number, view: RulerView): RulerTarget {
     return {
       kind: 'level',
       from: first > 0 ? first - 1 : null,
+      until: Math.max(end, first + 1),
       levels: [...RULER_LEVELS].reverse().filter((l) => levels.has(l)),
       fallback: start,
     };

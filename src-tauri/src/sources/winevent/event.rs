@@ -420,22 +420,47 @@ vier</C></ns:Frame></UserData></Event>"#;
         assert!(parse(&deep).is_some());
     }
 
+    /// An event of four values with `chars` characters each (2 bytes per character on average).
+    fn event_of_values(chars: usize) -> String {
+        let value = "ä€x".repeat(chars / 3);
+        let data: String = (0..3).map(|_| format!("<Data>{value}</Data>")).collect();
+        format!(
+            "<Event><System><Provider Name='p'/><Computer>{value}</Computer></System><EventData>{data}</EventData></Event>"
+        )
+    }
+
     #[test]
     fn a_large_event_is_read_quickly() {
-        // About 64 KB in a few long values (the old reader counted per character: quadratic).
-        let value = "ä€x".repeat(7_000);
-        let data: String = (0..3).map(|_| format!("<Data>{value}</Data>")).collect();
-        let xml = format!(
-            "<Event><System><Provider Name='p'/><Computer>{value}</Computer></System><EventData>{data}</EventData></Event>"
-        );
-        assert!(xml.len() > 64 * 1024);
-        let start = std::time::Instant::now();
-        let e = parse(&xml).unwrap();
+        // The old reader counted the value again for every character: quadratic in its length. So
+        // values four times as long took 16 times as long, a linear reader takes 4 times. Measured
+        // against each other in this test (the best of several runs, so that a busy machine does
+        // not count), not against a clock. Measured in a debug build, also under load: 3.9 times
+        // with this reader, 11 times with the old one; the bound lies between the two.
+        let long = MAX_VALUE_CHARS - 2;
+        let (small, large) = (event_of_values(long / 4), event_of_values(long));
+        assert!(large.len() > 60 * 1024, "{}", large.len());
+        let best = |xml: &str| {
+            (0..5)
+                .map(|_| {
+                    let start = std::time::Instant::now();
+                    assert!(parse(xml).is_some());
+                    start.elapsed()
+                })
+                .min()
+                .unwrap()
+        };
+        let (mut quick, mut slow) = (std::time::Duration::MAX, std::time::Duration::MAX);
+        for _ in 0..6 {
+            quick = quick.min(best(&small));
+            slow = slow.min(best(&large));
+        }
         assert!(
-            start.elapsed() < std::time::Duration::from_millis(200),
-            "{:?}",
-            start.elapsed()
+            slow < quick * 6,
+            "4 times the length took {:.1} times as long ({quick:?} → {slow:?})",
+            slow.as_secs_f64() / quick.as_secs_f64()
         );
+        // Longer than the limit: cut, and still one value per element.
+        let e = parse(&event_of_values(MAX_VALUE_CHARS * 5 / 2)).unwrap();
         assert_eq!(e.data.len(), 3);
         assert_eq!(e.data[0].chars().count(), MAX_VALUE_CHARS);
     }

@@ -17,3 +17,8 @@ pub mod host;
 pub mod probe;
 pub mod server;
 pub mod tools;
+
+/// Waiting in tests, the same file as in the app (its own tests run here once more).
+#[cfg(test)]
+#[path = "../../src/test_support.rs"]
+mod test_support;

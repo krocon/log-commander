@@ -235,8 +235,9 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_program_that_is_no_mcp_server_is_named() {
-        // cat echoes the request: a message without result
-        let p = probe(Path::new("/bin/cat"), Duration::from_secs(2));
+        // cat echoes the request: a message without result. The limit is only a guard here: it
+        // includes starting the program, which takes its time on a busy machine.
+        let p = probe(Path::new("/bin/cat"), crate::test_support::timeout());
         assert_eq!(p.step, ProbeStep::Initialize);
         assert_eq!(p.code.as_deref(), Some("invalid_request"));
     }
@@ -246,22 +247,49 @@ mod tests {
     fn a_silent_program_times_out() {
         let tmp = tempfile::tempdir().unwrap();
         let script = tmp.path().join("silent.sh");
-        std::fs::write(&script, "#!/bin/sh\nsleep 30\n").unwrap();
+        // Says who it is, then stays silent far longer than the test waits. `exec`: the sleep is
+        // the child itself, so killing the child leaves nothing behind.
+        let pid_file = tmp.path().join("pid");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\necho $$ > '{}'\nexec sleep 600\n",
+                pid_file.display()
+            ),
+        )
+        .unwrap();
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let t = std::time::Instant::now();
         let mut p = probe(&script, Duration::from_millis(300));
         // a fresh script may be "text file busy" while another test thread forks
-        for _ in 0..5 {
-            if p.step != ProbeStep::Start {
-                break;
+        crate::test_support::wait_until("the script to start", || {
+            if p.step == ProbeStep::Start {
+                p = probe(&script, Duration::from_millis(300));
             }
-            thread::sleep(Duration::from_millis(100));
-            p = probe(&script, Duration::from_millis(300));
-        }
+            p.step != ProbeStep::Start
+        });
+        // "timeout" and not "io": the program was still running and silent when the step ended.
         assert_eq!(p.step, ProbeStep::Initialize);
         assert_eq!(p.code.as_deref(), Some("timeout"));
-        assert!(t.elapsed() < Duration::from_secs(5), "the child is killed");
+        // The child is killed and reaped, not left to its 600 s: its process is gone. (Under a
+        // heavy load the 300 ms can end before the shell wrote its number: then there is no
+        // number to look at, and `probe` returning shows that the child was waited for.)
+        if let Some(pid) = std::fs::read_to_string(&pid_file)
+            .ok()
+            .and_then(|text| text.trim().parse::<i32>().ok())
+        {
+            assert!(!process_exists(pid), "the child {pid} is still there");
+        }
+    }
+
+    /// Whether a process with this number exists (`kill -0`).
+    #[cfg(unix)]
+    fn process_exists(pid: i32) -> bool {
+        Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success())
     }
 
     #[test]

@@ -353,6 +353,12 @@ export class DashboardComponent implements OnInit, OnDestroy {
   private lastLines = -1;
   private lastState: string | null = null;
   private opened = false;
+  private destroyed = false;
+
+  /** Who opens the report for the backend: this tab (two tabs of a file can show a dashboard each). */
+  private user(): string {
+    return `tab:${this.session().id}`;
+  }
 
   constructor() {
     // Starting over (truncation, other columns) or the end of the first build: schema and panels anew.
@@ -377,10 +383,21 @@ export class DashboardComponent implements OnInit, OnDestroy {
   async ngOnInit(): Promise<void> {
     const session = this.session();
     await this.store.load();
+    // Switched off again while loading: nothing was opened, nothing is to close.
+    if (this.destroyed) return;
     this.profileId = session.columns()?.profileId ?? session.update().profileId;
     const saved = this.store.get(this.profileId);
     try {
-      const schema = await this.api.openReport(session.sessionId, saved?.fields ?? null);
+      const schema = await this.api.openReport(
+        session.sessionId,
+        saved?.fields ?? null,
+        this.user(),
+      );
+      if (this.destroyed) {
+        // Gone while the backend opened: this opening is ours to close, and no timer starts.
+        void this.api.closeReport(session.sessionId, this.user()).catch(() => undefined);
+        return;
+      }
       this.schema.set(schema);
       this.opened = true;
       this.lastGeneration = schema.status?.generation ?? null;
@@ -391,13 +408,17 @@ export class DashboardComponent implements OnInit, OnDestroy {
     } catch (e) {
       this.failure.set(describeQueryError(toAppError(e).message));
     }
+    if (this.destroyed) return;
     this.timer = setInterval(() => this.liveTick(), REFRESH_MS);
   }
 
   ngOnDestroy(): void {
+    this.destroyed = true;
     if (this.timer) clearInterval(this.timer);
-    // Hidden: the backend stops catching up; the file stays for the next time.
-    void this.api.closeReport(this.session().sessionId).catch(() => undefined);
+    // Hidden: the backend stops catching up once nobody else has it open; the file stays for the next time.
+    // Only an opening that came back is closed here: the backend counts them (two tabs of a file, the AI).
+    if (this.opened)
+      void this.api.closeReport(this.session().sessionId, this.user()).catch(() => undefined);
   }
 
   /**
@@ -475,7 +496,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
     const fields = toggleField(schema, d.fields, column, on);
     this.save((x) => ({ ...x, fields }));
     try {
-      this.schema.set(await this.api.openReport(this.session().sessionId, fields));
+      this.schema.set(await this.api.openReport(this.session().sessionId, fields, this.user()));
     } catch (e) {
       this.failure.set(describeQueryError(toAppError(e).message));
     }

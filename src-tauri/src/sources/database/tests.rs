@@ -11,9 +11,8 @@ use crate::model::{SessionInfo, SourceState};
 use crate::remote::secrets::MemoryStore;
 use crate::session::{OpenOptions, SessionManager};
 use crate::spool::{SpoolConfig, SpoolRoot};
-use std::time::{Duration, Instant};
-
-const TIMEOUT: Duration = Duration::from_secs(30);
+use crate::test_support::{stays_false, wait_until, wait_until_or};
+use std::time::Duration;
 
 fn pg() -> DbConfig {
     serde_json::from_value(serde_json::json!({
@@ -302,17 +301,31 @@ impl Fixture {
             .collect()
     }
 
+    #[track_caller]
     fn wait(&self, info: &SessionInfo, what: &str, done: impl Fn(&Self) -> bool) {
-        let start = Instant::now();
-        while !done(self) {
+        wait_until_or(
+            what,
+            || {
+                let stats = self.manager.session(info.session_id).unwrap().stats();
+                format!("{} lines, {:?}", stats.total_lines, stats.source_status)
+            },
+            || done(self),
+        );
+    }
+
+    /// Waits until `count` more queries have ended than now. A query that was under way may be the
+    /// first of them, so ask for one more than the test needs.
+    #[track_caller]
+    fn wait_for_polls(&self, info: &SessionInfo, count: usize) {
+        let polled = || {
             let stats = self.manager.session(info.session_id).unwrap().stats();
-            assert!(
-                start.elapsed() < TIMEOUT,
-                "timeout waiting for {what}: {} {:?}",
-                stats.total_lines,
-                stats.source_status
-            );
-            std::thread::sleep(Duration::from_millis(10));
+            stats.source_status.unwrap().polled_at_ms
+        };
+        for n in 1..=count {
+            let before = polled();
+            wait_until(&format!("query {n} of {count} to end"), || {
+                polled() != before
+            });
         }
     }
 
@@ -411,11 +424,9 @@ fn equal_keys_are_neither_lost_nor_doubled() {
     }
     fx.wait(&info, "more", |f| f.lines(&info).len() >= 9);
     let batches = db.state.lock().batches;
-    let start = Instant::now();
-    while db.state.lock().batches < batches + 3 {
-        assert!(start.elapsed() < TIMEOUT);
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    wait_until("three more batches", || {
+        db.state.lock().batches >= batches + 3
+    });
     let mut ids = fx.ids(&info);
     ids.sort();
     assert_eq!(ids, (0..9).collect::<Vec<_>>());
@@ -479,9 +490,11 @@ fn a_refused_login_is_not_retried() {
     fx.wait(&info, "error", |f| {
         matches!(f.state(&info), SourceState::Error { .. })
     });
+    // The error state is the signal; a retry would come after 1 s of backoff.
     let connects = db.state.lock().connects;
-    std::thread::sleep(Duration::from_millis(1500));
-    assert_eq!(db.state.lock().connects, connects);
+    assert!(stays_false(Duration::from_millis(1500), || {
+        db.state.lock().connects != connects
+    }));
 }
 
 // --- SQLite, a real file (no Docker needed) ---
@@ -544,7 +557,11 @@ fn sqlite_rows_live_with_equal_times() {
         )
         .unwrap();
     fx.wait(&info, "new", |f| f.lines(&info).len() == 5);
-    std::thread::sleep(Duration::from_millis(1200));
+    // Later queries see the rows of the last time again (same key) and must not write them twice:
+    // after two more queries the source still has written five lines.
+    fx.wait_for_polls(&info, 3);
+    let status = fx.manager.session(info.session_id).unwrap().stats();
+    assert_eq!(status.source_status.unwrap().received, 5);
     let lines = fx.lines(&info);
     assert_eq!(lines.len(), 5, "{lines:?}");
     assert_eq!(
@@ -655,7 +672,8 @@ fn sqlite_errors_and_stop() {
         &stopped,
     )
     .unwrap();
-    let started = Instant::now();
+    // The query never ends by itself: that `run` returns at all, and with "abgebrochen", shows
+    // that the stop ended it (whether it came before the first row or in the middle).
     std::thread::scope(|s| {
         s.spawn(|| {
             std::thread::sleep(Duration::from_millis(200));
@@ -664,5 +682,4 @@ fn sqlite_errors_and_stop() {
         let e = driver.run(&Request::NthNewest(1), &stopped).unwrap_err();
         assert_eq!(e.message, "abgebrochen");
     });
-    assert!(started.elapsed() < Duration::from_secs(5));
 }

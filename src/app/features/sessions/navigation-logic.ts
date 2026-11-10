@@ -76,3 +76,24 @@ export function fullLogOf(filter: KeptFilter): KeptFilter {
     tree: emptyTree(),
   };
 }
+
+/** Which view of a file a position belongs to: positions of another epoch or filter mean other lines. */
+export interface ViewStamp {
+  epoch: number;
+  viewGeneration: number;
+}
+
+interface Stamped {
+  update(): ViewStamp;
+}
+
+export function viewStamp(session: Stamped): ViewStamp {
+  const { epoch, viewGeneration } = session.update();
+  return { epoch, viewGeneration };
+}
+
+/** Whether the view is still the one an answer was asked for. Check after every `await` on a position. */
+export function sameView(session: Stamped, stamp: ViewStamp): boolean {
+  const now = session.update();
+  return now.epoch === stamp.epoch && now.viewGeneration === stamp.viewGeneration;
+}

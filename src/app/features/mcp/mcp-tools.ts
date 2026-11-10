@@ -569,16 +569,14 @@ export class McpTools {
 
   // ---------------------------------------------------------------- SQL
 
+  private reportCalls = 0;
+
   /** Opens the dashboard database if needed and waits until it is ready (design A10). */
   private async withReport<T>(s: SessionState, work: () => Promise<T>): Promise<T> {
-    const shown =
-      s.mode() === 'dashboard' ||
-      this.sessions.sessions().some((t) => t.sessionId === s.sessionId && t.mode() === 'dashboard');
-    let opened = false;
-    if (!s.update().report) {
-      await this.api.openReport(s.sessionId, null);
-      opened = !shown;
-    }
+    // The backend counts who has the report open: this opening never closes the dashboard the user looks
+    // at, nor the report of another call that runs at the same time.
+    const user = `mcp:${++this.reportCalls}`;
+    await this.api.openReport(s.sessionId, null, user, true);
     try {
       const ready = await waitFor(() => s.update().report?.state === 'ready', L.filterWaitMs, 200);
       const r = s.update().report;
@@ -592,7 +590,7 @@ export class McpTools {
       }
       return await work();
     } finally {
-      if (opened) void this.api.closeReport(s.sessionId).catch(() => undefined);
+      void this.api.closeReport(s.sessionId, user).catch(() => undefined);
     }
   }
 
@@ -735,6 +733,9 @@ export class McpTools {
       const end = Date.now() + timeout * 1000;
       while (Date.now() < end) {
         const u = current();
+        // The tab was closed while waiting: its updates end, the wait would run into its time limit.
+        if (!this.sessions.sessions().includes(s))
+          fail('tab_not_found', 'the tab was closed while waiting – call get_workspace');
         if (u.epoch !== epoch)
           fail('stale_view', 'the file started over while waiting – call again');
         if (u.filteredLines > base && !u.filterPending) {

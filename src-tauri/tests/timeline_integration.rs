@@ -9,10 +9,10 @@ use std::fmt::Write as _;
 use std::fs::{self, OpenOptions as FsOptions};
 use std::io::Write;
 use std::path::Path;
-use std::time::{Duration, Instant};
 
 /// Generous: debug builds on a busy machine.
-const TIMEOUT: Duration = Duration::from_secs(20);
+#[path = "../src/test_support.rs"]
+mod test_support;
 const S: i64 = 1_000_000;
 
 fn generic() -> Profile {
@@ -33,19 +33,13 @@ fn open(path: &Path) -> LogSession {
     .unwrap()
 }
 
+#[track_caller]
 fn wait(session: &LogSession, what: &str, condition: impl Fn(&SessionUpdate) -> bool) {
-    let start = Instant::now();
-    loop {
-        let stats = session.stats();
-        if condition(&stats) {
-            return;
-        }
-        assert!(
-            start.elapsed() < TIMEOUT,
-            "timeout waiting for {what}: {stats:?}"
-        );
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    test_support::wait_until_or(
+        what,
+        || format!("{:?}", session.stats()),
+        || condition(&session.stats()),
+    );
 }
 
 fn live(session: &LogSession, lines: u64) {

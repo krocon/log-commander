@@ -205,7 +205,11 @@ impl SourceMonitor {
     /// A counter changed: tells the session, at most every `NOTIFY_INTERVAL`. A change in between is
     /// picked up by the next update anyway (the counters are read when it is built), or by `flush`.
     pub fn counted(&self) {
-        let now = self.created.elapsed().as_millis() as u64;
+        self.counted_at(self.created.elapsed().as_millis() as u64);
+    }
+
+    /// `counted` at `now` milliseconds since the monitor was created (the tests pass the time).
+    fn counted_at(&self, now: u64) {
         let last = self.last_notify.load(Ordering::Relaxed);
         if now.saturating_sub(last) >= NOTIFY_INTERVAL.as_millis() as u64
             && self
@@ -423,6 +427,7 @@ fn keep_spool(dir: &Path, kept_root: Option<&Path>, label: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::{wait_until, wait_until_or};
     use std::sync::atomic::AtomicUsize;
 
     struct Lines(Vec<&'static str>);
@@ -465,11 +470,11 @@ mod tests {
         running.monitor().set_notify(Box::new(move || {
             n.fetch_add(1, Ordering::SeqCst);
         }));
-        let start = Instant::now();
-        while running.monitor().status().spooled < 2 {
-            assert!(start.elapsed() < Duration::from_secs(5));
-            std::thread::sleep(Duration::from_millis(5));
-        }
+        wait_until_or(
+            "two lines in the spool",
+            || format!("{:?}", running.monitor().status()),
+            || running.monitor().status().spooled == 2,
+        );
         running.stop();
         assert_eq!(running.monitor().state(), SourceState::Stopped);
         assert!(notified.load(Ordering::SeqCst) >= 1);
@@ -478,7 +483,8 @@ mod tests {
             "a\nb\n"
         );
         drop(running);
-        assert!(!spool.exists());
+        // Windows: a folder another process looks at (virus scanner, indexer) is gone a moment later.
+        wait_until("the spool folder to be gone", || !spool.exists());
     }
 
     struct Panics;
@@ -508,11 +514,11 @@ mod tests {
             None,
         )
         .unwrap();
-        let start = Instant::now();
-        while !matches!(running.monitor().state(), SourceState::Error { .. }) {
-            assert!(start.elapsed() < Duration::from_secs(5));
-            std::thread::sleep(Duration::from_millis(5));
-        }
+        wait_until_or(
+            "the error state",
+            || format!("{:?}", running.monitor().state()),
+            || matches!(running.monitor().state(), SourceState::Error { .. }),
+        );
     }
 
     #[test]
@@ -529,7 +535,7 @@ mod tests {
         .unwrap();
         running.set_keep(true);
         drop(running);
-        assert!(!spool.exists());
+        wait_until("the spool folder to be moved", || !spool.exists());
         let moved: Vec<_> = std::fs::read_dir(&kept).unwrap().flatten().collect();
         assert_eq!(moved.len(), 1);
         let name = moved[0].file_name().to_string_lossy().into_owned();
@@ -549,27 +555,35 @@ mod tests {
         monitor.set_notify(Box::new(move || {
             n.fetch_add(1, Ordering::SeqCst);
         }));
-        // The first one after the interval since creation.
-        std::thread::sleep(NOTIFY_INTERVAL);
-        for _ in 0..1000 {
-            monitor.counted();
+        // The first one after the interval since creation, then none until the interval is over
+        // again. The time is passed in: the clock of a busy machine would decide otherwise.
+        let interval = NOTIFY_INTERVAL.as_millis() as u64;
+        monitor.counted_at(interval - 1);
+        assert_eq!(notified.load(Ordering::SeqCst), 0);
+        for i in 0..1000 {
+            monitor.counted_at(interval + i * (interval - 1) / 999);
         }
         assert_eq!(notified.load(Ordering::SeqCst), 1);
-        monitor.flush();
+        monitor.counted_at(2 * interval);
         assert_eq!(notified.load(Ordering::SeqCst), 2);
-        monitor.flush();
+        monitor.counted_at(2 * interval + 1);
         assert_eq!(notified.load(Ordering::SeqCst), 2);
-        monitor.set_state(SourceState::Listening);
-        monitor.set_state(SourceState::Listening);
+        // What was held back goes out with `flush`, once.
+        monitor.flush();
         assert_eq!(notified.load(Ordering::SeqCst), 3);
+        monitor.flush();
+        assert_eq!(notified.load(Ordering::SeqCst), 3);
+        monitor.set_state(SourceState::Listening);
+        monitor.set_state(SourceState::Listening);
+        assert_eq!(notified.load(Ordering::SeqCst), 4);
         // An error goes back once something works again; otherwise nothing happens.
         monitor.recovered(SourceState::Listening);
-        assert_eq!(notified.load(Ordering::SeqCst), 3);
+        assert_eq!(notified.load(Ordering::SeqCst), 4);
         monitor.set_state(SourceState::Error {
             message: "x".into(),
         });
         monitor.recovered(SourceState::Listening);
         assert_eq!(monitor.state(), SourceState::Listening);
-        assert_eq!(notified.load(Ordering::SeqCst), 5);
+        assert_eq!(notified.load(Ordering::SeqCst), 6);
     }
 }

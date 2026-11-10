@@ -1389,6 +1389,7 @@ fn only_report_files(dir: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::{timeout, wait_until};
 
     fn ms(text: &str) -> i64 {
         chrono::DateTime::parse_from_rfc3339(text)
@@ -1495,6 +1496,8 @@ mod tests {
         db
     }
 
+    /// A short time limit, for tests in which the time limit is what ends the query. A test that
+    /// expects a result uses the default limits: under load 300 ms are gone before the first row.
     fn quick() -> ReportLimits {
         ReportLimits {
             max_time: Duration::from_millis(300),
@@ -1520,7 +1523,7 @@ mod tests {
     #[test]
     fn reading_and_bucket_work() {
         let dir = tempfile::tempdir().unwrap();
-        let db = sample_db(dir.path(), quick());
+        let db = sample_db(dir.path(), ReportLimits::default());
         let r = db
             .query(
                 "SELECT bucket(ts, '1m') AS t, count(*) AS n, sum(level = 'ERROR') AS errors \
@@ -1555,7 +1558,7 @@ mod tests {
     #[test]
     fn writes_and_escapes_are_refused() {
         let dir = tempfile::tempdir().unwrap();
-        let db = sample_db(dir.path(), quick());
+        let db = sample_db(dir.path(), ReportLimits::default());
         let outside = dir.path().join("outside.sqlite");
         let attach = format!("ATTACH DATABASE '{}' AS x", outside.display());
         let vacuum = format!("VACUUM INTO '{}'", outside.display());
@@ -1616,7 +1619,7 @@ mod tests {
     #[test]
     fn load_extension_is_not_even_compiled_in() {
         let dir = tempfile::tempdir().unwrap();
-        let db = sample_db(dir.path(), quick());
+        let db = sample_db(dir.path(), ReportLimits::default());
         // `.cargo/config.toml` builds SQLite with SQLITE_OMIT_LOAD_EXTENSION: the function does not
         // exist, the authorizer is a second wall.
         let conn = Connection::open_in_memory().unwrap();
@@ -1631,13 +1634,13 @@ mod tests {
     fn endless_recursion_runs_into_the_time_limit() {
         let dir = tempfile::tempdir().unwrap();
         let db = sample_db(dir.path(), quick());
-        let started = Instant::now();
+        // The message is the proof: the query did not end by itself, the limit of 0.3 s ended it.
+        // How long that took says nothing (the wait for a free slot is part of it).
         let message = refused(
             &db,
             "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c) SELECT count(*) FROM c",
         );
         assert!(message.contains("time limit"), "{message}");
-        assert!(started.elapsed() < Duration::from_secs(3));
         // A cross join bomb too.
         let message = refused(&db, "SELECT count(*) FROM log a, log b, log c, log d");
         assert!(message.contains("time limit"), "{message}");
@@ -1646,7 +1649,7 @@ mod tests {
     #[test]
     fn rows_and_bytes_are_limited() {
         let dir = tempfile::tempdir().unwrap();
-        let db = sample_db(dir.path(), quick());
+        let db = sample_db(dir.path(), ReportLimits::default());
         let r = db
             .query(
                 "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c) SELECT x FROM c",
@@ -1674,11 +1677,20 @@ mod tests {
         assert!(r.rows.len() < 600, "{}", r.rows.len());
     }
 
+    /// Waits until a query of `slot` runs on `db` (its reader is open and can be interrupted).
+    #[track_caller]
+    fn wait_until_running(db: &ReportDb, slot: &str) {
+        wait_until(&format!("the query of slot {slot} to run"), || {
+            db.readers.lock().values().any(|(s, _)| s == slot)
+        });
+    }
+
     #[test]
     fn a_newer_query_of_the_same_slot_stops_the_older_one() {
         let dir = tempfile::tempdir().unwrap();
+        // Far away: the slow query must still run when the newer one comes, however late that is.
         let limits = ReportLimits {
-            max_time: Duration::from_secs(20),
+            max_time: timeout() * 2,
             ..ReportLimits::default()
         };
         let db = Arc::new(sample_db(dir.path(), limits));
@@ -1688,27 +1700,19 @@ mod tests {
             thread::spawn(move || db.query(slow, "panel"))
         };
         // Until it runs: a thread that starts late (Windows CI) would be the newer query itself.
-        let waiting = Instant::now();
-        while !db.readers.lock().values().any(|(slot, _)| slot == "panel") {
-            assert!(
-                waiting.elapsed() < Duration::from_secs(10),
-                "the slow query never opened"
-            );
-            thread::sleep(Duration::from_millis(5));
-        }
+        wait_until_running(&db, "panel");
         // Another slot does not stop it, the same one does.
         assert!(db.query("SELECT 1", "other").is_ok());
-        let started = Instant::now();
         assert!(db.query("SELECT 2", "panel").is_ok());
+        // "cancelled" and not "time limit": the newer query ended it, not its own limit.
         let err = first.join().unwrap().unwrap_err();
         assert!(err.message.contains("cancelled"), "{err:?}");
-        assert!(started.elapsed() < Duration::from_secs(2));
     }
 
     #[test]
     fn values_come_back_as_json() {
         let dir = tempfile::tempdir().unwrap();
-        let db = sample_db(dir.path(), quick());
+        let db = sample_db(dir.path(), ReportLimits::default());
         let r = db
             .query(
                 "SELECT 1, 2.5, 'ä😀', NULL, x'0102', 1e999, ts FROM log WHERE line = 1000",
@@ -1764,21 +1768,14 @@ mod tests {
     #[test]
     fn one_long_function_call_cannot_outlast_the_limits() {
         let dir = tempfile::tempdir().unwrap();
-        let db = sample_db(dir.path(), quick());
-        // Measured before the fix: 41 s of CPU in one VM step, beyond the progress handler.
-        let started = Instant::now();
+        let db = sample_db(dir.path(), ReportLimits::default());
+        // Measured before the fix: 41 s of CPU in one VM step, beyond the progress handler. Now the
+        // value is refused before the LIKE runs: "too big" is the proof, not a duration.
         let message = refused(
             &db,
             "SELECT printf('%.*c', 1000000, 'a') LIKE '%' || printf('%.*c', 20000, 'a') || 'b'",
         );
         assert!(message.contains("too big"), "{message}");
-        // Refused at once (a few ms); the bound only has to rule out the 41 s, also for a debug build
-        // on a loaded machine with the other tests running in parallel.
-        assert!(
-            started.elapsed() < Duration::from_secs(10),
-            "{:?}",
-            started.elapsed()
-        );
         // Patterns are short, values at most 64 KB: the worst LIKE within the limits is quick.
         let message = refused(
             &db,
@@ -1786,22 +1783,38 @@ mod tests {
         );
         assert!(message.contains("pattern too complex"), "{message}");
         let worst = "printf('%.*c', 65000, 'a') LIKE '%' || printf('%.*c', 250, 'a') || 'b'";
-        let started = Instant::now();
-        let r = db.query(&format!("SELECT {worst}"), "a").unwrap();
-        assert_eq!(r.rows[0][0], 0);
-        let single = started.elapsed();
+        // How long a query runs once it has its slot and its reader: the wait for one of the slots
+        // that all tests of the process share is not the query's time.
+        let limits = ReportLimits::default();
+        let timed = |sql: &str| {
+            let mut opened = None;
+            let result = query(db.path(), sql, &limits, Cancel::never(), |_| {
+                opened = Some(Instant::now());
+            });
+            (result, opened.map_or(Duration::ZERO, |at| at.elapsed()))
+        };
+        // The slowest of a few runs: on a busy machine one quick run would promise too much.
+        let mut single = Duration::ZERO;
+        for _ in 0..5 {
+            let (r, took) = timed(&format!("SELECT {worst}"));
+            assert_eq!(r.unwrap().rows[0][0], 0);
+            single = single.max(took);
+        }
         // 50 of them in one row: done, or stopped by the time limit; never minutes. SQLite asks the progress
         // handler at jumps, and a row of plain expressions has few, so it may run through all columns: the
-        // bound follows the measured column (57 ms in a local debug build, 110 ms on a CI runner).
+        // bound follows the measured column (57 ms in a local debug build, 110 ms on a CI runner), on top
+        // of the time limit. A run that a busy machine held up proves nothing, so the best of three counts;
+        // a statement that outlasts the limits does so every time.
         let many = vec![worst; MAX_COLUMNS as usize].join(", ");
-        let bound = Duration::from_secs(5).max(single * MAX_COLUMNS as u32 * 2);
-        let started = Instant::now();
-        let _ = db.query(&format!("SELECT {many}"), "a");
-        assert!(
-            started.elapsed() < bound,
-            "{:?} (one: {single:?}, bound {bound:?})",
-            started.elapsed()
-        );
+        let bound = limits.max_time + Duration::from_secs(5).max(single * MAX_COLUMNS as u32 * 2);
+        let mut best = Duration::MAX;
+        for _ in 0..3 {
+            best = best.min(timed(&format!("SELECT {many}")).1);
+            if best < bound {
+                break;
+            }
+        }
+        assert!(best < bound, "{best:?} (one: {single:?}, bound {bound:?})");
         // More columns than that are refused.
         let wide = vec!["1"; MAX_COLUMNS as usize + 1].join(", ");
         assert!(refused(&db, &format!("SELECT {wide}")).contains("too many columns"));
@@ -1812,7 +1825,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let limits = ReportLimits {
             max_bytes: 1024 * 1024,
-            ..quick()
+            ..ReportLimits::default()
         };
         let db = sample_db(dir.path(), limits);
         let wide = vec!["printf('%.*c', 60000, 'x')"; 40].join(", ");
@@ -1824,8 +1837,9 @@ mod tests {
     #[test]
     fn closing_stops_running_queries_and_refuses_new_ones() {
         let dir = tempfile::tempdir().unwrap();
+        // Far away: "cancelled" below means that closing ended the query, not its own time limit.
         let limits = ReportLimits {
-            max_time: Duration::from_secs(30),
+            max_time: timeout() * 2,
             ..ReportLimits::default()
         };
         let db = Arc::new(sample_db(dir.path(), limits));
@@ -1834,22 +1848,18 @@ mod tests {
             let db = Arc::clone(db);
             thread::spawn(move || db.query(slow, slot))
         };
-        // Closing the dashboard (pause) interrupts.
+        // Closing the dashboard (pause) interrupts a query that runs.
         let first = run(&db, "p1");
-        thread::sleep(Duration::from_millis(200));
-        let started = Instant::now();
+        wait_until_running(&db, "p1");
         db.pause();
         let err = first.join().unwrap().unwrap_err();
         assert!(err.message.contains("cancelled"), "{err:?}");
-        assert!(started.elapsed() < Duration::from_secs(2));
         // Closing the session too, and nothing new runs after it.
         let second = run(&db, "p2");
-        thread::sleep(Duration::from_millis(200));
-        let started = Instant::now();
+        wait_until_running(&db, "p2");
         db.shutdown();
         let err = second.join().unwrap().unwrap_err();
         assert!(err.message.contains("cancelled"), "{err:?}");
-        assert!(started.elapsed() < Duration::from_secs(2));
         assert!(db.query("SELECT 1", "p3").is_err());
     }
 
@@ -1869,15 +1879,19 @@ mod tests {
                 })
             })
             .collect();
-        let mut most = 0;
-        let started = Instant::now();
-        while started.elapsed() < Duration::from_millis(600) {
+        // Watched until the last one ended. The slots are shared by the process (other tests run
+        // queries too), so the upper bound is checked there; that queries ran in parallel is read
+        // from the readers of this database (no upper bound for those: a reader is taken off the
+        // list a moment after its slot is free again).
+        let (mut most, mut most_own) = (0, 0);
+        wait_until("all queries to end", || {
             most = most.max(running_queries());
-            thread::sleep(Duration::from_millis(5));
-        }
+            most_own = most_own.max(db.readers.lock().len());
+            threads.iter().all(|t| t.is_finished())
+        });
         let results: Vec<_> = threads.into_iter().map(|t| t.join().unwrap()).collect();
         assert!(most <= MAX_QUERIES, "{most}");
-        assert!(most >= 2, "queries ran in parallel: {most}");
+        assert!(most_own >= 2, "queries ran in parallel: {most_own}");
         // Every one ended (time limit, or no free slot within it), none hung.
         assert!(results.iter().all(|r| r.is_err()));
     }
@@ -1885,8 +1899,8 @@ mod tests {
     #[test]
     fn sorts_stay_in_memory_under_a_heap_limit() {
         let dir = tempfile::tempdir().unwrap();
-        let db = sample_db(dir.path(), quick());
-        let mut conn = open_reader(db.path(), &quick(), Cancel::never()).unwrap();
+        let db = sample_db(dir.path(), ReportLimits::default());
+        let mut conn = open_reader(db.path(), &ReportLimits::default(), Cancel::never()).unwrap();
         conn.authorizer(None::<fn(AuthContext<'_>) -> Authorization>)
             .unwrap();
         let store: i64 = conn
@@ -1901,7 +1915,8 @@ mod tests {
     #[test]
     fn fields_named_like_keywords_work() {
         let dir = tempfile::tempdir().unwrap();
-        let db = ReportDb::create(dir.path(), 9, vec!["a.log".into()], quick()).unwrap();
+        let db =
+            ReportDb::create(dir.path(), 9, vec!["a.log".into()], ReportLimits::default()).unwrap();
         let columns: Vec<Column> = ["order", "group", "from", "default"]
             .iter()
             .map(|id| Column {
@@ -1934,7 +1949,7 @@ mod tests {
         let file = dir.path().join("not-a-folder");
         std::fs::write(&file, "x").unwrap();
         let below = file.join("reports");
-        let err = match ReportDb::create(&below, 1, vec![], quick()) {
+        let err = match ReportDb::create(&below, 1, vec![], ReportLimits::default()) {
             Ok(_) => panic!("created below a file"),
             Err(e) => e,
         };

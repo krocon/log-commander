@@ -187,14 +187,16 @@ impl<F: Frontend> Router<F> {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
 
-    /// Answers every call at once from another thread, like the window does.
+    /// Answers every call from another thread, like the window does: at once, or (`held`) only
+    /// when the test lets go.
     struct Echo {
         calls: Arc<Calls>,
         sent: Mutex<Vec<(String, Value)>>,
         listening: bool,
-        delay: Duration,
+        held: Arc<AtomicBool>,
     }
 
     impl Frontend for Echo {
@@ -208,9 +210,11 @@ mod tests {
                 .push((tool.to_owned(), args.clone()));
             let calls = self.calls.clone();
             let tool = tool.to_owned();
-            let delay = self.delay;
+            let held = self.held.clone();
             std::thread::spawn(move || {
-                std::thread::sleep(delay);
+                while held.load(Ordering::SeqCst) {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
                 let answer = match tool.as_str() {
                     "get_workspace" => Ok(json!({"tabs": []})),
                     "read_lines" => Ok(json!({"text": "x".repeat(tools::ANSWER_BYTES_MAX + 1)})),
@@ -222,14 +226,14 @@ mod tests {
         }
     }
 
-    fn router(listening: bool, delay: Duration) -> Arc<Router<Echo>> {
+    fn router(listening: bool, held: bool) -> Arc<Router<Echo>> {
         let calls = Arc::new(Calls::default());
         Arc::new(Router::new(
             Echo {
                 calls: calls.clone(),
                 sent: Mutex::new(Vec::new()),
                 listening,
-                delay,
+                held: Arc::new(AtomicBool::new(held)),
             },
             calls,
         ))
@@ -237,7 +241,7 @@ mod tests {
 
     #[test]
     fn calls_go_to_the_frontend_and_back() {
-        let r = router(true, Duration::ZERO);
+        let r = router(true, false);
         assert_eq!(
             r.call("get_workspace", &Value::Null).unwrap(),
             json!({"tabs": []})
@@ -252,7 +256,7 @@ mod tests {
 
     #[test]
     fn only_listed_tools_and_object_arguments_pass() {
-        let r = router(true, Duration::ZERO);
+        let r = router(true, false);
         for tool in ["run_shell", "open_source", "help", "set_settings"] {
             assert_eq!(r.call(tool, &json!({})).unwrap_err().code, "unknown_tool");
         }
@@ -267,12 +271,12 @@ mod tests {
 
     #[test]
     fn a_too_large_answer_is_an_error_and_no_frontend_is_not_running() {
-        let r = router(true, Duration::ZERO);
+        let r = router(true, false);
         assert_eq!(
             r.call("read_lines", &json!({})).unwrap_err().code,
             "limit_exceeded"
         );
-        let r = router(false, Duration::ZERO);
+        let r = router(false, false);
         assert_eq!(
             r.call("get_workspace", &json!({})).unwrap_err().code,
             "not_running"
@@ -281,20 +285,25 @@ mod tests {
 
     #[test]
     fn at_most_two_waits_at_a_time() {
-        let r = router(true, Duration::from_millis(300));
+        // The frontend holds its answers, so both waits are open for sure when the third comes.
+        let r = router(true, true);
         let handles: Vec<_> = (0..2)
             .map(|_| {
                 let r = r.clone();
                 std::thread::spawn(move || r.call("wait_for_lines", &json!({})))
             })
             .collect();
-        std::thread::sleep(Duration::from_millis(100));
+        crate::test_support::wait_until("two waits to reach the frontend", || {
+            r.frontend.sent.lock().unwrap().len() == 2
+        });
         assert_eq!(
             r.call("wait_for_lines", &json!({})).unwrap_err().code,
             "limit_exceeded"
         );
+        assert_eq!(r.frontend.sent.lock().unwrap().len(), 2, "refused here");
+        r.frontend.held.store(false, Ordering::SeqCst);
         for h in handles {
-            let _ = h.join();
+            assert_eq!(h.join().unwrap().unwrap_err().code, "tab_not_found");
         }
         // free again
         assert_eq!(

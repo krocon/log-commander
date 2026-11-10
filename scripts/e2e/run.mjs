@@ -310,7 +310,8 @@ async function mcpRun() {
     waited.ok &&
       !waited.data.timed_out &&
       waited.data.lines[0]?.text.includes('MCP-OOM') &&
-      Date.now() - started < 8000,
+      // Soon, not after the 20 s the call would wait at most; the line is written after 1.5 s.
+      Date.now() - started < 15000,
     waited.text.slice(0, 300),
   );
   const note = await c.tool('add_note', {
@@ -521,17 +522,40 @@ function act(action) {
     }
     case 'expectsettings': {
       // Prompt 020: what the app stored in its settings store (survives a restart): `text|text…`.
-      const file = readdirSync(dir, { recursive: true }).find((f) =>
-        String(f).endsWith('settings.json'),
-      );
-      const content = file ? readFileSync(join(dir, String(file)), 'utf8') : '';
-      const missing = text.split('|').filter((w) => !content.includes(w));
-      if (!file || missing.length) {
-        console.error(`\nFAIL settings ${file ?? '(none)'} lack ${JSON.stringify(missing)}`);
-        finish(1);
-      } else {
+      // The app saves a moment after the change: looked at until it is there (a fixed pause in the scenario
+      // was too short on a slow runner).
+      const start = Date.now();
+      const check = () => {
+        const file = readdirSync(dir, { recursive: true }).find((f) =>
+          String(f).endsWith('settings.json'),
+        );
+        const content = file ? readFileSync(join(dir, String(file)), 'utf8') : '';
+        const missing = text.split('|').filter((w) => !content.includes(w));
+        if (file && missing.length === 0) {
+          passed++;
+          console.log(`  ok  the settings store holds ${text}`);
+        } else if (Date.now() - start < 10000) {
+          setTimeout(check, 100);
+        } else {
+          console.error(`\nFAIL settings ${file ?? '(none)'} lack ${JSON.stringify(missing)}`);
+          finish(1);
+        }
+      };
+      check();
+      break;
+    }
+    case 'expectlag': {
+      // The longest time the page did not get to run during the burst. A limit on a developer machine;
+      // on a CI runner (2–3 slow cores, other jobs beside it) the number is only reported.
+      const lag = Number(text);
+      if (lag <= 250 || process.env.CI) {
         passed++;
-        console.log(`  ok  the settings store holds ${text}`);
+        console.log(
+          `  ok  event loop lag during the burst: ${lag} ms${lag > 250 ? ' (over 250 ms, not judged on CI)' : ''}`,
+        );
+      } else {
+        console.error(`\nFAIL event loop blocked for ${lag} ms (limit 250 ms)`);
+        finish(1);
       }
       break;
     }

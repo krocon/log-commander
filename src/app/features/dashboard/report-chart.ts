@@ -22,6 +22,7 @@ import {
   pieSlices,
   seriesSums,
 } from './report-logic';
+import { UPlotCtor, chartErrorText, loadUPlot } from './chart-loader';
 
 /** A point or bar the user picked: its index on the axis and the series under it, if one. */
 export interface ChartPick {
@@ -29,15 +30,6 @@ export interface ChartPick {
   series: Series | null;
   /** For a pie: the slice. */
   slice: Slice | null;
-}
-
-type UPlotCtor = typeof uPlot;
-let loading: Promise<UPlotCtor> | null = null;
-
-/** uPlot is loaded on first use, in its own chunk: the start of the app does not pay for it. */
-function loadUPlot(): Promise<UPlotCtor> {
-  loading ??= import('uplot').then((m) => m.default);
-  return loading;
 }
 
 const PALETTE = 8;
@@ -71,7 +63,8 @@ function tokens(): {
 /**
  * One chart of a dashboard panel (prompt 012): line, area, bars and stacked bars with uPlot on a canvas, a pie
  * drawn by hand. The legend shows the values under the cursor; ←/→ pick a point, Enter jumps to it. What is
- * drawn is also in data attributes (`data-points`, `data-series`, `data-sums`) for tests.
+ * drawn is also in data attributes (`data-points`, `data-series`, `data-sums`) for tests. `data-ready` is `1`
+ * once the chart is drawn and `error` when it could not be drawn; the text then says why.
  */
 @Component({
   selector: 'app-report-chart',
@@ -89,9 +82,12 @@ function tokens(): {
       [attr.data-points]="data().x.length"
       [attr.data-series]="seriesLabels()"
       [attr.data-sums]="sums()"
-      [attr.data-ready]="ready() ? '1' : null"
+      [attr.data-ready]="error() ? 'error' : ready() ? '1' : null"
       (keydown)="onKey($event)"
     >
+      @if (error(); as message) {
+        <p class="rc-error" role="alert">{{ message }}</p>
+      }
       @if (kind() === 'pie') {
         <div class="rc-pie">
           <canvas
@@ -158,6 +154,13 @@ function tokens(): {
     .rc .u-cursor-y {
       border-color: var(--text-dim);
     }
+    .rc-error {
+      margin: 0;
+      padding: 8px;
+      color: var(--text);
+      font-size: 12px;
+      user-select: text;
+    }
     .rc-pie {
       display: flex;
       gap: 12px;
@@ -216,6 +219,8 @@ export class ReportChartComponent implements OnDestroy {
   private readonly host = viewChild.required<ElementRef<HTMLDivElement>>('host');
   private readonly pieCanvas = viewChild<ElementRef<HTMLCanvasElement>>('pie');
   protected readonly ready = signal(false);
+  /** Why the chart could not be drawn, else empty. */
+  protected readonly error = signal('');
   /** Point (or slice) chosen with the keyboard. */
   protected readonly selected = signal(-1);
   protected readonly slices = computed(() => (this.kind() === 'pie' ? pieSlices(this.data()) : []));
@@ -308,20 +313,44 @@ export class ReportChartComponent implements OnDestroy {
   private async draw(data: ChartData, kind: PanelKind): Promise<void> {
     const token = ++this.drawToken;
     this.ready.set(false);
-    this.plot?.destroy();
-    this.plot = null;
-    this.observe();
-    if (kind === 'pie') {
-      // The canvas comes with the next change detection.
-      queueMicrotask(() => {
-        if (token !== this.drawToken) return;
-        this.drawPie();
-        this.ready.set(true);
-      });
-      return;
+    this.error.set('');
+    try {
+      this.plot?.destroy();
+      this.plot = null;
+      this.observe();
+      if (kind === 'pie') {
+        // The canvas comes with the next change detection.
+        queueMicrotask(() => {
+          if (token !== this.drawToken) return;
+          try {
+            this.drawPie();
+            this.ready.set(true);
+          } catch (error) {
+            this.failed(error);
+          }
+        });
+        return;
+      }
+      const UPlot = await loadUPlot();
+      if (token !== this.drawToken) return;
+      this.drawPlot(UPlot, data, kind);
+      this.ready.set(true);
+    } catch (error) {
+      // Without this the panel would stay empty for good and nobody would learn why.
+      if (token === this.drawToken) this.failed(error);
     }
-    const UPlot = await loadUPlot();
-    if (token !== this.drawToken) return;
+  }
+
+  private failed(error: unknown): void {
+    console.error(error);
+    this.plot = null;
+    this.host()
+      .nativeElement.querySelectorAll('.uplot')
+      .forEach((n) => n.remove());
+    this.error.set(chartErrorText(error));
+  }
+
+  private drawPlot(UPlot: UPlotCtor, data: ChartData, kind: PanelKind): void {
     const element = this.host().nativeElement;
     const t = tokens();
     const time = data.axis === 'time';
@@ -437,7 +466,6 @@ export class ReportChartComponent implements OnDestroy {
     const legend = element.querySelector('.u-legend');
     if (legend) this.resize?.observe(legend);
     this.fit();
-    this.ready.set(true);
   }
 
   /** Series under the cursor: the focused one for lines, the segment for stacked bars, the slot for grouped bars. */

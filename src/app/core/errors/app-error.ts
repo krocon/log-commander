@@ -26,6 +26,8 @@ export type ErrorCode =
   | 'secret_required'
   | 'connection_failed'
   | 'unsupported'
+  /** A newer call of the same kind ran first (prompt 023): nothing to show, the newer one did the work. */
+  | 'superseded'
   | 'backend_unavailable'
   | 'unknown';
 
@@ -135,4 +137,9 @@ export function describeError(error: AppError): string {
     default:
       return `${error.message}${where}`;
   }
+}
+
+/** A call the backend dropped because a newer one of its kind came first: not an error for the user. */
+export function isSuperseded(error: unknown): boolean {
+  return toAppError(error).code === 'superseded';
 }

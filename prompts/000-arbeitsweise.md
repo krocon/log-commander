@@ -52,6 +52,10 @@ Kleine Features legen Phasen zusammen. Reine Frontend-Features lassen Phase 2 au
 - Tests mit `tempfile`, Helfer aus `tests/tail_integration.rs` (`open`, `append`, `wait`). Pflichtfälle, sofern sie das Feature
   berühren: UTF-8 mit Umlauten und Emoji, UTF-16, CRLF, ANSI, sehr lange Zeile, Zeile ohne Ende, leere Datei, Rotation
   (behalten und neu), Truncation, gelöschte Datei, Freeze. Plattformspezifisches mit `#[cfg(...)]`.
+- **Warten in Tests (Prompt 023, Regeln in `CLAUDE.md` unter „Arbeitsweise“):** keine feste Pause vor einer Annahme,
+  sondern `test_support::wait_until(what, || …)`; die Bedingung ist vor der Aktion falsch; Zeitgrenzen nur gegen Hänger;
+  Fakes melden ihren Zustand. Neue Tests einmal mit `node scripts/flaky-hunt.mjs --runs 10 --only <Binary>` unter Last
+  laufen lassen.
 - Leistung: Wo Einlesen, Filter oder Suche betroffen sind, `measure_`-Test vorher und nachher
   (`cd src-tauri && cargo test --release --test tail_integration -- --ignored --nocapture measure_`), Werte in den Bericht.
 - `npm run rust:fmt`, `npm run rust:lint`, `npm run rust:test` grün.
@@ -79,7 +83,9 @@ Kleine Features legen Phasen zusammen. Reine Frontend-Features lassen Phase 2 au
 ### Phase 4: Ende-zu-Ende
 
 - `npm run e2e` (Debug-Build, echtes Backend, echte Datei). Neue Akzeptanzkriterien in `scripts/e2e/scenario.js`, ohne
-  bestehende Prüfungen abzuschwächen. Neue Commands auch in `scripts/e2e/mock-ipc.js` (Screenshots).
+  bestehende Prüfungen abzuschwächen. Jede Aktion, deren Folge geprüft wird, läuft über `actAndWait(what, action,
+  condition)`: Die Bedingung muss vor der Aktion falsch sein (bei Filtern und Sprüngen `{ change: viewGen }` bzw.
+  `jumps`), „bleibt so“ über `holds()`. Kein `sleep` vor einer Prüfung, keine Grenze in Millisekunden. Neue Commands auch in `scripts/e2e/mock-ipc.js` (Screenshots).
 - Sichttest von Hand: `npm run demo:log` und `npm run demo:app` (5000 Zeilen/s mit Rotation), hell und dunkel, schmales Fenster.
 - Nicht abgedeckt durch `npm run e2e` und nur von Hand prüfbar: native Dialoge, Menü, Datei-Drop aus dem Finder, Zwischenablage.
   Was nicht geprüft werden konnte, steht ausdrücklich im Bericht.

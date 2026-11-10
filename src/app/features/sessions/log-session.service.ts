@@ -22,7 +22,7 @@ import { addSavedSource, sourceKey } from '../sources/source-logic';
 import { ALL_SOURCES, mergeKey, maskForBackend } from '../merge/merge-logic';
 import { ALL_LEVELS } from './filter-logic';
 import { inheritOnClose, insertIndex, viewLimitReason } from './view-chain';
-import { AppError, describeError, toAppError } from '../../core/errors/app-error';
+import { AppError, describeError, isSuperseded, toAppError } from '../../core/errors/app-error';
 import { SettingsService } from '../../core/settings/settings.service';
 import { SessionState } from './session-state';
 import {
@@ -33,7 +33,8 @@ import {
   neighbourRow,
   steppedSelection,
 } from './selection-logic';
-import { fullLogOf, nextBookmark, toggleBookmark } from './navigation-logic';
+import { fullLogOf, nextBookmark, sameView, toggleBookmark, viewStamp } from './navigation-logic';
+import { hitInClick } from '../log-table/ruler-logic';
 import { ShareKind, shareText } from '../share/share-format';
 import { MAX_NOTE_LENGTH, isWorkspacePath } from '../workspace/workspace-model';
 import {
@@ -236,6 +237,8 @@ export class LogSessionService {
     try {
       await this.api.setSpoolKeep(session.sessionId, keep);
     } catch (e) {
+      // A newer click decided: its value stays, nothing is put back.
+      if (isSuperseded(e)) return;
       session.keepSpool.set(before);
       this.showError(toAppError(e));
     }
@@ -302,6 +305,7 @@ export class LogSessionService {
       child.inherited.set(next.inherited);
     }
     this.cancelTreeTimer(closing);
+    closing.closed = true;
     this.sessions.set(rest);
     if (this.activeId() === id) {
       const next = rest[Math.min(index, rest.length - 1)];
@@ -478,6 +482,8 @@ export class LogSessionService {
   private readonly filterCalls = new WeakMap<SessionState, Promise<FilterInfo | null>>();
 
   private async sendFilter(session: SessionState): Promise<FilterInfo | null> {
+    // A call that waited in the chain while the tab closed: its view is gone in the backend.
+    if (session.closed) return null;
     const expr = compileTree(session.filterTree());
     try {
       const info = await this.api.setFilter(
@@ -493,6 +499,9 @@ export class LogSessionService {
       session.treeError.set(null);
       return info;
     } catch (e) {
+      // Closed while the call was on its way: "unknown view" is no error to show. A newer filter of
+      // the view came first (another caller, the AI): that one is shown.
+      if (session.closed || isSuperseded(e)) return null;
       const err = toAppError(e);
       if (err.code === 'invalid_search' && err.nodeId) {
         session.treeError.set({ nodeId: err.nodeId, message: err.message });
@@ -633,6 +642,7 @@ export class LogSessionService {
    * stays. A line the filter hides: to the next visible one, and `G` shows it in the whole log.
    */
   async showLine(session: SessionState, line: number): Promise<void> {
+    const view = viewStamp(session);
     try {
       const position = await this.api.getPosition(session.sessionId, line, session.viewId);
       const [there] = await this.api.getLines(
@@ -642,6 +652,7 @@ export class LogSessionService {
         1,
         session.viewId,
       );
+      if (!sameView(session, view)) return;
       this.setMode(session, 'log');
       session.jumpTo(position, line);
       if (there?.line !== line) {
@@ -753,6 +764,7 @@ export class LogSessionService {
     if (mark && mark.scroll === scroll) from = mark.position;
     else if (forward) from = scroll.top > 0 ? scroll.top - 1 : null;
     else from = scroll.top;
+    const view = viewStamp(session);
     try {
       const hit = await this.api.findLevel(
         session.sessionId,
@@ -761,6 +773,7 @@ export class LogSessionService {
         kind === 'error' ? ERROR_LEVELS : WARN_LEVELS,
         session.viewId,
       );
+      if (!sameView(session, view)) return;
       if (!hit) {
         this.showFindMessage(
           session,
@@ -778,15 +791,26 @@ export class LogSessionService {
   /** A position from the overview ruler (or a mark's entry), the selection stays. */
   async jumpToRulerLevel(
     session: SessionState,
-    from: number | null,
-    levels: readonly Level[],
-    fallback: number,
+    target: { from: number | null; until: number; levels: readonly Level[]; fallback: number },
   ): Promise<void> {
+    const { sessionId, viewId } = session;
+    const view = viewStamp(session);
     try {
-      const hit = await this.api.findLevel(session.sessionId, from, true, levels, session.viewId);
-      // A hit from the start again is not what was clicked: then the clicked place itself.
-      if (hit && !hit.wrapped) session.jumpTo(hit.position, hit.line);
-      else session.jumpTo(fallback, null);
+      let hit = await this.api.findLevel(sessionId, target.from, true, target.levels, viewId);
+      if (!hitInClick(hit, target)) {
+        // The mark is drawn for every line of an entry: the head of a stack trace is further up. Summary
+        // chunks of several lines can also colour a bucket just below their entry.
+        const first = target.from === null ? 0 : target.from + 1;
+        const before =
+          first > 0
+            ? await this.api.findLevel(sessionId, first, false, target.levels, viewId)
+            : null;
+        hit = before && !before.wrapped ? before : null;
+      }
+      // The filter changed meanwhile: the positions mean another view.
+      if (!sameView(session, view)) return;
+      if (hit) session.jumpTo(hit.position, hit.line);
+      else session.jumpTo(target.fallback, null);
     } catch (e) {
       this.showError(toAppError(e));
     }
@@ -797,8 +821,10 @@ export class LogSessionService {
    * selection stays, following stops.
    */
   async jumpToTime(session: SessionState, ts: number): Promise<void> {
+    const view = viewStamp(session);
     try {
       const hit = await this.api.positionAtTime(session.sessionId, ts, session.viewId);
+      if (!sameView(session, view)) return;
       if (hit) session.jumpTo(hit.position, hit.line);
       else this.showFindMessage(session, 'Keine Zeitstempel im Log');
     } catch (e) {
@@ -872,7 +898,14 @@ export class LogSessionService {
       const timeOf = async (line: number): Promise<string | null> => {
         if (timeIndex < 0) return null;
         const range = await this.api.getEntryRange(session.sessionId, line);
-        const [head] = await this.api.getLines(session.sessionId, 'all', range.first, 1);
+        // With the tab's own view: view 0 is gone once the tab of the file is closed.
+        const [head] = await this.api.getLines(
+          session.sessionId,
+          'all',
+          range.first,
+          1,
+          session.viewId,
+        );
         const span = head?.fields[timeIndex];
         return head && span && span[1] > span[0] ? head.text.slice(span[0], span[1]) : null;
       };
@@ -950,8 +983,11 @@ export class LogSessionService {
     const query = session.query();
     if (!query.text) return;
     const from = session.currentHitLine() ?? session.selection()?.first ?? null;
+    const view = viewStamp(session);
     try {
       const hit = await this.api.find(session.sessionId, from, query, forward, session.viewId);
+      // Another search or filter since: the hit belongs to neither.
+      if (!sameView(session, view) || !sameQuery(session.query(), query)) return;
       if (!hit) {
         this.showFindMessage(session, 'Keine Treffer');
         return;
@@ -1061,7 +1097,9 @@ export class LogSessionService {
   /** The lines of an entry whatever the filter hides (detail panel), complete also beyond its display cut. */
   async copyEntry(session: SessionState, first: number, last: number): Promise<void> {
     try {
-      await writeClipboard(await this.api.copyLines(session.sessionId, first, last, 'all'));
+      await writeClipboard(
+        await this.api.copyLines(session.sessionId, first, last, 'all', session.viewId),
+      );
     } catch (e) {
       this.showError(toAppError(e));
     }
@@ -1116,6 +1154,8 @@ export class LogSessionService {
       this.settings.update({ extractRules: all });
       return null;
     } catch (e) {
+      // Newer rules came first: they are the ones in use and saved.
+      if (isSuperseded(e)) return null;
       return toAppError(e);
     }
   }
@@ -1127,6 +1167,7 @@ export class LogSessionService {
   }
 
   showError(error: AppError | string): void {
+    if (typeof error !== 'string' && error.code === 'superseded') return;
     this.error.set(typeof error === 'string' ? error : describeError(error));
     if (this.errorTimer) clearTimeout(this.errorTimer);
     this.errorTimer = setTimeout(() => this.error.set(null), ERROR_VISIBLE_MS);
@@ -1162,4 +1203,9 @@ async function writeClipboard(text: string): Promise<void> {
     document.execCommand('copy');
     area.remove();
   }
+}
+
+/** The same search, whatever object holds it (the search field sets an equal one again after its delay). */
+function sameQuery(a: SearchQuery, b: SearchQuery): boolean {
+  return a.text === b.text && a.isRegex === b.isRegex && a.caseSensitive === b.caseSensitive;
 }

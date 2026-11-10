@@ -54,6 +54,9 @@ pub enum ErrorCode {
     ConnectionFailed,
     /// Not supported (e.g. ProxyJump in ~/.ssh/config).
     Unsupported,
+    /// A newer call of the same kind ran first (prompt 023): this one changed nothing. Not an
+    /// error for the user, the frontend ignores it.
+    Superseded,
 }
 
 /// Details of an SSH error (prompt 017) for the dialog. Never holds a secret.

@@ -16,10 +16,11 @@ use log_commander_lib::spool::SpoolRoot;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-/// Generous: Marc may run the high-load demo next to the tests.
-const TIMEOUT: Duration = Duration::from_secs(30);
+#[path = "../src/test_support.rs"]
+mod test_support;
+use test_support::{wait_until, wait_until_or};
 
 fn data(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -54,7 +55,9 @@ fn fixture_with_key(client_key: Option<russh::keys::PublicKey>) -> Fixture {
             None,
             store.clone(),
         )
-        .with_idle_close(Duration::from_millis(100)),
+        // Long: a connection must not close between two steps of a test just because the
+        // machine is slow. Tests that need it closed say so (`close_unused_connections`).
+        .with_idle_close(Duration::from_secs(60)),
     );
     let manager = SessionManager::default();
     manager.set_spool_root(Arc::new(
@@ -140,21 +143,30 @@ impl Fixture {
         self.manager.session(info.session_id).unwrap().stats()
     }
 
+    #[track_caller]
     fn wait(&self, info: &SessionInfo, what: &str, done: impl Fn(&SessionUpdate) -> bool) {
-        let start = Instant::now();
-        loop {
-            let stats = self.stats(info);
-            if done(&stats) {
-                return;
-            }
-            assert!(
-                start.elapsed() < TIMEOUT,
-                "timeout waiting for {what}: {:?} lines, {:?}",
-                stats.total_lines,
-                stats.source_status
-            );
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        wait_until_or(
+            what,
+            || {
+                let stats = self.stats(info);
+                format!("{:?} lines, {:?}", stats.total_lines, stats.source_status)
+            },
+            || done(&self.stats(info)),
+        );
+    }
+
+    /// Closes the connections nobody uses any more, as the sweeper does after the idle time.
+    /// A source that was closed lets go of its connection when its thread has ended.
+    #[track_caller]
+    fn close_unused_connections(&self) {
+        wait_until_or(
+            "the unused connections to close",
+            || format!("{} open", self.hub.open_connections()),
+            || {
+                self.hub.sweep_now();
+                self.hub.open_connections() == 0
+            },
+        );
     }
 
     fn texts(&self, info: &SessionInfo) -> Vec<String> {
@@ -316,14 +328,11 @@ fn passwords_are_asked_for_and_kept_only_on_request() {
         ..password()
     };
     // The idle connection from before is closed first, so this logs in again.
-    std::thread::sleep(Duration::from_millis(150));
-    fx.hub.sweep();
+    fx.close_unused_connections();
     let info = fx.open(fx.config("/logs/app.log"), remember).unwrap();
     assert_eq!(fx.store.len(), 1);
     fx.manager.close(info.session_id).unwrap();
-    std::thread::sleep(Duration::from_millis(150));
-    fx.hub.sweep();
-    assert_eq!(fx.hub.open_connections(), 0);
+    fx.close_unused_connections();
     let info = fx
         .open(fx.config("/logs/app.log"), Credentials::default())
         .unwrap();
@@ -418,18 +427,15 @@ fn live_lines_rotation_truncation_and_no_shell() {
     let texts = fx.texts(&info);
     assert_eq!(texts[5], "2026-01-15 10:00:05 INFO late in the old file");
     assert_eq!(texts[6], "2026-01-15 10:00:06 INFO new file");
-    // Truncation (copytruncate): the old lines stay, the new ones follow.
+    // Truncation (copytruncate): the old lines stay, the new ones follow. The source notices
+    // it when the file is shorter than what it has read (34 bytes of the new file), whether it
+    // looks while the file is empty or after the next line: that line is shorter.
+    let cut = "2026-01-15 10:00:07 ERROR cut\n";
+    assert!(cut.len() < "2026-01-15 10:00:06 INFO new file\n".len());
     std::fs::write(fx.file("logs/app.log"), "").unwrap();
-    std::thread::sleep(Duration::from_millis(600));
-    fx.append(
-        "logs/app.log",
-        "2026-01-15 10:00:07 ERROR after truncation\n",
-    );
+    fx.append("logs/app.log", cut);
     fx.wait(&info, "8 lines", |s| s.total_lines >= 8);
-    assert_eq!(
-        fx.texts(&info)[7],
-        "2026-01-15 10:00:07 ERROR after truncation"
-    );
+    assert_eq!(fx.texts(&info)[7], "2026-01-15 10:00:07 ERROR cut");
     let status = fx.stats(&info).source_status.unwrap();
     assert_eq!(status.state, SourceState::Connected);
     assert!(status.bytes > 100 && status.latency_ms.is_some());
@@ -442,13 +448,13 @@ fn live_lines_rotation_truncation_and_no_shell() {
             .load(std::sync::atomic::Ordering::SeqCst),
         0
     );
-    // Closing the tab deletes the spool, the idle connection goes after a while.
+    // Closing the tab deletes the spool, the connection is unused from then on and goes with
+    // the next sweep after the idle time.
     let spool = PathBuf::from(&source.spool_path);
     fx.manager.close(info.session_id).unwrap();
     assert!(!spool.exists());
-    std::thread::sleep(Duration::from_millis(150));
-    fx.hub.sweep();
-    assert_eq!(fx.hub.open_connections(), 0);
+    assert_eq!(fx.hub.open_connections(), 1);
+    fx.close_unused_connections();
 }
 
 #[test]
@@ -469,6 +475,9 @@ fn a_dropped_connection_comes_back_and_goes_on_at_the_offset() {
             .load(std::sync::atomic::Ordering::SeqCst),
         2
     );
+    fx.wait(&info, "connected again", |s| {
+        s.source_status.as_ref().unwrap().state == SourceState::Connected
+    });
     // The server goes away: waiting with growing pauses, the lines stay.
     let (root, port) = (fx.server.root.clone(), fx.server.port);
     fx.server.stop();
@@ -479,7 +488,13 @@ fn a_dropped_connection_comes_back_and_goes_on_at_the_offset() {
         )
     });
     fx.append("logs/app.log", "line 3 written while away\n");
-    fx.server = testserver::start(root, port, 1, None).unwrap();
+    // The system may need a moment until the port can be bound again.
+    let mut server = None;
+    wait_until("the port of the server to be free again", || {
+        server = testserver::start(root.clone(), port, 1, None).ok();
+        server.is_some()
+    });
+    fx.server = server.unwrap();
     fx.wait(&info, "3 lines", |s| s.total_lines >= 3);
     fx.wait(&info, "connected", |s| {
         s.source_status.as_ref().unwrap().state == SourceState::Connected
@@ -602,20 +617,25 @@ fn a_large_file_starts_at_the_last_megabytes_on_a_line_start() {
     };
     let info = fx.open(config, password()).unwrap();
     let expected = text[text.len() - 1024 * 1024..].matches('\n').count() as u64;
-    fx.wait(&info, "the last MB", |s| s.total_lines >= expected - 1);
-    std::thread::sleep(Duration::from_millis(300));
+    // All of it is there when the last line of the file is: from the megabyte's first whole
+    // line on, so one line fewer if the megabyte begins inside a line.
+    let last_line = format!("2026-01-15 10:00:00 INFO line {:07}", i - 1);
+    let last = || {
+        let total = fx.stats(&info).total_lines as usize;
+        fx.lines(&info, total.saturating_sub(1), 1).pop()
+    };
+    wait_until_or(
+        "the last line of the file",
+        || format!("{:?} of {} lines", last(), fx.stats(&info).total_lines),
+        || last().as_deref() == Some(last_line.as_str()),
+    );
     let total = fx.stats(&info).total_lines;
-    assert!(total <= expected);
+    assert!(total == expected || total == expected - 1, "{total}");
     let first = fx.lines(&info, 0, 1);
     assert!(
         first[0].starts_with("2026-01-15 10:00:00 INFO line "),
         "{}",
         first[0]
-    );
-    let last = fx.lines(&info, total as usize - 1, 1);
-    assert_eq!(
-        last[0],
-        format!("2026-01-15 10:00:00 INFO line {:07}", i - 1)
     );
     // The whole file.
     let whole = SftpConfig {
@@ -623,8 +643,10 @@ fn a_large_file_starts_at_the_last_megabytes_on_a_line_start() {
         ..fx.config("/logs/big.log")
     };
     let info = fx.open(whole, Credentials::default()).unwrap();
-    fx.wait(&info, "all lines", |s| s.total_lines >= i);
-    assert_eq!(fx.stats(&info).source_status.unwrap().pending_bytes, 0);
+    fx.wait(&info, "all lines, nothing left to fetch", |s| {
+        s.total_lines >= i && s.source_status.as_ref().unwrap().pending_bytes == 0
+    });
+    assert_eq!(fx.stats(&info).total_lines, i);
 }
 
 #[test]
@@ -732,15 +754,11 @@ fn openssh_live_rotation_truncation_reconnect_and_changed_key() {
     let info = open(creds).unwrap();
     let session = manager.session(info.session_id).unwrap();
     let wait = |what: &str, n: u64| {
-        let start = Instant::now();
-        while session.stats().total_lines < n {
-            assert!(
-                start.elapsed() < TIMEOUT,
-                "{what}: {:?}",
-                session.stats().source_status
-            );
-            std::thread::sleep(Duration::from_millis(20));
-        }
+        wait_until_or(
+            what,
+            || format!("{:?}", session.stats().source_status),
+            || session.stats().total_lines >= n,
+        );
     };
     wait("2 lines", 2);
     docker_exec("echo three >> /var/log/app/live.log");

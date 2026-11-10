@@ -209,8 +209,9 @@ pub async fn set_spool_keep(
     state: State<'_, SessionManager>,
     session_id: u64,
     keep: bool,
+    seq: Option<u64>,
 ) -> AppResult<()> {
-    session(&state, session_id)?.set_spool_keep(keep)
+    session(&state, session_id)?.set_spool_keep_at(keep, seq)
 }
 
 /// Total size of a spool in MB (settings), for sources opened from now on.
@@ -322,6 +323,7 @@ pub async fn set_filter(
     sources: Option<u16>,
     expr: Option<FilterExpr>,
     view_id: Option<u32>,
+    seq: Option<u64>,
 ) -> AppResult<FilterInfo> {
     let session = session(&state, session_id)?;
     let query = SearchQuery {
@@ -331,7 +333,7 @@ pub async fn set_filter(
     };
     blocking(move || {
         let own = session.view_filter(&levels, &query, mode, sources, expr.as_ref());
-        session.set_view_filter(view_id.unwrap_or(0), own)
+        session.set_view_filter_at(view_id.unwrap_or(0), own, seq)
     })
     .await
 }
@@ -384,10 +386,11 @@ pub async fn set_profile(
     state: State<'_, SessionManager>,
     session_id: u64,
     profile_id: String,
+    seq: Option<u64>,
 ) -> AppResult<FilterInfo> {
     let session = session(&state, session_id)?;
     let profile = state.profile(&profile_id)?;
-    blocking(move || session.set_profile(&profile)).await
+    blocking(move || session.set_profile_at(&profile, seq)).await
 }
 
 #[tauri::command]
@@ -544,9 +547,9 @@ pub async fn set_keep_on_rotate(
     state: State<'_, SessionManager>,
     session_id: u64,
     keep: bool,
+    seq: Option<u64>,
 ) -> AppResult<()> {
-    session(&state, session_id)?.set_keep_on_rotate(keep);
-    Ok(())
+    session(&state, session_id)?.set_keep_on_rotate_at(keep, seq)
 }
 
 #[tauri::command]
@@ -554,9 +557,9 @@ pub async fn set_frozen(
     state: State<'_, SessionManager>,
     session_id: u64,
     frozen: bool,
+    seq: Option<u64>,
 ) -> AppResult<()> {
-    session(&state, session_id)?.set_frozen(frozen);
-    Ok(())
+    session(&state, session_id)?.set_frozen_at(frozen, seq)
 }
 
 #[tauri::command]
@@ -568,8 +571,9 @@ pub async fn list_profiles(state: State<'_, SessionManager>) -> AppResult<Vec<Pr
 pub async fn set_custom_profiles(
     state: State<'_, SessionManager>,
     profiles: Vec<Profile>,
+    seq: Option<u64>,
 ) -> AppResult<()> {
-    state.set_custom_profiles(profiles)
+    state.set_custom_profiles_at(profiles, seq)
 }
 
 /// Extraction rules for the profile of a session (prompt 011), right away for every open session of
@@ -579,10 +583,11 @@ pub async fn set_extract_rules(
     app: AppHandle,
     session_id: u64,
     rules: Vec<ExtractRule>,
+    seq: Option<u64>,
 ) -> AppResult<ColumnSet> {
     blocking(move || {
         app.state::<SessionManager>()
-            .set_extract_rules(session_id, rules)
+            .set_extract_rules_at(session_id, rules, seq)
     })
     .await
 }
@@ -629,17 +634,30 @@ pub async fn open_report(
     state: State<'_, SessionManager>,
     session_id: u64,
     fields: Option<Vec<String>>,
+    user: Option<String>,
+    keep_fields: Option<bool>,
 ) -> AppResult<ReportSchema> {
     let session = session(&state, session_id)?;
-    blocking(move || session.open_report(fields)).await
+    blocking(move || {
+        session.open_report_for(
+            user.as_deref().unwrap_or(""),
+            fields,
+            keep_fields.unwrap_or(false),
+        )
+    })
+    .await
 }
 
 /// The dashboard is hidden: no more catching up (the file stays until the tab closes).
 #[tauri::command]
-pub async fn close_report(state: State<'_, SessionManager>, session_id: u64) -> AppResult<()> {
+pub async fn close_report(
+    state: State<'_, SessionManager>,
+    session_id: u64,
+    user: Option<String>,
+) -> AppResult<()> {
     let session = session(&state, session_id)?;
     blocking(move || {
-        session.close_report();
+        session.close_report_for(user.as_deref().unwrap_or(""));
         Ok(())
     })
     .await

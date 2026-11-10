@@ -30,6 +30,7 @@ pub mod mcp;
 pub mod menu_accel;
 pub mod merge;
 pub mod model;
+pub mod order;
 pub mod overview;
 pub mod platform;
 pub mod profile;
@@ -39,6 +40,8 @@ pub mod session;
 pub mod sources;
 pub mod spool;
 pub mod tail;
+#[cfg(test)]
+pub(crate) mod test_support;
 pub mod timeline;
 pub mod timestamp;
 pub mod views;

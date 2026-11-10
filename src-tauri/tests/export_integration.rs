@@ -15,7 +15,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-const TIMEOUT: Duration = Duration::from_secs(15);
+#[path = "../src/test_support.rs"]
+mod test_support;
 
 fn generic() -> Profile {
     builtin_profiles()
@@ -35,12 +36,9 @@ fn open(path: &Path) -> LogSession {
     .unwrap()
 }
 
+#[track_caller]
 fn wait(what: &str, condition: impl Fn() -> bool) {
-    let start = Instant::now();
-    while !condition() {
-        assert!(start.elapsed() < TIMEOUT, "timeout: {what}");
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    test_support::wait_until(what, condition);
 }
 
 fn loaded(session: &LogSession) {
@@ -365,7 +363,10 @@ fn the_end_is_fixed_while_the_tail_goes_on() {
                 std::thread::sleep(Duration::from_millis(1));
             }
         });
-        std::thread::sleep(Duration::from_millis(50));
+        // The tail is running: the view has lines of the writer when the export begins ...
+        wait("the tail to show appended lines", || {
+            session.stats().total_lines > 200_000
+        });
         let out = export(
             &session,
             &request(
@@ -374,19 +375,23 @@ fn the_end_is_fixed_while_the_tail_goes_on() {
                 dir.path().join("t.txt"),
             ),
         );
+        // ... and the writer goes on after it.
+        wait("the file to grow past the export", || {
+            fs::metadata(&path).unwrap().len() > out.len() as u64
+        });
         stop.store(true, Ordering::Relaxed);
         writer.join().unwrap();
         out
     });
     // Everything up to where the view ended when the export began, nothing after it.
     let lines: Vec<&str> = out.lines().collect();
-    assert!(lines.len() >= 200_000, "{} lines", lines.len());
+    assert!(lines.len() > 200_000, "{} lines", lines.len());
     assert_eq!(
         lines[199_999],
         "INFO line 199999 with some text to make it longer"
     );
     let written = fs::read_to_string(&path).unwrap();
-    assert!(written.lines().count() > lines.len() || lines.len() > 200_000);
+    assert!(written.lines().count() > lines.len());
     assert!(written.starts_with(&out));
 }
 

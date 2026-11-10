@@ -162,6 +162,12 @@ const BASE_OPTIONS: TableOptionsIf = {
     '[style.--row-h.px]': 'rowH()',
     '[style.--header-h.px]': 'headerH()',
     '[style.--font-size.px]': 'fontSize()',
+    // What the view shows, for tests (scripts/e2e): a step waits for a new generation instead of a state
+    // that the view before the action had as well.
+    '[attr.data-epoch]': 'session().update().epoch',
+    '[attr.data-view-generation]': 'session().update().viewGeneration',
+    '[attr.data-lines]': 'session().displayedLines()',
+    '[attr.data-jumps]': 'session().jumps()',
   },
   template: `
     <guiexpert-table-signal
@@ -433,6 +439,7 @@ export class LogTableViewComponent implements OnInit, OnDestroy {
       api: () => this.api(),
       holds: () => this.holds,
       appends: () => this.appends,
+      dragged: () => this.dragged,
     };
   }
 

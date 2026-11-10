@@ -35,6 +35,12 @@
         await report(`PASS ${what}`);
         return value;
       }
+      // A chart that could not be drawn says why: no need to wait for the time limit.
+      const brokenChart = document.querySelector('.rc[data-ready="error"]');
+      if (brokenChart) {
+        for (const error of pageErrors) await report(`INFO ${error}`);
+        throw new Error(`chart failed during "${what}": ${brokenChart.textContent.trim()}`);
+      }
       if (Date.now() - start > timeoutMs) {
         const state = document.body.innerText.slice(0, 1500).replace(/\n/g, ' | ');
         await report(`INFO visibility=${document.visibilityState}`);
@@ -43,6 +49,65 @@
         throw new Error(`timeout: ${what} STATUS: ${bar} UI: ${state}`);
       }
       await sleep(30);
+    }
+  }
+
+  // What the table shows, as attributes of `app-log-table-view` (set for tests): the generation of the view
+  // rises with every finished filter job, `jumps` with every jump (`E`, ruler, timeline).
+  const viewData = (name) => Number(document.querySelector('app-log-table-view')?.dataset[name]);
+  const viewGen = () => viewData('viewGeneration');
+  const jumps = () => viewData('jumps');
+
+  /**
+   * An action and the effect it has to show. The condition must be FALSE before the action: one that holds
+   * already says nothing about the action, and the checks after it read the state before. Where the picture
+   * before can look the same (a filter that hides nothing new, a jump to where the view is), pass `change`:
+   * a counter (`viewGen`, `jumps`) that has to move as well.
+   */
+  async function actAndWait(what, action, condition, { timeoutMs = 15000, change } = {}) {
+    const before = change?.();
+    if (!change) {
+      let already = false;
+      try {
+        already = !!condition();
+      } catch {
+        already = false;
+      }
+      if (already) throw new Error(`true before the action, proves nothing: ${what}`);
+    }
+    await action();
+    return waitFor(what, () => (!change || change() !== before) && condition(), timeoutMs);
+  }
+
+  /** Something stays as it is for `ms`. Only after the positive signal was waited for (see CLAUDE.md). */
+  async function holds(what, condition, ms) {
+    const start = Date.now();
+    while (Date.now() - start < ms) {
+      let fine = false;
+      try {
+        fine = !!condition();
+      } catch {
+        fine = false;
+      }
+      if (!fine) {
+        const bar = document.querySelector('app-status-bar')?.innerText.replace(/\n/g, ' | ');
+        throw new Error(`did not hold: ${what} STATUS: ${bar}`);
+      }
+      await sleep(30);
+    }
+    await report(`PASS ${what}`);
+  }
+
+  /** Reads a value from the backend until it is as expected: one read right after a DOM signal can be too early. */
+  async function readUntil(what, read, fine, timeoutMs = 15000) {
+    const start = Date.now();
+    for (;;) {
+      const value = await read();
+      if (fine(value)) return value;
+      if (Date.now() - start > timeoutMs) {
+        throw new Error(`timeout: ${what}: ${JSON.stringify(value).slice(0, 500)}`);
+      }
+      await sleep(50);
     }
   }
 
@@ -737,42 +802,51 @@
     await waitFor('F resumes', () => status().includes('Live'));
 
     // Level filter: toggle, only this, this and worse, presets.
-    click(chip('INFO'));
-    await waitFor(
+    // Each of these waits for the view of the new filter (`viewGen`) and for its rows: rows still loading
+    // have no level class, so "no INFO row" alone would hold before the filter is there.
+    const drawn = () => rows().length > 0 && !$('.lt-cell.loading');
+    await actAndWait(
       'INFO off',
-      () => chip('INFO').getAttribute('aria-pressed') === 'false' && !$('.lt-cell.lv-INFO'),
-    );
-    click(button('WARN+'));
-    await waitFor(
-      'WARN+ shows no INFO',
-      () => rows().length && !$('.lt-cell.lv-INFO') && !!$('.lt-cell.lv-WARN'),
-    );
-    click(chip('ERROR'), { altKey: true });
-    await waitFor(
-      'alt-click only ERROR, with its stack trace',
+      () => click(chip('INFO')),
       () =>
+        chip('INFO').getAttribute('aria-pressed') === 'false' &&
+        drawn() &&
+        !$('.lt-cell.lv-INFO'),
+      { change: viewGen },
+    );
+    await actAndWait(
+      'WARN+ shows no INFO',
+      () => click(button('WARN+')),
+      () => drawn() && !$('.lt-cell.lv-INFO') && !!$('.lt-cell.lv-WARN'),
+      { change: viewGen },
+    );
+    await actAndWait(
+      'alt-click only ERROR, with its stack trace',
+      () => click(chip('ERROR'), { altKey: true }),
+      () =>
+        drawn() &&
         rows().every((r) => r.classList.contains('lv-ERROR')) &&
         rowTexts().some((t) => t.includes('Caused by')),
     );
-    chip('WARN').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
-    await waitFor(
+    await actAndWait(
       'double click: WARN and worse',
+      () => chip('WARN').dispatchEvent(new MouseEvent('dblclick', { bubbles: true })),
       () => !!$('.lt-cell.lv-WARN') && !!$('.lt-cell.lv-FATAL') && !$('.lt-cell.lv-INFO'),
     );
     await act('append 2026-01-15T10:02:00.000+01:00 ERROR 4711 --- [t] a.B : after the filter');
     await waitFor('filter grows incrementally', () =>
       rowTexts().some((t) => t.includes('after the filter')),
     );
-    click(button('Alle'));
-    await waitFor(
+    await actAndWait(
       'all levels again',
+      () => click(button('Alle')),
       () => status().includes('Zeilen') && !status().includes(' von '),
     );
 
     // Search: filter mode, regex, invalid regex, highlight mode with navigation.
-    search('order');
-    await waitFor(
+    await actAndWait(
       'search filters',
+      () => search('order'),
       () =>
         status().includes(' von ') && rowTexts().some((t) => t.includes('Could not place order')),
     );
@@ -782,33 +856,60 @@
     await waitFor('match is marked', () =>
       $$('.lt-cell .hit').some((h) => /order/i.test(h.textContent)),
     );
-    click(button('.*'));
-    search('or+der\\s+\\d+');
-    await waitFor('regex search', () => rowTexts().some((t) => t.includes('Order 4242')));
+    // "order" as plain text also finds `/api/orders?id=42`, the regex does not: that row has to go.
+    await actAndWait(
+      'regex search',
+      () => {
+        click(button('.*'));
+        search('or+der\\s+\\d+');
+      },
+      () =>
+        rowTexts().some((t) => t.includes('Order 4242')) &&
+        !rowTexts().some((t) => t.includes('/api/orders')),
+    );
     search('(');
     await waitFor('invalid regex is reported', () =>
       $('input[type=search]').classList.contains('invalid'),
     );
     click(button('.*'));
-    search('bulk line 10');
+    // The search field applies its text after a delay. Everything below builds on this text: a click on
+    // "next" before it is applied would search the text before, and its hit is dropped when the new one comes.
+    await actAndWait(
+      'the new search text filters',
+      () => search('bulk line 10'),
+      () => rows().length > 0 && rowTexts().every((t) => t.includes('bulk line 10')),
+    );
     const mode = $('select[aria-label=Suchmodus]');
-    mode.value = 'highlight';
-    mode.dispatchEvent(new Event('change', { bubbles: true }));
-    await waitFor('highlight mode shows everything', () => !status().includes(' von '));
+    await actAndWait(
+      'highlight mode shows everything',
+      () => {
+        mode.value = 'highlight';
+        mode.dispatchEvent(new Event('change', { bubbles: true }));
+      },
+      () => !status().includes(' von '),
+      { change: viewGen },
+    );
     click($('button[title^="Nächster"]'));
     await waitFor('next match scrolls to it', () =>
       $$('.lt-cell.current-hit').some((r) => r.textContent.includes('bulk line 10')),
     );
     await waitFor('follow stopped by the jump', () => status().includes('Pausiert'));
-    const firstHit = $('.lt-gutter.current-hit').textContent;
-    click($('button[title^="Nächster"]'));
-    await waitFor(
-      'next match moves on',
-      () => $('.lt-gutter.current-hit')?.textContent !== firstHit,
+    // The gutter is drawn with the row; read once right after the cell showed up it may not be there yet.
+    const firstHit = await waitFor(
+      'the hit is marked in the gutter',
+      () => $('.lt-gutter.current-hit')?.textContent,
     );
-    click($('button[title^="Vorheriger"]'));
-    await waitFor(
+    await actAndWait(
+      'next match moves on',
+      () => click($('button[title^="Nächster"]')),
+      () => {
+        const hit = $('.lt-gutter.current-hit');
+        return !!hit && hit.textContent !== firstHit;
+      },
+    );
+    await actAndWait(
       'previous match goes back',
+      () => click($('button[title^="Vorheriger"]')),
       () => $('.lt-gutter.current-hit')?.textContent === firstHit,
     );
     search('');
@@ -964,6 +1065,10 @@
     pointer(dragCell, 'mousedown');
     pointer(dragCell, 'mousemove', 30, { buttons: 1 });
     if (await frame()) {
+      // A user lets go many frames after the move. Here the release follows at once, so wait until the table
+      // has reported the drag: under load its frame can come after the one awaited above, and the release
+      // would then count as a plain click.
+      await waitFor('the table sees the drag', () => window.__lcTable.dragged());
       markRange(dragCell);
       pointer(dragCell, 'mouseup', 30);
       pointer(dragCell, 'click', 30);
@@ -1166,16 +1271,17 @@
       'M sets a bookmark: flag in the gutter and on the ruler',
       () => $('.lt-gutter.bookmark')?.dataset.line === '0' && pin('bookmark')?.line === 0,
     );
-    press('e');
-    // The first error is on screen already: the jump keeps the top line, give its answer time to arrive.
-    await sleep(300);
-    await waitFor(
+    // The first error is on screen already and the jump keeps the top line: only the count of jumps tells
+    // that its answer has arrived. A second `E` sent before that would start from the same place.
+    await actAndWait(
       'E goes to the first error, the view stays at the top',
+      () => press('e'),
       () => errorHeadInView() && topLine() === 0,
+      { change: jumps },
     );
-    press('e');
-    await waitFor(
+    await actAndWait(
       'E again: the FATAL entry, below the stack trace',
+      () => press('e'),
       () => topLine() === 9 && rows().some((r) => r.classList.contains('lv-FATAL')),
     );
     press('e');
@@ -1491,7 +1597,9 @@
     await report(
       `PASS worst event loop lag during 3 s at 10k lines/s: ${Math.round(worstLag)} ms (${turns} turns)`,
     );
-    if (worstLag > 250) throw new Error(`event loop blocked for ${Math.round(worstLag)} ms`);
+    // A limit in milliseconds says nothing on a CI runner with two slow cores: the harness holds it on a
+    // developer machine and only reports the value where `CI` is set.
+    await act(`expectlag ${Math.round(worstLag)}`);
     await tail.check('all levels');
     press('d');
     press('Escape');
@@ -1518,23 +1626,31 @@
 
     // Freeze: nothing moves while the file grows, a filter still works, resuming catches up.
     const pill = () => $('app-status-bar .pill').textContent.trim();
-    click(button('⏸'));
-    await waitFor('frozen', () => pill() === 'Eingefroren' && button('▶') && $('.tab .frozen'));
-    await sleep(300);
+    // The picture to hold has to be complete first: rows of "Alle" that arrive after the freeze would
+    // change it once and for all.
+    await waitFor('every row is drawn before the freeze', () => drawn());
+    await actAndWait(
+      'frozen',
+      () => click(button('⏸')),
+      () => pill() === 'Eingefroren' && button('▶') && $('.tab .frozen'),
+    );
     const heldLines = lineCount();
     const heldRows = rowTexts().join();
-    await act('rate 2000 2');
-    await waitFor('waiting bytes are shown', () => status().includes('warten'));
-    await sleep(600);
-    await waitFor('line count holds', () => lineCount() === heldLines);
-    await waitFor('rows hold', () => rowTexts().join() === heldRows);
+    await actAndWait(
+      'waiting bytes are shown',
+      () => act('rate 2000 2'),
+      () => status().includes('warten'),
+    );
+    // The file grows now (the bytes wait): from here on nothing may move.
+    await holds('line count holds', () => lineCount() === heldLines, 600);
+    await holds('rows hold', () => rowTexts().join() === heldRows, 300);
     // Updates keep coming in a freeze (the file grows), but the picture stays: nothing is drawn. Every draw
     // rebuilds the visible cells, and one between mousedown and mouseup swallows the table's click.
     const drawsFrozen = window.__lcTable.drawTimes.length;
-    await sleep(800);
-    await waitFor(
+    await holds(
       'a freeze draws nothing while the file grows',
       () => window.__lcTable.drawTimes.length === drawsFrozen && status().includes('warten'),
+      800,
     );
     click(button('ERROR+'));
     await waitFor(
@@ -1659,7 +1775,6 @@
     await waitFor('K freezes', () => pill() === 'Eingefroren');
     press('k');
     await waitFor('K resumes', () => pill() !== 'Eingefroren');
-    await sleep(800);
     await act('expectsettings "keymap"|"TOGGLE_FREEZE"|"K"');
     press('k', { metaKey: true, shiftKey: true });
     await waitFor(
@@ -1795,17 +1910,12 @@
     await waitFor('the hint is gone once seen', () => !fieldHint());
     click(button('Ausgewählte übernehmen'));
     await waitFor('rules listed in the dialog', () => $$('app-fields-dialog tr.rule').length === 3);
-    let fieldSet = await metricsColumns();
-    const fieldKinds = Object.fromEntries(
-      fieldSet.columns.filter((c) => c.rule).map((c) => [c.id, c.kind]),
-    );
-    if (
-      fieldKinds.cpu !== 'percent' ||
-      fieldKinds.mem !== 'size' ||
-      fieldKinds.took !== 'duration'
-    ) {
-      throw new Error(`extracted kinds: ${JSON.stringify(fieldKinds)}`);
-    }
+    const kindsOf = (set) =>
+      Object.fromEntries(set.columns.filter((c) => c.rule).map((c) => [c.id, c.kind]));
+    let fieldSet = await readUntil('extracted kinds', metricsColumns, (set) => {
+      const kinds = kindsOf(set);
+      return kinds.cpu === 'percent' && kinds.mem === 'size' && kinds.took === 'duration';
+    });
     const [firstHead] = await invoke('get_lines', {
       sessionId: metricsId,
       view: 'all',
@@ -1854,8 +1964,11 @@
     );
     click($('app-fields-dialog button[aria-label="Regel cpu löschen"]'));
     await waitFor('rule deleted: two left', () => $$('app-fields-dialog tr.rule').length === 2);
-    fieldSet = await metricsColumns();
-    if (fieldSet.columns.some((c) => c.id === 'cpu')) throw new Error('cpu column still there');
+    fieldSet = await readUntil(
+      'the cpu column is gone',
+      metricsColumns,
+      (set) => !set.columns.some((c) => c.id === 'cpu'),
+    );
     await report('PASS rule deleted, its column is gone');
 
     // From marked text, the form way: the marked value typed in, pattern built, preview, created.
@@ -1893,10 +2006,11 @@
       'rule from the marked text listed',
       () => $$('app-fields-dialog tr.rule').length === 3,
     );
-    fieldSet = await metricsColumns();
-    const createdColumn = fieldSet.columns.find((c) => c.id === 'cpu');
-    if (createdColumn?.kind !== 'percent')
-      throw new Error(`created column: ${JSON.stringify(createdColumn)}`);
+    fieldSet = await readUntil(
+      'created column',
+      metricsColumns,
+      (set) => set.columns.find((c) => c.id === 'cpu')?.kind === 'percent',
+    );
     await report('PASS column from marked text through the form');
     $('app-fields-dialog dialog').close();
     await waitFor('fields dialog closed again', () => !$('app-fields-dialog'));
@@ -1976,7 +2090,8 @@
     await act('genstart');
     const start = Date.now();
     let stats;
-    while (Date.now() - start < 20000) {
+    // The limit only catches a stall: a slow runner takes longer for the same lines.
+    while (Date.now() - start < 60000) {
       stats = await invoke('get_stats', { sessionId: mergeId });
       if (stats.sources[0].lines > 25000 && stats.sources[1].lines > 20) break;
       await sleep(200);
@@ -2247,13 +2362,16 @@
       'the filter tab closes',
       () => !$('.tab.view') && $('.tab.active')?.textContent.includes('dash.log'),
     );
-    if (
-      await dashStats(childView).then(
-        () => true,
-        () => false,
-      )
-    )
-      throw new Error('the view is still open');
+    // The tab is gone before the backend has closed the view: ask until it is.
+    await readUntil(
+      'the view of the closed tab is gone in the backend',
+      () =>
+        dashStats(childView).then(
+          () => 'still open',
+          () => 'closed',
+        ),
+      (state) => state === 'closed',
+    );
     const afterClose = await dashStats(0);
     await act(
       'appenddash 2026-01-15T10:00:12.000+01:00 ERROR 4711 --- [main] c.a.X : after the filter tab',
@@ -2405,8 +2523,10 @@
         b.textContent.trim().startsWith(text),
       );
     while (tabs().length) {
+      // One tab per click: a second click before the first tab is gone would hit the same one.
+      const open = tabs().length;
       click(tabs()[0].parentElement.querySelector('.close'));
-      await sleep(40);
+      await waitFor(`a tab closed, ${open - 1} left`, () => tabs().length < open);
     }
     await waitFor(
       'every tab closed before the workspace test',
@@ -2534,8 +2654,10 @@
     press('t');
     await waitFor('columns again', () => columnsOn());
     while (tabs().length) {
+      // One tab per click: a second click before the first tab is gone would hit the same one.
+      const open = tabs().length;
       click(tabs()[0].parentElement.querySelector('.close'));
-      await sleep(40);
+      await waitFor(`a tab closed, ${open - 1} left`, () => tabs().length < open);
     }
     await waitFor('start screen lists the workspace with its symbol', () =>
       $$('app-start-screen .recent').some(
@@ -2838,7 +2960,7 @@
     const dbPath = `${wsDir}${wsSep}logs.db`;
     await waitFor('SQLite asks for a file, not a server', () => $('#db-path') && !$('#db-host'));
     setDbField('#db-path', dbPath);
-    await sleep(50);
+    await waitFor('with a file the tables can be listed', () => !$('#db-tables').disabled);
     click($('#db-tables'));
     await waitFor('„Tabelle wählen“ lists the tables', () => $('#db-table')?.options.length === 2);
     setDbField('#db-table', '0');
@@ -2852,8 +2974,12 @@
       'a DELETE cannot be previewed or opened',
       () => $('#db-preview-button').disabled && $('#db-start').disabled,
     );
-    setDbField('#db-query', 'SELECT * FROM logs; DELETE FROM logs');
-    await sleep(50);
+    // The dialog only knows writing words: this one it lets through, the backend refuses it.
+    await actAndWait(
+      'two statements pass the check of the dialog',
+      () => setDbField('#db-query', 'SELECT * FROM logs; DELETE FROM logs'),
+      () => !$('#db-preview-button').disabled,
+    );
     click($('#db-preview-button'));
     await waitFor('a second statement is refused by the backend', () =>
       $('#db-error')?.textContent.includes('Nur eine Anweisung'),
@@ -2950,7 +3076,7 @@
     setRemField('#remote-port', String(sftpPort));
     setRemField('#remote-user', 'e2e');
     click($('#remote-auth-password'));
-    await sleep(50);
+    await waitFor('with host and user the folder can be browsed', () => !$('#remote-browse').disabled);
     click($('#remote-browse'));
     await waitFor(
       'unknown host key: fingerprint shown, explicit confirmation needed',
@@ -3105,7 +3231,6 @@
       const cell = $$('.lt-cell.lv-ERROR')[0];
       return !cell || getComputedStyle(cell).backgroundColor === rgbOf(ONE_DARK.errorBg);
     });
-    await sleep(800);
     await act('expectsettings "themeSelection"|"fixed"|"one-dark"');
 
     // Prompt 022: AI control over MCP. On in the settings, the harness drives the real sidecar; the window shows
@@ -3171,7 +3296,6 @@
     $('app-settings-dialog dialog').close();
     await sleep(300);
     await act('mcp off');
-    await sleep(1500);
     await act('expectsettings "mcp"|"maskSecrets"|"skipConfirm"');
 
     await report('DONE');

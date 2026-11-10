@@ -34,6 +34,8 @@
 | README-Tabelle der Kürzel | `node scripts/keymap-table.mjs` (aus den Keymaps; `npm run check` prüft sie) |
 | KI-Steuerung (MCP) | `cd src-tauri && cargo build -p lc-mcp` (Sidecar `log-commander-mcp` neben die Debug-App); von Hand `node scripts/e2e/mcp-client.mjs src-tauri/target/debug/log-commander-mcp get_workspace '{}'`; Tools geändert: `LC_MCP_SNAPSHOT=1 cargo test -p lc-mcp the_schemas_match_the_snapshot`, Grenzen in `features/mcp/mcp-limits.ts` mit (`scripts/mcp-limits.test.mjs`) |
 | Sidecar für Releases | `node scripts/mcp-sidecar.mjs [triple]` nach `src-tauri/binaries/`, dann `tauri build --config src-tauri/tauri.sidecar.conf.json` (macht der Release-Workflow) |
+| Flackernde Tests suchen | `node scripts/flaky-hunt.mjs [--runs 20] [--only <Binary>] [--filter <Test>]` (alle Rust-Test-Binaries gleichzeitig, 2× Kerne Test-Threads, CPU-Last dazu; sammelt jeden Fehlschlag mit Meldung). In der CI: Workflow „CI repeat“ von Hand starten (5× je Plattform) |
+| Linux-e2e im Container | Anhang in `prompts/023-ci-stabil.md` (nach Abschluss unter `prompts/done/`); immer mit `-e LANG=C.UTF-8` wie die GitHub-Runner |
 | Icons neu | `npx tauri icon src-tauri/icons/source/app-icon.svg -o src-tauri/icons` (danach `android/`, `ios/` löschen) |
 
 ## Layout
@@ -42,7 +44,7 @@
 src/                         Angular 22 (zoneless, Signals, OnPush, Standalone)
   styles.css                 Design-Tokens dark/light (einzige Stelle für Farben), Blöcke @theme … @end prüft check-contrast
   app/app.ts                 Root: Layout, Öffnen (Dialog, Menü, D&D, CLI), globale Kürzel
-  app/core/backend/call.ts   einzige Stelle mit invoke()
+  app/core/backend/call.ts   einzige Stelle mit invoke(); nummeriert ändernde Befehle (call-order.ts, Prompt 023)
   app/core/errors/           AppError (Codes = Rust error.rs), Texte
   app/core/log/              LogApi, DTOs (= Rust model.rs)
   app/core/settings/         SettingsService (tauri-plugin-store), reine Merge-Logik
@@ -92,6 +94,8 @@ src-tauri/src/               Rust; alles außer commands.rs und lib.rs ist frei 
   filter.rs                  gefilterte Zeilenliste (inkrementell), Textsuche
   timeline.rs                TimeSummary (014): Zeiten und Einträge je 256 Zeilen, Zeit-Eimer, Achse, Lücken, Ausdruck je Eintrag
   filter_expr.rs             Filterbaum: FilterExpr (UND/ODER/NICHT, Text, Level, Feld, Zeit, Abschnitt, Zeilen) kompiliert, Quellenmaske
+  order.rs                   Reihenfolge der ändernden Befehle (023): höchste Nummer je Art, `superseded`
+  test_support.rs            nur Tests: `wait_until` und Verwandte, auch von Integrationstests und lc-mcp eingebunden
   overview.rs                LevelSummary: Level-Bits je Abschnitt für Overview Ruler und find_level (max. 64 KB)
   merge.rs                   mehrere Dateien als eine Sitzung: Merger (rein), Worker (Folgen, Rotation, Haltepuffer)
   encoding.rs, platform.rs   Encodings, ANSI; Share-Flags und Datei-Identität je OS
@@ -389,6 +393,17 @@ samples/                     Beispiel-Logs
   200 Treffer, 500 Eimer, SQL 1000 Zeilen in der Antwort/64 KB, `wait_for_lines` 120 s/50 Zeilen, Notiz 1996 Zeichen
   (+„KI: “ = 2000), `propose_open` 16 Dateien, Filter/SQL warten 30 s, Vorschlag 5 min, Verlauf 50 Aufrufe nur im
   Speicher.
+- **Reihenfolge der Befehle (Prompt 023):** Tauri startet jeden `async`-Befehl als eigenen Task, zwei Aufrufe laufen in
+  beliebiger Reihenfolge. Zwei Mittel, beide in `order.rs`: (1) `call.ts` nummeriert die Befehle mit „letzter gewinnt“
+  (`call-order.ts`: `set_filter`, `set_profile`, `set_frozen`, `set_keep_on_rotate`, `set_spool_keep`,
+  `set_custom_profiles`, `set_extract_rules`); das Backend merkt je Art (Filter je Ansicht) die höchste Nummer und
+  beantwortet eine ältere mit `superseded`, die das Frontend still übergeht. (2) `LogSession.order` ist zugleich die
+  Sperre der ändernden Befehle (`set_view_filter`, `open_view`, `close_view`, `set_profile`, `refresh_rules`): Ketten
+  werden unter ihr kompiliert **und** geschrieben, sonst überschreibt der Filter eines Tabs den eines anderen Tabs
+  derselben Datei mit dem Stand von vorher. Sperrfolge `order` → `data`; Tail, Merge und Jobs nehmen `order` nie.
+  Ein echtes FIFO im Backend geht nicht (schon der Start der Tasks ist ungeordnet). Die Kette je Tab im Frontend
+  (`applyFilter`) bleibt, sie spart verworfene Filter-Jobs. Neue Befehle mit „letzter gewinnt“: in `ORDERED_COMMANDS`
+  eintragen und im Backend `Order::admit` unter der Sperre rufen.
 - **Tastenkürzel nur über Katalog und Keymaps (Prompt 021).** Neue Kürzel: Aktion in `action-catalog.ts`, Default in
   `keymaps/*.json`, Handler per `ActionService.register`, nie ein eigener `keydown`-Handler am `document`. Lokale Tasten von
   Widgets (Baum, Zeitstrahl, Splitter, Panels, Menüs, Dialoge, Diagramm) bleiben am Element; der Dispatcher lässt `view`-Aktionen
@@ -398,6 +413,21 @@ samples/                     Beispiel-Logs
   Der Lazy-Chunk `engine.ts` hält das Startbundle unter 1 MB: bis er geladen ist (ms nach dem Start), tun Tasten nichts.
 
 ## Arbeitsweise
+
+**Tests, die warten (Prompt 023).** Die CI-Runner haben 2–3 langsame Kerne, Tests laufen parallel. Deshalb:
+
+- **Nie eine feste Pause und danach eine Annahme** über einen anderen Thread. Auf den Zustand selbst warten:
+  Rust `test_support::wait_until(what, || …)` (60 s, `LC_TEST_TIMEOUT`; Integrationstests binden die Datei per
+  `#[path = "../src/test_support.rs"]` ein), e2e `waitFor`.
+- **Die Bedingung muss vor der Aktion falsch sein.** Sonst besteht das Warten auf dem alten Zustand und die Prüfung
+  danach liest zu früh. e2e: `actAndWait(what, action, condition)` wirft, wenn sie vorher schon gilt; wo das Bild
+  vorher gleich aussehen kann (Filter, Sprung), `{ change: viewGen }` bzw. `jumps` mitgeben (Attribute an
+  `app-log-table-view`). „Bleibt so“ erst nach dem positiven Signal prüfen: `holds()` bzw. `stays_false()`.
+- **Zeitgrenzen nur gegen Hänger**, nie als Leistungsprüfung im normalen Lauf (die bleibt in den `measure_`-Tests).
+  Wo eine Dauer der Beweis ist: relativ zu einer im Test gemessenen Basis.
+- **Fakes melden, was sie tun** (`FakeState.hanging`), Tests warten darauf. Prozessweite Größen (Deskriptoren, Ports,
+  Permits) nur auf das eigene Objekt beziehen.
+- Ein flackernder Test wird nicht abgeschwächt oder ignoriert: Ursache suchen, mit `scripts/flaky-hunt.mjs` nachstellen.
 
 Nicht ausführbare Prüfungen im Bericht nennen. Native Dialoge, Menü, Datei-Drop aus dem Finder und die Zwischenablage
 deckt `npm run e2e` nicht ab (nur von Hand prüfbar). Backlog: `docs/roadmap.md`.

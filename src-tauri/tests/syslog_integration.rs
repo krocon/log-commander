@@ -14,8 +14,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-/// Generous: Marc may run the high-load demo next to the tests.
-const TIMEOUT: Duration = Duration::from_secs(30);
+#[path = "../src/test_support.rs"]
+mod test_support;
+use test_support::{wait_until, wait_until_or};
 
 struct Fixture {
     _cache: tempfile::TempDir,
@@ -85,22 +86,89 @@ impl Fixture {
         self.manager.session(info.session_id).unwrap().stats()
     }
 
+    #[track_caller]
     fn wait(&self, info: &SessionInfo, what: &str, done: impl Fn(&SessionUpdate) -> bool) {
-        let start = Instant::now();
-        loop {
-            let stats = self.stats(info);
-            if done(&stats) {
-                return;
-            }
-            assert!(
-                start.elapsed() < TIMEOUT,
-                "timeout waiting for {what}: {:?} lines, epoch {}, {:?}",
-                stats.total_lines,
-                stats.epoch,
-                stats.source_status
+        wait_until_or(
+            what,
+            || {
+                let stats = self.stats(info);
+                format!(
+                    "{:?} lines, epoch {}, {:?}",
+                    stats.total_lines, stats.epoch, stats.source_status
+                )
+            },
+            || done(&self.stats(info)),
+        );
+    }
+
+    /// Datagrams the source has taken from its socket so far, accepted or not.
+    fn taken(&self, info: &SessionInfo) -> u64 {
+        let status = self.stats(info).source_status.unwrap();
+        status.received + status.rejected
+    }
+
+    /// Sends datagrams and waits after every `burst` of them until the source has taken them
+    /// from its socket: the kernel drops datagrams when its receive buffer is full, and how fast
+    /// the receiving thread runs is not what the tests are about.
+    #[track_caller]
+    fn send_udp(
+        &self,
+        info: &SessionInfo,
+        messages: impl Iterator<Item = Vec<u8>>,
+        burst: usize,
+    ) -> u64 {
+        let socket = sender();
+        let port = port_of(info);
+        let before = self.taken(info);
+        let mut sent = 0u64;
+        let taken = |sent: u64| {
+            wait_until_or(
+                "the source to take what was sent",
+                || format!("sent {sent}, {:?}", self.stats(info).source_status),
+                || self.taken(info) - before >= sent,
             );
-            std::thread::sleep(Duration::from_millis(10));
+        };
+        for message in messages {
+            socket.send_to(&message, ("127.0.0.1", port)).unwrap();
+            sent += 1;
+            if sent.is_multiple_of(burst as u64) {
+                taken(sent);
+            }
         }
+        taken(sent);
+        sent
+    }
+
+    /// The text of the last line shown, empty without lines.
+    fn last_text(&self, info: &SessionInfo) -> String {
+        let session = self.manager.session(info.session_id).unwrap();
+        let total = session.stats().total_lines as usize;
+        // The session may start over between the two calls: then there is no such line.
+        session
+            .get_lines(false, total.saturating_sub(1), 1)
+            .ok()
+            .and_then(|mut lines| lines.pop())
+            .map_or_else(String::new, |line| line.text)
+    }
+
+    /// Waits until the session shows a line ending in `end` as its last one: it has read
+    /// everything written so far, and has seen the rotation of the spool if there was one.
+    #[track_caller]
+    fn wait_last(&self, info: &SessionInfo, end: &str) {
+        wait_until_or(
+            &format!("the last line to end in {end:?}"),
+            || {
+                let stats = self.stats(info);
+                format!(
+                    "last {:?}, {} lines, epoch {}, {:?}",
+                    self.last_text(info),
+                    stats.total_lines,
+                    stats.epoch,
+                    stats.source_status
+                )
+            },
+            || self.last_text(info).ends_with(end),
+        );
     }
 
     fn texts(&self, info: &SessionInfo, start: usize, count: usize) -> Vec<(String, Level)> {
@@ -119,21 +187,6 @@ fn sender() -> UdpSocket {
     UdpSocket::bind("127.0.0.1:0").unwrap()
 }
 
-/// Sends with a short pause every `burst` datagrams, so the kernel's receive buffer is not what
-/// limits the test.
-fn send_udp(port: u16, messages: impl Iterator<Item = Vec<u8>>, burst: usize) -> usize {
-    let socket = sender();
-    let mut sent = 0;
-    for (i, message) in messages.enumerate() {
-        socket.send_to(&message, ("127.0.0.1", port)).unwrap();
-        sent += 1;
-        if (i + 1) % burst == 0 {
-            std::thread::sleep(Duration::from_millis(2));
-        }
-    }
-    sent
-}
-
 #[test]
 fn ten_thousand_udp_messages_arrive_with_levels_and_fields() {
     let fx = fixture();
@@ -145,13 +198,12 @@ fn ten_thousand_udp_messages_arrive_with_levels_and_fields() {
         info.update.source_status.as_ref().unwrap().state,
         SourceState::Listening
     ));
-    let port = port_of(&info);
     let messages = (0..10_000).map(|i| {
         // Severities cycle: 3 = ERROR, 4 = WARN, 6 = INFO (facility 1: +8).
         let pri = 8 + [3, 4, 6][i % 3];
         format!("<{pri}>Oct 11 22:14:15 host app[{i}]: message {i}\n").into_bytes()
     });
-    send_udp(port, messages, 200);
+    fx.send_udp(&info, messages, 200);
     fx.wait(&info, "10 000 lines", |s| s.total_lines >= 10_000);
     let stats = fx.stats(&info);
     assert_eq!(stats.total_lines, 10_000);
@@ -255,22 +307,25 @@ fn closing_stops_the_listener_and_deletes_the_spool() {
     let info = fx.open(udp_config(Protocol::Both), false);
     let port = port_of(&info);
     let dir = spool_dir(&info);
-    send_udp(port, std::iter::once(b"<14>x".to_vec()), 1);
+    fx.send_udp(&info, std::iter::once(b"<14>x".to_vec()), 1);
     fx.wait(&info, "1 line", |s| s.total_lines >= 1);
     assert!(dir.join("spool.log").exists());
     fx.manager.close(info.session_id).unwrap();
     assert!(!dir.exists(), "spool deleted");
-    // The ports are free again.
-    UdpSocket::bind(("127.0.0.1", port)).unwrap();
-    TcpListener::bind(("127.0.0.1", port)).unwrap();
+    // The ports are free again (the system may need a moment to hand them out anew).
+    wait_until("the UDP port to be free", || {
+        UdpSocket::bind(("127.0.0.1", port)).is_ok()
+    });
+    wait_until("the TCP port to be free", || {
+        TcpListener::bind(("127.0.0.1", port)).is_ok()
+    });
 }
 
 #[test]
 fn a_kept_spool_survives_closing() {
     let fx = fixture();
     let info = fx.open(udp_config(Protocol::Udp), false);
-    let port = port_of(&info);
-    send_udp(port, std::iter::once(b"<14>keep me".to_vec()), 1);
+    fx.send_udp(&info, std::iter::once(b"<14>keep me".to_vec()), 1);
     fx.wait(&info, "1 line", |s| s.total_lines >= 1);
     let session = fx.manager.session(info.session_id).unwrap();
     session.set_spool_keep(true).unwrap();
@@ -342,7 +397,7 @@ fn the_sender_filter_rejects_and_counts() {
         },
         false,
     );
-    send_udp(port_of(&info), (0..5).map(|_| b"<14>x".to_vec()), 5);
+    fx.send_udp(&info, (0..5).map(|_| b"<14>x".to_vec()), 5);
     fx.wait(&info, "rejected", |s| {
         s.source_status.as_ref().unwrap().rejected == 5
     });
@@ -363,16 +418,16 @@ fn the_spool_rotates_and_stays_within_its_limit() {
     let mut max_bytes = 0u64;
     let mut sent = 0u64;
     for i in 0..600 {
+        let message = format!("<14>rotation message {i:05}");
         socket
-            .send_to(
-                format!("<14>rotation message {i:05}").as_bytes(),
-                ("127.0.0.1", port),
-            )
+            .send_to(message.as_bytes(), ("127.0.0.1", port))
             .unwrap();
         sent += 1;
         if i % 20 == 19 {
-            // Let the tail follow each rotation (it notices them by polling).
-            std::thread::sleep(Duration::from_millis(30));
+            // The tail notices a rotation by polling and sees only the newest file: it has to
+            // follow each rotation to count the files it holds. 20 lines fit a file three times,
+            // so at most one rotation lies between two waits.
+            fx.wait_last(&info, &message);
             let (files, bytes) = std::fs::read_dir(&dir)
                 .unwrap()
                 .flatten()
@@ -389,54 +444,39 @@ fn the_spool_rotates_and_stays_within_its_limit() {
     });
     assert!(max_files <= 3, "{max_files} files");
     assert!(max_bytes <= 3 * 4096, "{max_bytes} bytes");
-    // ~60 bytes per line, ~68 lines per file, 600 lines: rotated and started over at least once,
-    // and the newest line is shown.
-    let session = fx.manager.session(info.session_id).unwrap();
-    let start = Instant::now();
-    loop {
-        let stats = fx.stats(&info);
-        let last = match stats.total_lines {
-            0 => String::new(),
-            n => session.get_lines(false, n as usize - 1, 1).unwrap()[0]
-                .text
-                .clone(),
-        };
-        if stats.epoch > 0 && last.ends_with("rotation message 00599") {
-            assert!(stats.total_lines < 600, "{} lines", stats.total_lines);
-            break;
-        }
-        assert!(
-            start.elapsed() < TIMEOUT,
-            "epoch {}, last {last}",
-            stats.epoch
-        );
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    // ~60 bytes per line, ~68 lines per file, 600 lines: rotated eight times. The session holds
+    // at most 3 files, so it started over at least once, and the newest line is shown.
+    fx.wait_last(&info, "rotation message 00599");
+    let stats = fx.stats(&info);
+    assert!(stats.epoch > 0, "epoch {}", stats.epoch);
+    assert!(stats.total_lines < 600, "{} lines", stats.total_lines);
 }
 
 #[test]
 fn freeze_holds_the_view_while_the_spool_keeps_receiving() {
     let fx = fixture();
     let info = fx.open(udp_config(Protocol::Udp), false);
-    let port = port_of(&info);
-    send_udp(
-        port,
+    fx.send_udp(
+        &info,
         (0..10).map(|i| format!("<14>before {i}").into_bytes()),
         10,
     );
     fx.wait(&info, "10 lines", |s| s.total_lines == 10);
     let session = fx.manager.session(info.session_id).unwrap();
     session.set_frozen(true);
-    send_udp(
-        port,
+    fx.send_udp(
+        &info,
         (0..20).map(|i| format!("<14>during {i}").into_bytes()),
         20,
     );
+    // Written to the file and seen by the frozen worker: it tells what waits and reads nothing.
     fx.wait(&info, "spooled while frozen", |s| {
-        s.source_status.as_ref().unwrap().spooled == 30
+        s.source_status.as_ref().unwrap().spooled == 30 && s.pending_bytes > 0
     });
-    std::thread::sleep(Duration::from_millis(400));
-    assert_eq!(fx.stats(&info).total_lines, 10);
+    assert!(test_support::stays_false(
+        Duration::from_millis(400),
+        || { fx.stats(&info).total_lines != 10 }
+    ));
     session.set_frozen(false);
     fx.wait(&info, "caught up", |s| s.total_lines == 30);
 }
@@ -537,8 +577,8 @@ fn a_spool_merges_with_a_file_by_time_of_receipt() {
     use log_commander_lib::merge::{inspect, MergeSource};
     let fx = fixture();
     let info = fx.open(udp_config(Protocol::Udp), false);
-    send_udp(
-        port_of(&info),
+    fx.send_udp(
+        &info,
         (0..5).map(|i| format!("<11>Nov  7 10:15:30 host app: received {i}").into_bytes()),
         5,
     );
@@ -608,18 +648,20 @@ fn a_merge_holds_no_more_spool_files_than_the_spool_keeps() {
     fx.wait(&merged, "2 merged lines", |s| s.total_lines == 2);
     // ~68 lines per 4 KB file: 400 lines rotate the spool five times, past its 3 files.
     for i in 0..400 {
+        let message = format!("<14>merge message {i:05}");
         socket
-            .send_to(
-                format!("<14>merge message {i:05}").as_bytes(),
-                ("127.0.0.1", port),
-            )
+            .send_to(message.as_bytes(), ("127.0.0.1", port))
             .unwrap();
         if i % 20 == 19 {
-            std::thread::sleep(Duration::from_millis(30));
+            // The merge notices a rotation by polling, like the tail: it follows each one (at
+            // most one lies between two waits, 20 lines fit a file three times).
+            fx.wait_last(&merged, &message);
         }
     }
     // The merge started over (new epoch) instead of holding deleted spool files.
-    fx.wait(&merged, "merge started over", |s| s.epoch > 0);
+    fx.wait_last(&merged, "merge message 00399");
+    let epoch = fx.stats(&merged).epoch;
+    assert!(epoch > 0, "epoch {epoch}");
 }
 
 /// A TCP source with short limits (prompt 016, security review: slowloris).
@@ -639,12 +681,12 @@ fn open_tcp(fx: &Fixture, limits: log_commander_lib::sources::syslog::TcpLimits)
         .unwrap()
 }
 
-/// The peer closed the connection (read returns 0 or fails) within a few seconds.
+/// The peer closed the connection (read returns 0 or fails). The limit only ends a hang.
 fn closed_by_peer(stream: &mut TcpStream) -> bool {
     use std::io::Read;
     // Fails (EINVAL on macOS) when the peer reset the socket already: closed, too.
     if stream
-        .set_read_timeout(Some(Duration::from_secs(5)))
+        .set_read_timeout(Some(test_support::timeout()))
         .is_err()
     {
         return true;
@@ -683,10 +725,9 @@ fn idle_tcp_connections_and_unfinished_frames_are_closed() {
     );
     let port = port_of(&info);
     // Idle: nothing sent at all.
+    // That the source closes it is the proof: it does so only after it took the connection, and
+    // by then the count of open connections may be back at 0 already.
     let mut idle = TcpStream::connect(("127.0.0.1", port)).unwrap();
-    fx.wait(&info, "one connection", |s| {
-        s.source_status.as_ref().unwrap().connections == 1
-    });
     assert!(closed_by_peer(&mut idle));
     fx.wait(&info, "slot free again", |s| {
         s.source_status.as_ref().unwrap().connections == 0
@@ -695,12 +736,12 @@ fn idle_tcp_connections_and_unfinished_frames_are_closed() {
     // frame limit, what came is written as cut.
     let mut slow = TcpStream::connect(("127.0.0.1", port)).unwrap();
     slow.write_all(b"1000 <11>slow").unwrap();
-    for _ in 0..8 {
+    // Trickles on until the source has closed the connection (far fewer than the 1000 bytes of
+    // the frame): writing fails then, or the message is there.
+    wait_until("the source to close the slow connection", || {
         std::thread::sleep(Duration::from_millis(100));
-        if slow.write_all(b"x").is_err() {
-            break;
-        }
-    }
+        slow.write_all(b"x").is_err() || fx.stats(&info).total_lines == 1
+    });
     assert!(closed_by_peer(&mut slow));
     fx.wait(&info, "the unfinished frame as a cut message", |s| {
         let st = s.source_status.as_ref().unwrap();
@@ -736,35 +777,42 @@ fn tcp_connections_are_capped_per_sender() {
 
 #[test]
 fn at_the_limit_the_longest_idle_connection_makes_room() {
-    const EVICT_AFTER: Duration = Duration::from_secs(2);
     let fx = fixture();
-    let info = open_tcp(
-        &fx,
-        log_commander_lib::sources::syslog::TcpLimits {
-            max_connections: 2,
-            // Wide enough that a slow CI runner still sees both connections as fresh below.
-            evict_after: EVICT_AFTER,
-            ..limits()
-        },
-    );
+    let two = |evict_after: Duration| {
+        open_tcp(
+            &fx,
+            log_commander_lib::sources::syslog::TcpLimits {
+                max_connections: 2,
+                evict_after,
+                ..limits()
+            },
+        )
+    };
+    // Nobody has been idle long enough (a minute, far longer than this test runs): the new
+    // connection is refused.
+    let info = two(Duration::from_secs(60));
     let port = port_of(&info);
-    let started = std::time::Instant::now();
+    let _first = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    let _second = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    fx.wait(&info, "two connections", |s| {
+        s.source_status.as_ref().unwrap().connections == 2
+    });
+    let mut early = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    assert!(closed_by_peer(&mut early));
+    fx.wait(&info, "the third refused", |s| {
+        let st = s.source_status.as_ref().unwrap();
+        st.rejected == 1 && st.connections == 2
+    });
+
+    // Any idle time is enough: the longest idle connection goes. That is the oldest one, which
+    // never sent anything, not the one that sent after both were open.
+    let info = two(Duration::ZERO);
+    let port = port_of(&info);
     let mut oldest = TcpStream::connect(("127.0.0.1", port)).unwrap();
-    std::thread::sleep(Duration::from_millis(100));
     let mut busy = TcpStream::connect(("127.0.0.1", port)).unwrap();
     fx.wait(&info, "two connections", |s| {
         s.source_status.as_ref().unwrap().connections == 2
     });
-    // Both too fresh: the new one is refused.
-    let mut early = TcpStream::connect(("127.0.0.1", port)).unwrap();
-    assert!(closed_by_peer(&mut early));
-    assert!(
-        started.elapsed() < EVICT_AFTER,
-        "too slow to test the refusal: {:?}",
-        started.elapsed()
-    );
-    // Now the oldest one has been idle long enough.
-    std::thread::sleep(EVICT_AFTER.saturating_sub(started.elapsed()) + Duration::from_millis(300));
     busy.write_all(b"<14>busy\n").unwrap();
     fx.wait(&info, "busy message", |s| s.total_lines == 1);
     let mut new = TcpStream::connect(("127.0.0.1", port)).unwrap();
@@ -776,6 +824,8 @@ fn at_the_limit_the_longest_idle_connection_makes_room() {
     assert!(closed_by_peer(&mut oldest));
     busy.write_all(b"<14>still here\n").unwrap();
     fx.wait(&info, "busy still served", |s| s.total_lines == 3);
+    let status = fx.stats(&info).source_status.unwrap();
+    assert_eq!((status.rejected, status.connections), (0, 2));
 }
 
 #[test]
