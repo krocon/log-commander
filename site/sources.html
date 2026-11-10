@@ -1,0 +1,213 @@
+<!doctype html>
+<!-- Log Commander – product site, sources. See index.html for how the site is built. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sources – Log Commander</title>
+<meta name="description" content="Log Commander reads more than files: receive syslog, follow a file over SSH/SFTP, watch Windows event logs and tail a database table. How each source works and how it stays safe.">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#0f1216" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f4f5f7" media="(prefers-color-scheme: light)">
+<meta property="og:title" content="Sources – Log Commander">
+<meta property="og:image" content="img/syslog.webp">
+<link rel="icon" type="image/png" href="favicon.png">
+<link rel="stylesheet" href="site.css">
+<script src="site.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to the content</a>
+
+<header class="nav">
+  <div class="wrap nav-in">
+    <a class="brand" href="index.html"><img src="img/icon.png" width="30" height="30" alt=""><span>Log Commander</span></a>
+    <nav class="nav-links" aria-label="Pages">
+      <a href="features.html">Features</a>
+      <a href="sources.html" aria-current="page">Sources</a>
+      <a href="ai.html">AI control</a>
+      <a href="keyboard.html">Keyboard</a>
+      <a class="gh" href="https://github.com/krocon/log-commander">GitHub</a>
+      <a class="btn btn-primary btn-sm" href="https://github.com/krocon/log-commander/releases/latest">Download</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <section class="sub-hero" style="--hue:var(--warn)">
+    <div class="wrap">
+      <p class="eyebrow reveal"><b class="lv lv-warn">WARN</b> sources</p>
+      <h1 class="h1 split">Not every log is a file.</h1>
+      <p class="lead reveal">Receive syslog, follow a file on a server, watch Windows events, tail a database table. Each one arrives as lines in a tab, with everything a file has: filters, search, freeze, columns, timeline, dashboard, export, and a merge with a local file by time.</p>
+    </div>
+  </section>
+
+  <nav class="subnav" aria-label="Sources">
+    <div class="wrap">
+      <ul>
+        <li><a href="#how">How it works</a></li>
+        <li><a href="#syslog">Syslog</a></li>
+        <li><a href="#remote">SSH / SFTP</a></li>
+        <li><a href="#winevent">Windows events</a></li>
+        <li><a href="#database">Databases</a></li>
+        <li><a href="#safety">Safety</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <section class="sec-tight" id="how" data-lv="info" data-title="How it works">
+    <div class="wrap">
+      <p class="eyebrow reveal"><b class="lv lv-info">INFO</b> one read path for everything</p>
+      <h2 class="h2 split">A spool, then the same tail.</h2>
+      <p class="lead reveal">A source writes its lines into a spool file in the app’s cache folder. The tab tails that file like any log. Nothing in the index, the filters or the dashboard knows the difference.</p>
+      <div class="minis">
+        <article class="card reveal"><span class="glyph">bounded</span><h3>It cannot fill your disk</h3><p>A spool is at most 2 GB per source by default (64 MB to 8 GB), split into files of 256 MB. Beyond it the oldest file goes.</p></article>
+        <article class="card reveal" style="--d:1"><span class="glyph">escaped</span><h3>Foreign text stays text</h3><p>Control characters, bidi marks and line separators are escaped before a line reaches the spool. One message is one unambiguous line.</p></article>
+        <article class="card reveal" style="--d:2"><span class="glyph">no secrets on disk</span><h3>Passwords stay out</h3><p>Sources are remembered and saved in workspaces without secrets. A workspace never connects by itself.</p></article>
+      </div>
+    </div>
+  </section>
+
+  <div class="wrap">
+    <article class="feature reveal" id="syslog" data-lv="warn" data-title="Syslog">
+      <div class="text">
+        <p class="eyebrow"><b class="lv lv-warn">WARN</b> ⇣ Syslog :5514</p>
+        <h3>Syslog receiver</h3>
+        <p class="tagline">UDP and TCP, RFC 3164 and 5424.</p>
+        <p>Open a listener and watch what arrives. Each message becomes one line: time of receipt, sender, the message as received. The priority gives the level.</p>
+        <p>TCP speaks RFC 6587 with octet counting and newline framing. The status bar shows the state and counters: received, dropped, cut, refused.</p>
+        <p>Measured: 100,000 messages per second over UDP without loss, about 0.1 s from receipt to the index.</p>
+        <div class="keys"><kbd>Cmd/Ctrl+Shift+L</kbd></div>
+      </div>
+      <div class="shots">
+        <figure class="win"><div class="win-bar"><i></i><i></i><i></i><span>⇣ Syslog :5514</span></div><img src="img/syslog.webp" width="1600" height="877" alt="Received syslog messages as a table with sender and priority"></figure>
+        <figure class="win"><img src="img/source-dialog.webp" width="1600" height="877" loading="lazy" alt="The dialog to open a syslog source"><figcaption>Only this computer by default. Listening wider needs an explicit tick.</figcaption></figure>
+      </div>
+    </article>
+
+    <article class="feature reveal" id="remote" data-lv="info" data-title="SSH / SFTP">
+      <div class="text">
+        <p class="eyebrow"><b class="lv lv-info">INFO</b> ⇅ host:/var/log/app.log</p>
+        <h3>Remote files over SSH/SFTP</h3>
+        <p class="tagline">Follow a log on a Linux server, live.</p>
+        <p>Pick a host (the ones in <code>~/.ssh/config</code> are offered), log in with the SSH agent, a key file or a password, and browse to the file. Start with the last 50 MB or the whole file.</p>
+        <p>Rotation and truncation on the server are recognised. A broken connection is tried again after 1, 2, 4 … 60 s and continues where it stopped. Several files of one server share one connection.</p>
+        <div class="keys"><kbd>Cmd/Ctrl+Shift+H</kbd></div>
+      </div>
+      <div class="shots">
+        <figure class="win"><div class="win-bar"><i></i><i></i><i></i><span>⇅ web-01:/var/log/app.log</span></div><img src="img/remote.webp" width="1600" height="877" loading="lazy" alt="A remote file followed over SFTP"></figure>
+        <figure class="win"><img src="img/remote-dialog.webp" width="1600" height="877" loading="lazy" alt="The remote dialog with folder browser and host key question"><figcaption>An unknown host key is shown with its SHA256 fingerprint. A changed one ends the connection.</figcaption></figure>
+      </div>
+    </article>
+
+    <article class="feature reveal" id="winevent" data-lv="fatal" data-title="Windows events">
+      <div class="text">
+        <p class="eyebrow"><b class="lv lv-fatal">FATAL</b> Application · System · Security</p>
+        <h3>Windows event logs</h3>
+        <p class="tagline">Live, instead of the slow Event Viewer.</p>
+        <p>Any channel of this computer or of another one. First the events of a period (24 hours by default), then a subscription for new ones. After a broken connection it goes on at the bookmark, without gap or doubles.</p>
+        <p>Each event becomes one JSON line with time, level, provider, event ID and message, so everything works as for any JSON log. Critical is FATAL, audit failure is ERROR. Right click “same event ID” filters on the ID.</p>
+        <p>Only on Windows. On macOS and Linux this source does not appear.</p>
+      </div>
+      <div class="shots">
+        <figure class="win"><div class="win-bar"><i></i><i></i><i></i><span>System</span></div><img src="img/winevent.webp" width="1600" height="877" loading="lazy" alt="Windows events as a table (mock, taken on macOS)"></figure>
+        <figure class="win"><img src="img/winevent-dialog.webp" width="1600" height="877" loading="lazy" alt="The Windows events dialog (mock, taken on macOS)"><figcaption>The app never asks for elevation. For “Security” it tells you which group you need.</figcaption></figure>
+      </div>
+    </article>
+
+    <article class="feature reveal" id="database" data-lv="debug" data-title="Databases">
+      <div class="text">
+        <p class="eyebrow"><b class="lv lv-debug">DEBUG</b> db:public.app_log</p>
+        <h3>Logs from databases</h3>
+        <p class="tagline">A SELECT that keeps running.</p>
+        <p>PostgreSQL, MySQL and MariaDB, SQL Server or a SQLite file. “Choose table” writes the query, “Preview” shows the first 20 rows as they will arrive.</p>
+        <p>Rows come in order of a key column, an id or a time: first the last 1000, then every 2 seconds the new ones. Rows with the same key are neither lost nor doubled.</p>
+        <p>Each row becomes one JSON line. Times in ISO 8601, numbers as numbers.</p>
+        <div class="keys"><kbd>Cmd/Ctrl+Shift+L</kbd> · kind “Database”</div>
+      </div>
+      <div class="shots">
+        <figure class="win"><div class="win-bar"><i></i><i></i><i></i><span>db:public.app_log</span></div><img src="img/database.webp" width="1600" height="877" loading="lazy" alt="A database table as a live log (mock data)"></figure>
+        <figure class="win"><img src="img/database-dialog.webp" width="1600" height="877" loading="lazy" alt="The database dialog with table and preview (mock data)"><figcaption>The query is checked: one SELECT, nothing that writes or acts on the server.</figcaption></figure>
+      </div>
+    </article>
+  </div>
+
+  <section class="sec sec-line" id="safety" data-lv="error" data-title="Safety">
+    <div class="wrap">
+      <p class="eyebrow reveal"><b class="lv lv-error">ERROR</b> refused: host key changed</p>
+      <h2 class="h2 split">Strict where it touches a network.</h2>
+      <p class="lead reveal">A listener takes data from outside. SSH and databases touch credentials and other people’s servers. This is what the app does about it.</p>
+
+      <div class="faq">
+        <details class="reveal" open>
+          <summary>Receiving syslog</summary>
+          <ul>
+            <li><b>Only this computer by default:</b> <code>127.0.0.1</code>, port 5514. Listening on all interfaces needs an explicit tick, and the dialog warns that other computers can then reach the port.</li>
+            <li><b>Sender filter:</b> addresses and networks such as <code>10.0.0.0/8</code>. It is no authentication for UDP, sender addresses can be forged.</li>
+            <li><b>Bounded:</b> 64 KB per message, 64 TCP connections (8 per sender), 8 sources at a time, 32 MB waiting for the disk. When the disk cannot keep up, messages are dropped and counted instead of filling memory.</li>
+            <li><b>Nothing is sent back:</b> no replies, no amplification, no host name lookups. No TLS.</li>
+            <li>Closing the tab stops the listener and deletes the spool, unless you ticked to keep it.</li>
+          </ul>
+        </details>
+        <details class="reveal">
+          <summary>SSH logins and host keys</summary>
+          <ul>
+            <li><b>Host keys</b> are checked against <code>~/.ssh/known_hosts</code> (only read, never written) and the app’s own list. An unknown key is shown with type and SHA256 fingerprint. A changed or revoked key ends the connection. There is no “connect anyway”.</li>
+            <li><b>Logins:</b> SSH agent first, then a key file or a password. Secrets are kept in memory only while the connection lives, and in the system keychain only when you tick it and the login worked. A refused login is not retried, so no account gets locked.</li>
+            <li><b>Only SFTP:</b> no shell, no commands, no port or agent forwarding. Every channel a server tries to open is refused.</li>
+            <li><b><code>~/.ssh/config</code>:</b> <code>Host</code>, <code>HostName</code>, <code>User</code>, <code>Port</code>, <code>IdentityFile</code> and <code>Include</code> are read. <code>ProxyCommand</code> and its relatives are never run.</li>
+            <li>Not supported: ProxyJump, host certificates, Kerberos.</li>
+          </ul>
+        </details>
+        <details class="reveal">
+          <summary>Reading databases</summary>
+          <p><b>Use a read-only database account.</b> Give Log Commander its own user with <code>SELECT</code> on the log table and nothing else. The checks below are a second line, not a replacement: a read-only transaction does not stop <code>SELECT … INTO OUTFILE</code> for an account that has that right.</p>
+          <ul>
+            <li><b>One SELECT:</b> words that write or act on the server, functions with side effects and a second statement are refused, also when hidden behind comments, quotes or dialect quirks.</li>
+            <li><b>Read-only on the server:</b> read-only sessions and transactions for PostgreSQL and MySQL, a transaction that is always rolled back for SQL Server, SQLite opened read-only with an authorizer.</li>
+            <li><b>Limits:</b> 30 s per query, 10,000 rows or 32 MB per batch, 200 columns.</li>
+            <li><b>TLS</b> is on and the certificate checked by default. A stored password is bound to the TLS mode: it is never sent over a weaker connection.</li>
+            <li>SQL Server with SQL login only. No Oracle, no ODBC.</li>
+          </ul>
+        </details>
+        <details class="reveal">
+          <summary>Windows event logs</summary>
+          <ul>
+            <li>“Security” needs administrator rights or the group <i>Event Log Readers</i>. The app never asks for elevation and says so instead.</li>
+            <li>Another computer is read with your Windows identity or with user and password. The password is used for this connect only, or kept in the Windows Credential Manager when ticked.</li>
+            <li>Remote reading needs the firewall rule “Remote Event Log Management” on that computer.</li>
+          </ul>
+        </details>
+        <details class="reveal">
+          <summary>Workspaces from someone else</summary>
+          <p>A <code>.lcw</code> file is checked field by field and never runs anything. Remote files, databases and listeners beyond this computer are listed unticked in the confirmation, a database with its query. Passwords and host keys are always asked for in the dialog.</p>
+        </details>
+      </div>
+      <a class="more reveal" href="https://github.com/krocon/log-commander#receiving-syslog-safely">The full text in the README</a>
+    </div>
+  </section>
+
+  <section class="cta sec-line" id="get" data-lv="info" data-title="Download">
+    <div class="wrap">
+      <p class="prompt reveal">$ echo '&lt;11&gt;test' | nc -u -w0 127.0.0.1 5514</p>
+      <h2 class="h2 split">Send it a line.</h2>
+      <div class="actions reveal">
+        <a class="btn btn-primary" href="https://github.com/krocon/log-commander/releases/latest">Download 1.0 from GitHub</a>
+        <a class="btn btn-ghost" href="ai.html">Next: AI control</a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <ul>
+      <li><a href="https://github.com/krocon/log-commander">Source on GitHub</a></li>
+      <li><a href="https://github.com/krocon/log-commander/issues">Report a problem</a></li>
+      <li><a href="https://github.com/krocon/log-commander/blob/main/LICENSE">MIT license</a></li>
+      <li><a href="https://krocon.de">Imprint and privacy (krocon.de)</a></li>
+    </ul>
+    <p>© Marc Kronberg. This page loads nothing from other servers and sets no cookies.</p>
+  </div>
+</footer>
+</body>
+</html>

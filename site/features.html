@@ -1,0 +1,352 @@
+<!doctype html>
+<!-- Log Commander – product site, all features. See index.html for how the site is built. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Features – Log Commander</title>
+<meta name="description" content="Everything Log Commander does: live tail, levels, columns, filter tree, filter tabs, timeline, overview ruler, dashboard with SQL, merge, export, workspaces and more.">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#0f1216" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f4f5f7" media="(prefers-color-scheme: light)">
+<meta property="og:title" content="Features – Log Commander">
+<meta property="og:image" content="img/filter-tree.webp">
+<link rel="icon" type="image/png" href="favicon.png">
+<link rel="stylesheet" href="site.css">
+<script src="site.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to the content</a>
+
+<header class="nav">
+  <div class="wrap nav-in">
+    <a class="brand" href="index.html"><img src="img/icon.png" width="30" height="30" alt=""><span>Log Commander</span></a>
+    <nav class="nav-links" aria-label="Pages">
+      <a href="features.html" aria-current="page">Features</a>
+      <a href="sources.html">Sources</a>
+      <a href="ai.html">AI control</a>
+      <a href="keyboard.html">Keyboard</a>
+      <a class="gh" href="https://github.com/krocon/log-commander">GitHub</a>
+      <a class="btn btn-primary btn-sm" href="https://github.com/krocon/log-commander/releases/latest">Download</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <section class="sub-hero">
+    <div class="wrap">
+      <p class="eyebrow reveal"><b class="lv lv-info">INFO</b> features</p>
+      <h1 class="h1 split">Everything it does.</h1>
+      <p class="lead reveal">Four chapters: read a log, find the line, see the shape of the whole file, and keep what you found. Click a picture to see it large.</p>
+    </div>
+  </section>
+
+  <nav class="subnav" aria-label="Chapters">
+    <div class="wrap">
+      <ul>
+        <li><a href="#read">Read</a></li>
+        <li><a href="#find">Find</a></li>
+        <li><a href="#see">See</a></li>
+        <li><a href="#keep">Keep</a></li>
+        <li><a href="#comfort">Comfort</a></li>
+        <li><a href="sources.html">Sources →</a></li>
+        <li><a href="ai.html">AI control →</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <!-- ───────────── Read ───────────── -->
+  <section id="read" data-lv="info" data-title="Read">
+    <div class="wrap">
+      <header class="group-head">
+        <p class="eyebrow reveal"><b class="lv lv-info">INFO</b> chapter 1 · read</p>
+        <h2 class="h2 split">A log you can read while it is written.</h2>
+        <p class="lead reveal">Live, coloured, split into fields, and never slower than the process that writes it.</p>
+      </header>
+
+      <article class="feature reveal">
+        <div class="text">
+          <h3>Live tail</h3>
+          <p class="tagline">New lines appear at once.</p>
+          <p>Log Commander notices when a file is emptied (<code>&gt; app.log</code>), rotated (<code>app.log</code> → <code>app.log.1</code>) or disappears and comes back. It never blocks the process that writes.</p>
+          <p>While you are at the end, the view follows. Scroll up and it pauses and counts the new lines.</p>
+          <div class="keys"><kbd>End</kbd> <kbd>F</kbd> follow · <kbd>Space</kbd> pause</div>
+        </div>
+        <figure class="win"><div class="win-bar"><i></i><i></i><i></i><span>app.log</span></div><img src="img/dark.webp" width="1600" height="877" alt="A live log in the dark scheme with level chips, sidebar and timeline"></figure>
+      </article>
+
+      <article class="feature reveal">
+        <div class="text">
+          <h3>Levels and stack traces</h3>
+          <p class="tagline">TRACE to FATAL, each with its colour and a live counter.</p>
+          <p>Click a chip to switch a level, Alt-click to see only that one, double click for that level and worse. <code>WARN+</code> and <code>ERROR+</code> are one click away.</p>
+          <p>Continuation lines inherit the level of their entry. Filtering and selecting treat a stack trace as one unit.</p>
+          <div class="keys"><kbd>E</kbd> next error · <kbd>W</kbd> next warning</div>
+        </div>
+        <figure class="win"><div class="win-bar"><i></i><i></i><i></i><span>app.log · light</span></div><img src="img/light.webp" width="1600" height="877" loading="lazy" alt="The same log in the light scheme"></figure>
+      </article>
+
+      <article class="feature reveal">
+        <div class="text">
+          <h3>Formats and fields</h3>
+          <p class="tagline">Detected from the first lines. No setup.</p>
+          <p>Log4j, Logback and Spring Boot, Python <code>logging</code>, Serilog, syslog, nginx and Apache error logs, JSON Lines (with numeric Pino and Bunyan levels), access logs, W3C/IIS, NLog, Java GC, FIX and logfmt.</p>
+          <p>Each line is split into fields such as time, thread, level, logger and message. An unknown format is inferred. The profile tooltip says how well the format fits: “Log4j · 97 %”. Your own regex with named groups works too, with a live preview.</p>
+        </div>
+        <figure class="win"><div class="win-bar"><i></i><i></i><i></i><span>Fields</span></div><img src="img/fields.webp" width="1600" height="877" loading="lazy" alt="The fields dialog with suggestions, examples and their share"></figure>
+      </article>
+
+      <article class="feature reveal">
+        <div class="text">
+          <h3>Columns</h3>
+          <p class="tagline">A recognised format becomes a table.</p>
+          <p>One column per field, stack traces across the full width. Drag an edge to resize, double click to fit, drag a title to move. The layout is remembered per format.</p>
+          <p>The view stays in file order. One key goes back to the raw lines.</p>
+          <div class="keys"><kbd>T</kbd> columns or raw · <kbd>Shift+F10</kbd> column menu</div>
+        </div>
+        <figure class="win"><div class="win-bar"><i></i><i></i><i></i><span>app.log · extracted fields</span></div><img src="img/extracted.webp" width="1600" height="877" loading="lazy" alt="Columns with extracted measurements"></figure>
+      </article>
+
+      <article class="feature reveal">
+        <div class="text">
+          <h3>Detail panel</h3>
+          <p class="tagline">The whole entry of the selected line.</p>
+          <p>Head line and stack trace below the log, without the cut at the screen edge and whatever the filter hides. Embedded JSON or XML is indented and coloured by its own tokenizer, so 64-bit ids stay exact and fragments work.</p>
+          <p>Click other lines or step with the arrow keys to browse entry by entry.</p>
+          <div class="keys"><kbd>D</kbd> <kbd>Enter</kbd> · double click</div>
+        </div>
+        <figure class="win"><div class="win-bar"><i></i><i></i><i></i><span>app.log · detail</span></div><img src="img/detail.webp" width="1600" height="877" loading="lazy" alt="The detail panel with a formatted entry"></figure>
+      </article>
+
+      <div class="minis">
+        <article class="card reveal"><span class="glyph">500 MB · 5.1 M lines</span><h3>Huge files</h3><p>The backend keeps an index, not the text. First lines after 25 ms, fully indexed in about 2 seconds, 78 MB of index.</p></article>
+        <article class="card reveal" style="--d:1"><span class="glyph">UTF-8 · UTF-16 · Latin-1</span><h3>Encodings</h3><p>UTF-8, UTF-16 by BOM, Latin-1 detection. Invalid bytes never stop it, ANSI colours are removed.</p></article>
+        <article class="card reveal" style="--d:2"><span class="glyph">❄ P</span><h3>Freeze</h3><p>Holds a tab to read in peace. Lines, counts and position stay put while filters and search keep working. Resuming reads everything written in between.</p></article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ───────────── Find ───────────── -->
+  <section id="find" data-lv="warn" data-title="Find">
+    <div class="wrap">
+      <header class="group-head">
+        <p class="eyebrow reveal"><b class="lv lv-warn">WARN</b> chapter 2 · find</p>
+        <h2 class="h2 split">Narrow five million lines down to one.</h2>
+        <p class="lead reveal">Search, a filter tree with real logic, and tabs that remember every step of the way.</p>
+      </header>
+
+      <article class="feature reveal">
+        <div class="text">
+          <h3>Search</h3>
+          <p class="tagline">Filter or highlight. Your choice per search.</p>
+          <p>Regular expressions, case sensitivity, jump between matches. Over 500 MB a full text search takes 0.7 s.</p>
+          <div class="keys"><kbd>Cmd/Ctrl+F</kbd> · <kbd>Enter</kbd> <kbd>Shift+Enter</kbd> matches</div>
+        </div>
+        <figure class="win"><div class="win-bar"><i></i><i></i><i></i><span>app.log · search</span></div><img src="img/search.webp" width="1600" height="877" loading="lazy" alt="A search with highlighted matches"></figure>
+      </article>
+
+      <article class="feature reveal">
+        <div class="text">
+          <h3>Filter tree</h3>
+          <p class="tagline">Conditions in groups, joined with AND or OR.</p>
+          <p>Text or regex, levels, a field (<code>=</code>, contains, regex, <code>&gt;</code>, <code>&lt;</code>, between), a time span, a section between a start and an end marker, line numbers. Each can be negated, switched off or dragged elsewhere.</p>
+          <p>Conditions hold for the whole entry: a request id in the head and “Timeout” in its stack trace match together. A broken regex shows its error right at its condition.</p>
+          <div class="keys"><kbd>I</kbd> filter on marked text · <kbd>Shift+I</kbd> exclude · <kbd>&gt;</kbd> <kbd>&lt;</kbd> section</div>
+        </div>
+        <div class="shots">
+          <figure class="win"><div class="win-bar"><i></i><i></i><i></i><span>app.log · filter tree</span></div><img src="img/filter-tree.webp" width="1600" height="877" loading="lazy" alt="The filter tree with nested groups in the sidebar"></figure>
+        </div>
+      </article>
+
+      <article class="feature reveal">
+        <div class="text">
+          <h3>Filter tabs</h3>
+          <p class="tagline">Drill down: app.log › ERROR › OrderService › 4711.</p>
+          <p>A filter opened as a tab shows the result of its parent and filters further. Each step stays open, so you can go back and work next to it. Change a filter above and every tab below updates live.</p>
+          <p>All tabs of a file share one index, one tail and the freeze. Up to 8 per file.</p>
+          <div class="keys"><kbd>Cmd/Ctrl+Shift+T</kbd> · <kbd>T</kbd> on a filter in the tree</div>
+        </div>
+        <figure class="win"><div class="win-bar"><i></i><i></i><i></i><span>app.log › ERROR › OrderService</span></div><img src="img/drilldown.webp" width="1600" height="877" loading="lazy" alt="Filter tabs as a chain right of their file"></figure>
+      </article>
+
+      <article class="feature reveal">
+        <div class="text">
+          <h3>Fields from the message</h3>
+          <p class="tagline"><span class="mono">cpu=72.3% mem=1.2GB took 340ms</span> become columns.</p>
+          <p>On opening, the app looks at up to 2000 entries and offers what it finds in the status bar. Never as a dialog. Or mark a value and build a rule from it, with a preview of the hits.</p>
+          <p>Types are text, number, percent, duration and size. Units are converted, so <code>took &gt; 500 ms</code> in the filter tree also finds <code>1.2s</code>. The file stays as it is.</p>
+        </div>
+        <figure class="win"><div class="win-bar"><i></i><i></i><i></i><span>Fields</span></div><img src="img/fields.webp" width="1600" height="877" loading="lazy" alt="The fields dialog: suggested fields with examples"></figure>
+      </article>
+
+      <div class="minis">
+        <article class="card reveal"><span class="glyph">G</span><h3>From the filter to the whole log</h3><p>Shows the selected line of a filtered view in the whole log, the search kept as highlighting. Press again and the filter is back at the same line.</p></article>
+        <article class="card reveal" style="--d:1"><span class="glyph">saved filters</span><h3>Filters with a name</h3><p>Save the active filter in the sidebar and apply it to any tab with one click. Saved filters keep their tree.</p></article>
+        <article class="card reveal" style="--d:2"><span class="glyph">right click</span><h3>Quick ways in</h3><p>“Filter on …” on a line, “Filter by Thread = …” on a cell, “Section from here” and “up to here” for the selection.</p></article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ───────────── See ───────────── -->
+  <section id="see" data-lv="error" data-title="See">
+    <div class="wrap">
+      <header class="group-head">
+        <p class="eyebrow reveal"><b class="lv lv-error">ERROR</b> chapter 3 · see</p>
+        <h2 class="h2 split">The shape of the whole file.</h2>
+        <p class="lead reveal">Where the errors are, when they happened, and how often. Before you read a single line.</p>
+      </header>
+
+      <article class="feature reveal">
+        <div class="text">
+          <h3>Timeline</h3>
+          <p class="tagline">Entries over time, stacked by level.</p>
+          <p>A strip above the log shows peaks, bursts of errors and outages. A silence of ten times the usual spacing is hatched and named: “no entries 10:04–10:51”.</p>
+          <p>Click to jump to that time, drag to mark a window and use it as a filter or zoom into it. The wheel zooms too.</p>
+          <div class="keys"><kbd>Z</kbd> · arrows, <kbd>Enter</kbd>, <kbd>+</kbd> <kbd>-</kbd> on the strip</div>
+        </div>
+        <div class="shots">
+          <figure class="win"><div class="win-bar"><i></i><i></i><i></i><span>shop.log · timeline</span></div><img src="img/timeline.webp" width="1600" height="877" loading="lazy" alt="The timeline with a burst of errors, a hatched outage and a marked window"></figure>
+        </div>
+      </article>
+
+      <article class="feature reveal">
+        <div class="text">
+          <h3>Overview ruler</h3>
+          <p class="tagline">Errors, warnings, bookmarks, all at a glance.</p>
+          <p>A narrow bar right of the log. FATAL and ERROR share the left lane, warnings have the right one. The longer a bar, the denser its level there, so a busy log is not one solid colour and a single error is still a mark.</p>
+          <p>Click a mark to go to the next entry from that place. The selection stays.</p>
+          <div class="keys"><kbd>M</kbd> bookmark · <kbd>N</kbd> next bookmark</div>
+        </div>
+        <div class="shots">
+          <figure class="win"><div class="win-bar"><i></i><i></i><i></i><span>busy.log</span></div><img src="img/ruler-dense.webp" width="1600" height="877" loading="lazy" alt="The overview ruler on a busy log, dark"></figure>
+        </div>
+      </article>
+
+      <article class="feature reveal">
+        <div class="text">
+          <h3>Dashboard</h3>
+          <p class="tagline">Charts over time, from SQL.</p>
+          <p>Errors per minute, the error rate, a measurement such as <code>took</code> as mean and maximum, entries per file of a merge. Line, area, bars, stacked bars, pie, table, single value.</p>
+          <p>A small SQLite database is built in the background from the index, one row per entry, never the message. <code>bucket(ts, '1m')</code> groups by minute. Click a point to jump to its first line, a bar without time axis to open a filter tab on it.</p>
+          <p>Queries only read: one statement, at most 10,000 rows and 10 seconds.</p>
+          <div class="keys"><kbd>Cmd/Ctrl+Shift+D</kbd></div>
+        </div>
+        <div class="shots">
+          <figure class="win"><div class="win-bar"><i></i><i></i><i></i><span>app.log · dashboard</span></div><img src="img/dashboard.webp" width="1600" height="877" loading="lazy" alt="A dashboard with six panels"></figure>
+          <figure class="win"><img src="img/dashboard-sql.webp" width="1600" height="877" loading="lazy" alt="A panel with its SQL and the schema of the table"><figcaption>Every panel shows its SQL and the schema to change it.</figcaption></figure>
+        </div>
+      </article>
+
+      <article class="feature reveal">
+        <div class="text">
+          <h3>Sidebar</h3>
+          <p class="tagline">Files, filters and statistics in one tree.</p>
+          <p>The open files with their state (live, new errors, frozen), the active filter of each file and filters saved under a name. Below it, lines per level for the whole file and for the current view.</p>
+          <p>Below 900 px window width it steps aside by itself.</p>
+          <div class="keys"><kbd>Cmd/Ctrl+B</kbd></div>
+        </div>
+        <figure class="win"><div class="win-bar"><i></i><i></i><i></i><span>app.log · sidebar</span></div><img src="img/sidebar.webp" width="1600" height="877" loading="lazy" alt="The sidebar with tree and statistics"></figure>
+      </article>
+    </div>
+  </section>
+
+  <!-- ───────────── Keep ───────────── -->
+  <section id="keep" data-lv="debug" data-title="Keep">
+    <div class="wrap">
+      <header class="group-head">
+        <p class="eyebrow reveal"><b class="lv lv-debug">DEBUG</b> chapter 4 · keep</p>
+        <h2 class="h2 split">Combine, export, hand over.</h2>
+        <p class="lead reveal">What you found should survive the afternoon, and reach the colleague who has to fix it.</p>
+      </header>
+
+      <article class="feature reveal">
+        <div class="text">
+          <h3>Merge files</h3>
+          <p class="tagline">2 to 16 logs in one tab, sorted by timestamp.</p>
+          <p>They read like the log of one process. Each line shows its file as a short name and a colour stripe; chips filter by file. New lines keep coming in live, held back up to a second so the files can catch up.</p>
+          <p>An entry that arrives later is appended and counted, and “sort again” puts it in place.</p>
+          <div class="keys"><kbd>Cmd/Ctrl+Shift+M</kbd></div>
+        </div>
+        <div class="shots">
+          <figure class="win"><div class="win-bar"><i></i><i></i><i></i><span>app.log + worker.log</span></div><img src="img/merge.webp" width="1600" height="877" loading="lazy" alt="Two merged files with colour stripes"></figure>
+          <figure class="win"><img src="img/merge-dialog.webp" width="1600" height="877" loading="lazy" alt="The merge dialog with profile, first and last time per file"><figcaption>The dialog suggests a profile per file and shows its first and last time.</figcaption></figure>
+        </div>
+      </article>
+
+      <div class="minis">
+        <article class="card reveal"><span class="glyph">⤓ Cmd/Ctrl+Shift+E</span><h3>Export</h3><p>The selection, the view or the whole file as text, CSV or JSON Lines. Written in the background with progress, a cancelled export leaves nothing behind. CSV defuses formula cells.</p></article>
+        <article class="card reveal" style="--d:1"><span class="glyph">✎ Shift+M</span><h3>Notes</h3><p>A short note on an entry: a pencil in the gutter, a diamond on the ruler, the text in the detail panel. Like bookmarks, notes belong to the file.</p></article>
+        <article class="card reveal" style="--d:2"><span class="glyph">❖ .lcw</span><h3>Workspace</h3><p>Open files and merges, every tab with its filter and chain, bookmarks, notes and layout in one JSON file. Bookmarks are anchored by a hash of the line and found again after lines were inserted.</p></article>
+        <article class="card reveal"><span class="glyph">markdown · jira</span><h3>Share</h3><p>Copy the selected lines with file, lines, time span and filter as a head, the notes as a list. Ready for the ticket.</p></article>
+        <article class="card reveal" style="--d:1"><span class="glyph">$ log-commander a.log b.log</span><h3>Command line</h3><p>Start with one or more files, drop them on the window, or type a path with <code>~</code>. Recent files are on the start screen.</p></article>
+        <article class="card reveal" style="--d:2"><span class="glyph">● new errors</span><h3>Tabs that tell</h3><p>A red dot marks a tab with new errors in the background. Copying takes whole entries, level colours are adjustable.</p></article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ───────────── Comfort ───────────── -->
+  <section id="comfort" data-lv="info" data-title="Comfort">
+    <div class="wrap">
+      <header class="group-head">
+        <p class="eyebrow reveal"><b class="lv lv-info">INFO</b> comfort</p>
+        <h2 class="h2 split">Yours to arrange.</h2>
+      </header>
+
+      <article class="feature reveal">
+        <div class="text">
+          <h3>Colour schemes</h3>
+          <p class="tagline">17 schemes in a gallery with previews.</p>
+          <p>Dark and light plus One Dark, True Black, Matrix, Amber, Solarized Light, Mystico – C64, Crimson and five Rainglow themes. Arrow keys show a scheme at once, <kbd>Enter</kbd> keeps it, <kbd>Esc</kbd> goes back.</p>
+          <p>Every scheme passes WCAG AA. The window frame follows it.</p>
+          <div class="keys"><kbd>Cmd/Ctrl+Alt+T</kbd></div>
+        </div>
+        <figure class="win"><div class="win-bar"><i></i><i></i><i></i><span>Colour scheme</span></div><img src="img/scheme-picker.webp" width="1600" height="877" loading="lazy" alt="The colour scheme picker with preview tiles"></figure>
+      </article>
+
+      <article class="feature reveal">
+        <div class="text">
+          <h3>Keyboard shortcuts</h3>
+          <p class="tagline">Every shortcut is an action you can rebind.</p>
+          <p>Search the list, record a new key, remove or reset. Your shortcuts are stored in the settings and the native menu shows them too.</p>
+          <div class="keys"><kbd>Cmd/Ctrl+Shift+K</kbd> · <kbd>?</kbd> overview</div>
+          <a class="more" href="keyboard.html">All default shortcuts</a>
+        </div>
+        <figure class="win"><div class="win-bar"><i></i><i></i><i></i><span>Keyboard shortcuts</span></div><img src="img/shortcuts.webp" width="1600" height="877" loading="lazy" alt="The shortcut editor: search, record, reset"></figure>
+      </article>
+
+      <article class="feature reveal">
+        <div class="text">
+          <h3>Small windows welcome</h3>
+          <p class="tagline">Next to your editor, on half a screen.</p>
+          <p>The sidebar steps aside below 900 px and comes back by itself. Font size, level colours, detail panel, timeline and ruler are switches in the settings.</p>
+        </div>
+        <figure class="win"><div class="win-bar"><i></i><i></i><i></i><span>app.log</span></div><img src="img/narrow.webp" width="1600" height="877" loading="lazy" alt="Log Commander in a narrow window"></figure>
+      </article>
+    </div>
+  </section>
+
+  <section class="cta sec-line" id="get" data-lv="info" data-title="Download">
+    <div class="wrap">
+      <p class="prompt reveal">$ log-commander /var/log/app.log</p>
+      <h2 class="h2 split">Open the log.</h2>
+      <div class="actions reveal">
+        <a class="btn btn-primary" href="https://github.com/krocon/log-commander/releases/latest">Download 1.0 from GitHub</a>
+        <a class="btn btn-ghost" href="sources.html">Next: sources</a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <ul>
+      <li><a href="https://github.com/krocon/log-commander">Source on GitHub</a></li>
+      <li><a href="https://github.com/krocon/log-commander/issues">Report a problem</a></li>
+      <li><a href="https://github.com/krocon/log-commander/blob/main/LICENSE">MIT license</a></li>
+      <li><a href="https://krocon.de">Imprint and privacy (krocon.de)</a></li>
+    </ul>
+    <p>© Marc Kronberg. This page loads nothing from other servers and sets no cookies.</p>
+  </div>
+</footer>
+</body>
+</html>
