@@ -28,6 +28,8 @@ pub struct FakeState {
     pub render_fail: Vec<u64>,
     /// `next` blocks until cancelled (a remote call that hangs).
     pub hang: bool,
+    /// A call of `next` is blocked by `hang` right now.
+    pub hanging: bool,
     pub reconnects: u32,
     pub queries: u32,
     /// The bookmark of each subscription.
@@ -107,10 +109,12 @@ impl EventStream for FakeStream {
     fn next(&mut self, max: usize, wait: Duration) -> ApiResult<Vec<RawEvent>> {
         let mut out = Vec::new();
         if self.state.lock().hang {
+            self.state.lock().hanging = true;
             let start = std::time::Instant::now();
             while self.state.lock().cancels == 0 && start.elapsed() < Duration::from_secs(10) {
                 std::thread::sleep(Duration::from_millis(5));
             }
+            self.state.lock().hanging = false;
             return Err(ApiError::new(code::CANCELLED, "EvtNext"));
         }
         {
@@ -381,7 +385,8 @@ mod flow {
         let info = fx.open(config());
         fx.wait(&info, "live", |f| f.state(&info) == SourceState::Listening);
         fx.log.state.lock().hang = true;
-        std::thread::sleep(Duration::from_millis(100));
+        // The round running now may still wait up to 200 ms and end normally when closed: no cancel then.
+        fx.wait(&info, "a hanging call", |f| f.log.state.lock().hanging);
         let start = Instant::now();
         fx.manager.close(info.session_id).unwrap();
         // Without the cancel the fake hangs 10 s; the rest is the session closing under load.

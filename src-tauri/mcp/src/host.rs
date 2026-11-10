@@ -434,8 +434,36 @@ mod tests {
         line
     }
 
-    fn open_fds() -> Option<usize> {
-        std::fs::read_dir("/proc/self/fd").ok().map(|d| d.count())
+    /// Open descriptors of this process that are TCP sockets on `port` (either end); Linux only.
+    /// Only these: the other tests run in parallel and open descriptors of their own.
+    fn port_sockets(port: u16) -> Option<usize> {
+        let mut inodes = std::collections::HashSet::new();
+        for table in ["/proc/self/net/tcp", "/proc/self/net/tcp6"] {
+            let Ok(text) = std::fs::read_to_string(table) else {
+                continue;
+            };
+            for row in text.lines().skip(1) {
+                let f: Vec<&str> = row.split_whitespace().collect();
+                let port_of = |a: &str| {
+                    a.rsplit(':')
+                        .next()
+                        .and_then(|p| u16::from_str_radix(p, 16).ok())
+                };
+                // inode 0: no descriptor any more (TIME_WAIT)
+                if f.len() > 9
+                    && f[9] != "0"
+                    && (port_of(f[1]) == Some(port) || port_of(f[2]) == Some(port))
+                {
+                    inodes.insert(format!("socket:[{}]", f[9]));
+                }
+            }
+        }
+        let fds = std::fs::read_dir("/proc/self/fd").ok()?;
+        Some(
+            fds.filter_map(|e| std::fs::read_link(e.ok()?.path()).ok())
+                .filter(|l| inodes.contains(l.to_string_lossy().as_ref()))
+                .count(),
+        )
     }
 
     fn wait_until(mut f: impl FnMut() -> bool) -> bool {
@@ -454,7 +482,8 @@ mod tests {
         let file = dir.path().join("mcp.json");
         let host = Host::start(Arc::new(Echo::default()), &file).unwrap();
         let ep = bridge::read_endpoint(&file).unwrap();
-        let before = open_fds();
+        // The listener.
+        let before = port_sockets(ep.port);
         for i in 0..50 {
             let s = TcpStream::connect(("127.0.0.1", ep.port)).unwrap();
             let mut w = s.try_clone().unwrap();
@@ -474,10 +503,11 @@ mod tests {
         );
         assert!(wait_until(|| host.connections() == 0));
         if let Some(before) = before {
-            // sockets close asynchronously; allow a little slack
+            // sockets close asynchronously
             assert!(
-                wait_until(|| open_fds().unwrap() <= before + 2),
-                "descriptors leak"
+                wait_until(|| port_sockets(ep.port).unwrap() <= before),
+                "descriptors leak: {:?} sockets on the port, {before} before",
+                port_sockets(ep.port)
             );
         }
     }
