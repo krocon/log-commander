@@ -163,6 +163,12 @@ export class SessionState {
    */
   pendingReveal: number | null = null;
   jumpMark: JumpMark | null = null;
+  /** Counts jumps (`E`, ruler, timeline, dashboard): a jump to where the view already is shows nowhere else. */
+  readonly jumps = signal(0);
+  /** The tab is closed: calls still on their way for it are dropped, their errors mean nothing. */
+  closed = false;
+  /** Counts new views and epochs: a position asked for before the last one is of another view. */
+  private viewChanges = 0;
   /**
    * A line the dashboard jumped to that the filter hides (prompt 012): `G` shows it in the whole log, as long
    * as the view was not scrolled since the jump.
@@ -312,6 +318,7 @@ export class SessionState {
   applyUpdate(next: SessionUpdate): void {
     const prev = this.update();
     const viewChanged = next.viewGeneration !== prev.viewGeneration;
+    if (viewChanged || next.epoch !== prev.epoch) this.viewChanges++;
     if (next.epoch !== prev.epoch) {
       this.cache.clear();
       this.scroll.set({ top: 0, subPx: 0 });
@@ -376,6 +383,7 @@ export class SessionState {
 
   /** Scrolls to a position as a jump: follow off, the next jump goes on from here. */
   jumpTo(position: number, line: number | null): void {
+    this.jumps.update((n) => n + 1);
     this.setFollow(false);
     const scroll = jumpScroll(position);
     this.scroll.set(scroll);
@@ -404,11 +412,15 @@ export class SessionState {
     } else {
       // If the user scrolled in the meantime, that wins.
       const requestedAt = this.scroll();
+      const view = this.viewChanges;
       void this.api
         .getPosition(this.sessionId, anchor, this.viewId)
         .catch(() => 0)
         .then((top) => {
-          if (this.scroll() === requestedAt) this.scroll.set({ top, subPx: 0 });
+          // A newer view asks again itself; this position is of the one before.
+          if (this.scroll() === requestedAt && this.viewChanges === view) {
+            this.scroll.set({ top, subPx: 0 });
+          }
         });
     }
   }
@@ -422,10 +434,21 @@ export class SessionState {
     if (line === null) return;
     this.pendingReveal = null;
     const requestedAt = this.scroll();
+    const view = this.viewChanges;
+    const epoch = this.update().epoch;
     void this.api
       .getPosition(this.sessionId, line, this.viewId)
       .catch(() => null)
       .then((position) => {
+        if (this.viewChanges !== view) {
+          // The view changed again before the answer: the line is still wanted, in the newer one
+          // (not after a new epoch, where line numbers mean other lines).
+          if (this.update().epoch === epoch && this.pendingReveal === null) {
+            this.pendingReveal = line;
+            this.revealPending();
+          }
+          return;
+        }
         if (position === null || this.scroll() !== requestedAt) return;
         this.jumpTo(position, line);
       });

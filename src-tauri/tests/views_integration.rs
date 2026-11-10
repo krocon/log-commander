@@ -17,7 +17,9 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-const TIMEOUT: Duration = Duration::from_secs(15);
+#[path = "../src/test_support.rs"]
+mod test_support;
+use test_support::{stays_false, wait_until};
 
 fn profile() -> Profile {
     builtin_profiles()
@@ -52,12 +54,9 @@ fn append(path: &Path, text: &str) {
     file.write_all(text.as_bytes()).unwrap();
 }
 
+#[track_caller]
 fn wait(what: &str, condition: impl Fn() -> bool) {
-    let start = Instant::now();
-    while !condition() {
-        assert!(start.elapsed() < TIMEOUT, "timeout: {what}");
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    wait_until(what, condition);
 }
 
 /// Done with its job and at `total` lines.
@@ -173,7 +172,9 @@ fn a_chain_of_two_views_filters_the_parent_further_and_follows_the_tail() {
     let info = session.open_view(0, child.clone(), sink(&updates)).unwrap();
     assert_eq!(info.view_id, 1);
     assert_eq!(info.parent_view_id, Some(0));
-    wait("child filtered", || settled(&session, 1, 400));
+    wait("parent and child filtered", || {
+        settled(&session, 1, 400) && settled(&session, 0, 400)
+    });
 
     let parent_lines = lines_of(&session, 0);
     let child_lines = lines_of(&session, 1);
@@ -340,9 +341,15 @@ fn a_freeze_holds_every_view_and_resuming_catches_up() {
     wait("child", || settled(&session, 1, 50));
     session.set_frozen(true);
     wait("frozen update", || updates.lock().iter().any(|u| u.frozen));
+    let before = fs::metadata(&path).unwrap().len();
     write_log(&path, 50, 120);
-    std::thread::sleep(Duration::from_millis(400));
-    assert_eq!(session.stats_of(1).unwrap().total_lines, 50);
+    let written = fs::metadata(&path).unwrap().len() - before;
+    wait("the frozen worker sees the lines", || {
+        session.stats().pending_bytes == written
+    });
+    assert!(stays_false(Duration::from_millis(400), || {
+        session.stats_of(1).unwrap().total_lines != 50
+    }));
     assert!(session.stats_of(1).unwrap().frozen);
     session.set_frozen(false);
     wait("caught up", || settled(&session, 1, 120));
@@ -430,7 +437,6 @@ fn closing_a_parent_leaves_its_children_as_they_are() {
     // No job: the effective filter is the same.
     assert!(!session.stats_of(2).unwrap().filter_pending);
     assert_eq!(lines_of(&session, 2), before);
-    let heard = child_updates.lock().len();
 
     // View 0 closes as a hidden identity: the grandchild keeps everything above it.
     session.close_view(0).unwrap();
@@ -443,8 +449,19 @@ fn closing_a_parent_leaves_its_children_as_they_are() {
     wait("tail after closing", || settled(&session, 2, 600));
     let expected = reference(&path, &[&root, &search("OrderService")], &tree("4711"));
     assert_eq!(lines_of(&session, 2), expected);
-    // A closed view hears nothing more.
-    assert_eq!(child_updates.lock().len(), heard);
+    // A closed view hears nothing more: the view below it has heard of the new lines, the
+    // closed one of none of them. (An update taken before closing may still arrive after it,
+    // so the number of updates says nothing; what they tell does.)
+    wait("the grandchild hears of the new lines", || {
+        grand_updates.lock().iter().any(|u| u.total_lines == 600)
+    });
+    let heard: Vec<u64> = child_updates
+        .lock()
+        .iter()
+        .map(|u| u.total_lines)
+        .filter(|total| *total > 400)
+        .collect();
+    assert!(heard.is_empty(), "the closed view heard of {heard:?} lines");
     // A filter of the grandchild still goes on top of the inherited chain.
     let warn = ViewFilter {
         levels: LevelMask::from_levels(&[Level::Warn]),
@@ -481,7 +498,9 @@ fn a_relevel_refilters_every_view() {
     };
     session.set_profile(&plain).unwrap();
     wait("relevelled", || {
-        settled(&session, 1, 200) && session.stats_of(1).unwrap().filtered_lines == 0
+        settled(&session, 1, 200)
+            && settled(&session, 0, 200)
+            && session.stats_of(1).unwrap().filtered_lines == 0
     });
     assert_eq!(session.stats().view_counts.error, 0);
 }
@@ -576,10 +595,10 @@ fn measure_views_500mb() {
     }
 }
 
+/// For the measurement on 500 MB: two minutes, whatever `LC_TEST_TIMEOUT` says.
 fn wait_long(condition: impl Fn() -> bool) {
-    let start = Instant::now();
-    while !condition() {
-        assert!(start.elapsed() < Duration::from_secs(120), "timeout");
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    assert!(
+        test_support::holds_within(Duration::from_secs(120), condition),
+        "timeout"
+    );
 }

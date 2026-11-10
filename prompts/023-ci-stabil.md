@@ -150,10 +150,11 @@ WORKDIR /w
 ```
 
 - **Quelltext kopieren:**
-  `COPYFILE_DISABLE=1 git ls-files -co --exclude-standard | tar -cf - -T - | docker run --rm -i -v lc-w:/w <image> tar -xf - -C /w`.
-  Ohne `COPYFILE_DISABLE=1` landen macOS-Dateien `._*` im Container, und der Build scheitert an
+  `git ls-files -co --exclude-standard | COPYFILE_DISABLE=1 tar -cf - -T - | docker run --rm -i -v lc-w:/w <image> tar -xf - -C /w`.
+  Die Variable muss vor `tar` stehen, nicht vor `git`. Ohne sie landen macOS-Dateien `._*` im Container, und der Build scheitert an
   `capabilities/._default.json`.
 - **Volumes:** `target` und `~/.npm` als eigene Volumes, damit Wiederholungen schnell sind.
+- **Sprache:** `-e LANG=C.UTF-8` wie die GitHub-Runner. Ohne sie blieb der Diagramm-Fehler aus PR #1 lokal unsichtbar.
 - **Start:** `Xvfb :99 &` mit `DISPLAY=:99` statt `xvfb-run`. Als PID 1 hing `xvfb-run` nach dem Ende von
   `npm run e2e` stundenlang. Immer ein äußeres `timeout` setzen; macOS hat kein `timeout`, also im Container.
 - **Rust-Tests allein:** `rust:1-slim` reicht für `lc-mcp`. Die App-Crate braucht die WebKitGTK-Pakete.

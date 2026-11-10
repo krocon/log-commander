@@ -7,6 +7,7 @@ import {
   barWidth,
   bucketPositions,
   clickTarget,
+  hitInClick,
   levelsFrom,
   marksAt,
   positionToY,
@@ -173,6 +174,7 @@ describe('ruler-logic', () => {
     expect(clickTarget(50.5, view)).toEqual({
       kind: 'level',
       from: 499,
+      until: 510,
       levels: ['ERROR', 'FATAL'],
       fallback: 500,
     });
@@ -205,6 +207,28 @@ describe('ruler-logic', () => {
     };
     // The search starts after `from`: at 753, not at 754 (where bucket 530 begins).
     expect(clickTarget(530.5, view)).toMatchObject({ kind: 'level', from: 752, fallback: 754 });
+  });
+
+  it('a click means the entries of its buckets: a hit below them is not the clicked one', () => {
+    // 300 lines on 600 px: an error with its trace in lines 100–140 colours buckets 200–281.
+    const buckets = new Array<Densities>(600).fill(none);
+    for (let b = 200; b <= 281; b++) buckets[b] = E;
+    const view = {
+      marks: rulerMarks(dens(buckets), 600),
+      pins: [],
+      count: 300,
+      height: 600,
+      buckets: 600,
+    };
+    // A click on the lower part of the bar: line 130, the search forward ends before line 131.
+    const target = clickTarget(260.5, view);
+    expect(target).toMatchObject({ kind: 'level', from: 129, until: 131, fallback: 130 });
+    const until = { until: 131 };
+    expect(hitInClick({ position: 130, wrapped: false }, until)).toBe(true);
+    // The next error far below, or one found from the start again, is not what was clicked.
+    expect(hitInClick({ position: 290, wrapped: false }, until)).toBe(false);
+    expect(hitInClick({ position: 100, wrapped: true }, until)).toBe(false);
+    expect(hitInClick(null, until)).toBe(false);
   });
 
   it('tells in words what the marks or a pin are', () => {

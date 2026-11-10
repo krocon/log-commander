@@ -234,6 +234,27 @@ describe('SessionState navigation (prompt 007)', () => {
     expect(session.jumpMark?.scroll).not.toBe(session.scroll());
   });
 
+  it('a position of the view before is not used: the line is asked for again in the newer view', async () => {
+    const answers: ((position: number) => void)[] = [];
+    const asked: number[] = [];
+    const session = make((line) => {
+      asked.push(line);
+      return new Promise<number>((resolve) => answers.push(resolve));
+    });
+    session.setFollow(false);
+    session.pendingReveal = 40;
+    session.applyUpdate(update(500, { viewGeneration: 1 }));
+    // The filter changes again before the answer.
+    session.applyUpdate(update(300, { viewGeneration: 2 }));
+    answers[0](80);
+    await tick();
+    expect(session.jumpMark).toBeNull();
+    expect(asked).toEqual([40, 40]);
+    answers[1](12);
+    await tick();
+    expect(session.jumpMark).toMatchObject({ position: 12, line: 40 });
+  });
+
   it('keeps bookmarks when only the view changes', () => {
     const session = make(() => Promise.resolve(0));
     session.bookmarks.set(new Set([3]));

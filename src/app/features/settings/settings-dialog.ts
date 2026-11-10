@@ -1,3 +1,4 @@
+import { serial } from '../../shared/serial';
 import {
   ChangeDetectionStrategy,
   Component,
@@ -12,7 +13,7 @@ import {
 import { LogApi } from '../../core/log/log-api';
 import { formatBytes } from '../../shared/format';
 import { Profile } from '../../core/log/log.models';
-import { describeError, toAppError } from '../../core/errors/app-error';
+import { describeError, isSuperseded, toAppError } from '../../core/errors/app-error';
 import {
   COLOR_TOKENS,
   MAX_FONT_SIZE,
@@ -470,7 +471,8 @@ export class SettingsDialogComponent implements OnInit {
     this.settingsService.update({ keepOnRotate: keep });
     // One call per file, also when its tab closed and only filter tabs are left (prompt 013).
     for (const id of new Set(this.sessions.sessions().map((s) => s.sessionId))) {
-      void this.api.setKeepOnRotate(id, keep);
+      // A failure (a tab closed just now, a newer click came first) leaves nothing to put right.
+      void this.api.setKeepOnRotate(id, keep).catch(() => undefined);
     }
   }
 
@@ -546,8 +548,13 @@ export class SettingsDialogComponent implements OnInit {
     }
   }
 
+  /** Changes of the profile list one after the other: each builds on the list the one before stored. */
+  private readonly profileChange = serial();
+
   protected async deleteProfile(id: string): Promise<void> {
-    await this.storeProfiles(this.settings().customProfiles.filter((p) => p.id !== id));
+    await this.profileChange(() =>
+      this.storeProfiles(this.settings().customProfiles.filter((p) => p.id !== id)),
+    );
   }
 
   protected async saveProfile(
@@ -556,7 +563,6 @@ export class SettingsDialogComponent implements OnInit {
     mappingText: string,
     layoutsText: string,
   ): Promise<void> {
-    const custom = this.settings().customProfiles;
     const layouts = parseLayouts(layoutsText);
     if (!name.trim() || (!pattern.trim() && layouts.length === 0)) {
       this.profileError.set('Name und eine Regex für Level oder Layout sind Pflicht.');
@@ -567,18 +573,22 @@ export class SettingsDialogComponent implements OnInit {
       this.profileError.set(parsed.error);
       return;
     }
-    const id = this.draft().id || newProfileId(custom);
-    const profile: Profile = {
-      id,
-      name: name.trim(),
-      patterns: pattern.trim() ? [pattern] : [],
-      mapping: parsed.mapping,
-      layouts,
-    };
-    const next = this.draft().id
-      ? custom.map((p) => (p.id === id ? profile : p))
-      : [...custom, profile];
-    if (await this.storeProfiles(next)) {
+    const editedId = this.draft().id;
+    const stored = await this.profileChange(() => {
+      const custom = this.settings().customProfiles;
+      const id = editedId || newProfileId(custom);
+      const profile: Profile = {
+        id,
+        name: name.trim(),
+        patterns: pattern.trim() ? [pattern] : [],
+        mapping: parsed.mapping,
+        layouts,
+      };
+      return this.storeProfiles(
+        editedId ? custom.map((p) => (p.id === id ? profile : p)) : [...custom, profile],
+      );
+    });
+    if (stored) {
       this.draft.set({ id: '', name: '', pattern: '', mapping: '', layouts: '' });
       this.preview.set(null);
     }
@@ -593,7 +603,8 @@ export class SettingsDialogComponent implements OnInit {
       this.profileError.set(null);
       return true;
     } catch (e) {
-      this.profileError.set(describeError(toAppError(e)));
+      // A newer list came first: that one is stored.
+      this.profileError.set(isSuperseded(e) ? null : describeError(toAppError(e)));
       return false;
     }
   }

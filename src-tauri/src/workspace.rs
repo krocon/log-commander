@@ -214,9 +214,12 @@ mod tests {
         let name = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
         // SAFETY: a valid C string; mkfifo only creates the node.
         assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
-        let start = std::time::Instant::now();
-        assert_eq!(read(&fifo).unwrap_err().code, ErrorCode::InvalidWorkspace);
-        assert!(start.elapsed() < std::time::Duration::from_secs(1));
+        // Opening a FIFO for reading blocks until somebody writes, here: forever. On a thread of
+        // its own, so that a blocked read fails the test instead of hanging it.
+        let reader = std::thread::spawn(move || read(&fifo));
+        crate::test_support::wait_until("the read of the FIFO to return", || reader.is_finished());
+        let result = reader.join().unwrap();
+        assert_eq!(result.unwrap_err().code, ErrorCode::InvalidWorkspace);
     }
 
     #[test]

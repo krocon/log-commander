@@ -172,6 +172,12 @@ impl Tailer {
         };
         let pending = size.saturating_sub(read_pos) + rotated_in;
         let mut data = self.shared.data.write();
+        // Resumed between the look at `frozen` and this lock (prompt 023): `set_frozen` has just
+        // cleared both values, and nothing would clear them again. Writing them now left "bytes
+        // waiting" and the warning about the emptied file in the status bar for good.
+        if !data.frozen {
+            return;
+        }
         if data.pending_bytes != pending || data.frozen_stale != self.shrunk_while_frozen {
             data.pending_bytes = pending;
             data.frozen_stale = self.shrunk_while_frozen;

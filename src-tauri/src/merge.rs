@@ -1002,7 +1002,11 @@ impl Runner {
             }
         }
         let mut data = self.shared.data.write();
-        data.status = Status::Live;
+        // A one-time status of `start_load` that no update has carried yet (none was due since)
+        // stays for the next one; `emit_if_due` puts `Live` in its place, as in `tail.rs`.
+        if !matches!(data.status, Status::Truncated | Status::Rotated) {
+            data.status = Status::Live;
+        }
         self.publish(&mut data);
         data.dirty = true;
     }
@@ -1396,6 +1400,10 @@ impl Runner {
             stale |= file.shrunk_while_frozen;
         }
         let mut data = self.shared.data.write();
+        // Resumed meanwhile: `set_frozen` has cleared both values, see `tail.rs`.
+        if !data.frozen {
+            return;
+        }
         if data.pending_bytes != pending || data.frozen_stale != stale {
             data.pending_bytes = pending;
             data.frozen_stale = stale;
@@ -1496,7 +1504,12 @@ mod tests {
 
     /// Feeds `lines` of a source with offsets counting up from the source's base.
     fn feed(m: &mut Merger, source: usize, lines: &[&str]) -> Fed {
-        let now = Instant::now();
+        feed_at(m, source, lines, Instant::now())
+    }
+
+    /// `feed` at a time the test chooses: what `Until::Live` releases depends on the time between
+    /// the line and the release, and that must not be the time the test happens to take.
+    fn feed_at(m: &mut Merger, source: usize, lines: &[&str], now: Instant) -> Fed {
         let base = source_base(source) + m.lines(source) * 1000 + m.waiting() as u64 * 100;
         for (i, line) in lines.iter().enumerate() {
             let fed = m.line(
@@ -1667,14 +1680,14 @@ mod tests {
     fn live_late_entries_are_appended_and_counted() {
         let mut m = merger(2);
         m.set_strict(false);
-        feed(&mut m, 0, &["2024-01-01 10:00:05 INFO a"]);
-        feed(&mut m, 1, &["2024-01-01 10:00:06 INFO b"]);
         let now = Instant::now();
+        feed_at(&mut m, 0, &["2024-01-01 10:00:05 INFO a"], now);
+        feed_at(&mut m, 1, &["2024-01-01 10:00:06 INFO b"], now);
         assert_eq!(order(&mut m, Until::Live(now)), vec![(0, false)]);
         let later = now + HOLD_BACK;
         assert_eq!(order(&mut m, Until::Live(later)), vec![(1, false)]);
-        feed(&mut m, 0, &["2024-01-01 10:00:01 INFO a-late"]);
-        assert_eq!(order(&mut m, Until::Live(Instant::now())), vec![(0, false)]);
+        feed_at(&mut m, 0, &["2024-01-01 10:00:01 INFO a-late"], now);
+        assert_eq!(order(&mut m, Until::Live(now)), vec![(0, false)]);
         assert_eq!((m.late(0), m.late(1)), (1, 0));
     }
 

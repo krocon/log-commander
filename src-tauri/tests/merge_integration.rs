@@ -21,6 +21,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+#[path = "../src/test_support.rs"]
+mod test_support;
+use test_support::{wait_until, wait_until_or};
+
 struct Counting;
 
 static CURRENT: AtomicUsize = AtomicUsize::new(0);
@@ -58,8 +62,6 @@ unsafe impl GlobalAlloc for Counting {
 
 #[global_allocator]
 static ALLOCATOR: Counting = Counting;
-
-const TIMEOUT: Duration = Duration::from_secs(10);
 
 fn profile(id: &str) -> Profile {
     builtin_profiles().into_iter().find(|p| p.id == id).unwrap()
@@ -117,30 +119,33 @@ fn open_single(path: &Path) -> Fixture {
 }
 
 impl Fixture {
+    #[track_caller]
     fn wait(&self, what: &str, condition: impl Fn(&SessionUpdate) -> bool) {
-        let start = Instant::now();
-        loop {
-            let stats = self.session.stats();
-            if condition(&stats) {
-                return;
-            }
-            assert!(
-                start.elapsed() < TIMEOUT,
-                "timeout waiting for {what}: {stats:?}"
-            );
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        wait_until_or(
+            what,
+            || format!("{:?}", self.session.stats()),
+            || condition(&self.session.stats()),
+        );
     }
 
+    /// Waits for an update that was sent, not for the state: one-time states (rotated,
+    /// truncated) only show in the updates.
+    #[track_caller]
+    fn wait_update(&self, what: &str, condition: impl Fn(&SessionUpdate) -> bool) {
+        wait_until_or(
+            what,
+            || {
+                let updates = self.updates.lock();
+                let seen: Vec<_> = updates.iter().map(|u| &u.status).collect();
+                format!("statuses sent: {seen:?}, now: {:?}", self.session.stats())
+            },
+            || self.updates.lock().iter().any(&condition),
+        );
+    }
+
+    #[track_caller]
     fn wait_status(&self, what: &str, condition: impl Fn(&Status) -> bool) {
-        let start = Instant::now();
-        loop {
-            if self.updates.lock().iter().any(|u| condition(&u.status)) {
-                return;
-            }
-            assert!(start.elapsed() < TIMEOUT, "timeout waiting for {what}");
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        self.wait_update(what, |u| condition(&u.status));
     }
 
     fn texts(&self, filtered: bool) -> Vec<String> {
@@ -474,10 +479,29 @@ fn live_lines_wait_for_each_other_and_late_ones_are_counted() {
     let fx = merge(&[&a, &b]);
     assert_eq!(fx.session.stats().total_lines, 2);
 
-    // Written in the wrong order within the hold-back: shown in time order.
-    append(&b, "2024-01-01 10:00:02 INFO b2\n");
-    std::thread::sleep(Duration::from_millis(150));
-    append(&a, "2024-01-01 10:00:01 INFO a1\n");
+    // Written in the wrong order within the hold-back: shown in time order. Both lines are
+    // read in the same round, whatever the load of the machine: they are written during a
+    // freeze and read when it ends.
+    let line_a = "2024-01-01 10:00:01 INFO a1\n";
+    let line_b = "2024-01-01 10:00:02 INFO b2\n";
+    let size_a = fs::metadata(&a).unwrap().len() + line_a.len() as u64;
+    fx.session.set_frozen(true);
+    append(&a, line_a);
+    // The worker has seen the freeze (it reports what waits), or a round that began before the
+    // freeze has read the line and is over (it reports the size). Either way it reads no more.
+    fx.wait("the worker holds", |s| {
+        s.pending_bytes == line_a.len() as u64 || s.sources[0].file_size == size_a
+    });
+    append(&b, line_b);
+    fx.wait("b2 waits", |s| {
+        let waiting_of_a = if s.sources[0].file_size == size_a {
+            0
+        } else {
+            line_a.len()
+        };
+        s.pending_bytes == (waiting_of_a + line_b.len()) as u64
+    });
+    fx.session.set_frozen(false);
     fx.wait("both", |s| s.total_lines == 4);
     let texts = fx.texts(false);
     assert!(
@@ -532,13 +556,13 @@ fn a_silent_source_holds_up_the_others_at_most_hold_back() {
     let a = write(dir.path(), "a.log", "2024-01-01 10:00:00 INFO a0\n");
     let b = write(dir.path(), "b.log", "2024-01-01 10:00:00 INFO b0\n");
     let fx = merge(&[&a, &b]);
+    // How long the wait may take is the rule of `Merger::cut`, proven without a clock by the
+    // unit test `a_silent_source_holds_up_the_rest_at_most_hold_back` in merge.rs. Here: the lines of the
+    // writing source arrive although the other one never writes again, and in their order.
     std::thread::sleep(HOLD_BACK);
-    let start = Instant::now();
     append(&a, "2024-01-01 10:00:05 INFO a5\n");
     fx.wait("a5", |s| s.total_lines == 3);
-    assert!(start.elapsed() < HOLD_BACK + Duration::from_millis(500));
-    // A busy and a quiet source: the busy one never waits longer than HOLD_BACK.
-    let start = Instant::now();
+    // A busy and a quiet source: the busy one is not held up by the quiet one.
     for i in 0..10 {
         append(
             &a,
@@ -547,7 +571,16 @@ fn a_silent_source_holds_up_the_others_at_most_hold_back() {
         std::thread::sleep(Duration::from_millis(100));
     }
     fx.wait("busy", |s| s.total_lines == 13);
-    assert!(start.elapsed() < Duration::from_millis(1000) + HOLD_BACK + Duration::from_millis(500));
+    let texts = fx.texts(false);
+    assert!(texts[2].ends_with("a5"), "{texts:?}");
+    for i in 0..10 {
+        assert!(texts[3 + i].ends_with(&format!("busy {i}")), "{texts:?}");
+    }
+    let stats = fx.session.stats();
+    assert_eq!(
+        (stats.sources[0].lines, stats.sources[0].late_lines),
+        (12, 0)
+    );
 }
 
 #[test]
@@ -567,10 +600,12 @@ fn rotation_of_one_source_keeps_its_lines_and_the_rest_runs_on() {
         texts[0].ends_with("a0") && texts[2].ends_with("a2 rotated") && texts[3].ends_with("b3")
     );
     assert_eq!(fx.sources_of_lines(), vec![0, 1, 0, 1]);
-    assert!(fx.updates.lock().iter().any(|u| u
-        .sources
-        .first()
-        .is_some_and(|s| s.status == Status::Rotated)));
+    // Sent with the next update, which may come after the lines are in the index.
+    fx.wait_update("source 0 rotated", |u| {
+        u.sources
+            .first()
+            .is_some_and(|s| s.status == Status::Rotated)
+    });
 
     // Without keeping: everything is merged again, the old lines of that source are gone.
     fx.session.set_keep_on_rotate(false);
@@ -603,6 +638,60 @@ fn truncation_of_a_source_merges_everything_again() {
     fx.wait("new line", |s| s.total_lines == 2);
     let texts = fx.texts(false);
     assert!(texts[0].ends_with("b1") && texts[1].ends_with("a5 new"));
+}
+
+/// The one-time status of a merge that starts over must reach the frontend even if no update
+/// was due between its start and its end (updates are sent at most every 100 ms): another
+/// source keeps the updates busy while a source is truncated.
+#[test]
+fn a_truncation_is_reported_while_updates_of_another_source_are_running() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = write(dir.path(), "a.log", "2024-01-01 10:00:00 INFO a0\n");
+    let b = write(dir.path(), "b.log", "2024-01-01 10:00:00 INFO b0\n");
+    let fx = merge(&[&a, &b]);
+    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let writer = {
+        let stop = Arc::clone(&stop);
+        let b = b.clone();
+        std::thread::spawn(move || {
+            let mut i = 0u32;
+            while !stop.load(Ordering::SeqCst) {
+                i += 1;
+                append(
+                    &b,
+                    &format!("2024-01-01 10:{:02}:{:02} INFO b {i}\n", 1 + i / 60, i % 60),
+                );
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        })
+    };
+    for round in 1..=10u64 {
+        let before = fx.session.stats();
+        // Older than everything shown: it does not wait for the other source.
+        append(&a, &format!("2024-01-01 09:00:{round:02} INFO a{round}\n"));
+        fx.wait("the line of a", |s| {
+            s.epoch == before.epoch && s.sources[0].lines > before.sources[0].lines
+        });
+        // Right after an update the next one is not due for a while.
+        let sent = fx.updates.lock().len();
+        wait_until("the next update", || fx.updates.lock().len() > sent);
+        let sent = fx.updates.lock().len();
+        File::create(&a).unwrap();
+        fx.wait("merged again", |s| {
+            s.epoch > before.epoch && s.status == Status::Live
+        });
+        wait_until_or(
+            "the update that says truncated",
+            || format!("round {round}: {:?}", fx.session.stats()),
+            || {
+                fx.updates.lock()[sent..]
+                    .iter()
+                    .any(|u| u.status == Status::Truncated)
+            },
+        );
+    }
+    stop.store(true, Ordering::SeqCst);
+    writer.join().unwrap();
 }
 
 #[test]
@@ -912,11 +1001,9 @@ fn views_of_a_merge_filter_further_and_follow_live_lines() {
             .map(|l| l.text)
             .collect()
     };
-    let start = Instant::now();
-    while fx.session.stats_of(view).unwrap().filter_pending {
-        assert!(start.elapsed() < TIMEOUT);
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    wait_until("the filter of the view", || {
+        !fx.session.stats_of(view).unwrap().filter_pending
+    });
     assert_eq!(
         lines(view),
         vec!["2024-01-01 10:00:01.000 ERROR b needle 2"]
@@ -924,11 +1011,11 @@ fn views_of_a_merge_filter_further_and_follow_live_lines() {
     append(&a, "2024-01-01 10:00:04.000 ERROR a needle 3\n");
     append(&b, "2024-01-01 10:00:05.000 ERROR b needle 4\n");
     fx.wait("live", |s| s.total_lines == 6);
-    let start = Instant::now();
-    while fx.session.stats_of(view).unwrap().filtered_lines < 3 {
-        assert!(start.elapsed() < TIMEOUT, "{:?}", lines(view));
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    wait_until_or(
+        "the live lines in the view",
+        || format!("{:?}", lines(view)),
+        || fx.session.stats_of(view).unwrap().filtered_lines >= 3,
+    );
     assert_eq!(
         lines(view),
         vec![

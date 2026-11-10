@@ -1276,13 +1276,23 @@ impl Hub {
 
     /// Closes connections nobody used for `idle_close`.
     pub fn sweep(&self) {
+        self.close_unused(self.idle_close);
+    }
+
+    /// Closes every connection nobody uses right now, however short it has been idle (tests:
+    /// the next lease has to log in again).
+    #[doc(hidden)]
+    pub fn sweep_now(&self) {
+        self.close_unused(Duration::ZERO);
+    }
+
+    fn close_unused(&self, idle_for: Duration) {
         let idle: Vec<Arc<Shared>> = {
             let mut pool = self.pool.lock();
             let keys: Vec<String> = pool
                 .iter()
                 .filter(|(_, s)| {
-                    s.users.load(Ordering::SeqCst) == 0
-                        && s.idle_since.lock().elapsed() >= self.idle_close
+                    s.users.load(Ordering::SeqCst) == 0 && s.idle_since.lock().elapsed() >= idle_for
                 })
                 .map(|(k, _)| k.clone())
                 .collect();

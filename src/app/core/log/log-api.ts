@@ -358,15 +358,22 @@ export class LogApi {
 
   /**
    * The dashboard of a tab is shown (prompt 012): builds its database the first time and keeps it up to date
-   * every 5 s while open. `fields`: column ids to store, `null` for the numbers.
+   * every 5 s while open. `fields`: column ids to store, `null` for the numbers. `user` names who opens it (a
+   * tab, a call of the AI): the backend keeps it up to date until the last user has closed, in whatever order
+   * the calls arrive (prompt 023). `keepFields` leaves the columns of a table that exists as they are.
    */
-  openReport(sessionId: number, fields: readonly string[] | null): Promise<ReportSchema> {
-    return call('open_report', { sessionId, fields });
+  openReport(
+    sessionId: number,
+    fields: readonly string[] | null,
+    user = '',
+    keepFields = false,
+  ): Promise<ReportSchema> {
+    return call('open_report', { sessionId, fields, user, keepFields });
   }
 
-  /** The dashboard is hidden: no more catching up. */
-  closeReport(sessionId: number): Promise<void> {
-    return call('close_report', { sessionId });
+  /** The dashboard of this user is hidden: no more catching up once nobody else has it open. */
+  closeReport(sessionId: number, user = ''): Promise<void> {
+    return call('close_report', { sessionId, user });
   }
 
   /** One read-only SQL query; a newer one of the same `slot` (panel) stops an older one. */

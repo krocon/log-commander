@@ -20,6 +20,7 @@ use crate::model::{
     OverviewMark, ReportResult, ReportSchema, ReportStatus, SessionInfo, SessionUpdate, SourceInfo,
     SourceUpdate, Status, TimeAnchor, TimeHit, TimeRange, Timeline, TimelineBucket, ViewInfo,
 };
+use crate::order::Order;
 use crate::overview::{level_bit, LevelSummary};
 use crate::platform::open_shared;
 use crate::profile::{Profile, ProfileRegistry};
@@ -33,7 +34,7 @@ use crate::views::{compose, ViewFilter, MAX_VIEWS};
 use memchr::memchr;
 use parking_lot::{Mutex, RwLock};
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -590,6 +591,8 @@ impl Shared {
     }
 }
 
+type CompiledHook = Box<dyn Fn() + Send + Sync>;
+
 pub struct LogSession {
     pub id: u64,
     /// Empty for a merge: its files are in `sources`.
@@ -602,6 +605,15 @@ pub struct LogSession {
     report: Mutex<Option<Arc<ReportDb>>>,
     report_dir: Option<PathBuf>,
     report_limits: ReportLimits,
+    /// Held by every command that changes the session while it compiles and writes, with the
+    /// newest call per kind (prompt 023, `order.rs`). Lock order: `order`, then `shared.data`.
+    /// The worker and the background jobs never take it.
+    order: Mutex<Order>,
+    /// Who has the dashboard open (prompt 023): tabs of the file, calls of the AI. The builder
+    /// pauses when the last one closes, in whatever order opening and closing arrive.
+    report_users: Mutex<HashSet<String>>,
+    /// Tests only: runs between compiling a filter and storing it.
+    compiled_hook: Mutex<Option<CompiledHook>>,
     /// A source without a file (prompt 016) writing the spool this session follows. Last, so it
     /// is dropped (stopped, spool deleted) after the worker let go of the files.
     source: Option<RunningSource>,
@@ -654,6 +666,9 @@ impl LogSession {
             worker: Mutex::new(Some(worker)),
             _watchers: watcher.into_iter().collect(),
             report: Mutex::new(None),
+            order: Mutex::new(Order::default()),
+            report_users: Mutex::new(HashSet::new()),
+            compiled_hook: Mutex::new(None),
             report_dir,
             report_limits,
             source: None,
@@ -683,6 +698,13 @@ impl LogSession {
 
     /// Keep the spool when the tab closes, or not.
     pub fn set_spool_keep(&self, keep: bool) -> AppResult<()> {
+        self.set_spool_keep_at(keep, None)
+    }
+
+    /// Like `set_spool_keep`; `seq` orders the calls (`order.rs`).
+    pub fn set_spool_keep_at(&self, keep: bool, seq: Option<u64>) -> AppResult<()> {
+        let mut order = self.order.lock();
+        order.admit("spool_keep", seq)?;
         let source = self
             .source
             .as_ref()
@@ -737,6 +759,9 @@ impl LogSession {
             worker: Mutex::new(Some(handle)),
             _watchers: watchers,
             report: Mutex::new(None),
+            order: Mutex::new(Order::default()),
+            report_users: Mutex::new(HashSet::new()),
+            compiled_hook: Mutex::new(None),
             report_dir,
             report_limits,
             source: None,
@@ -782,11 +807,28 @@ impl LogSession {
     /// The dashboard of this tab is shown: creates the database the first time, chooses its fields
     /// (`None`: the numbers) and (re)starts the builder, which catches up every 5 s from now on.
     pub fn open_report(&self, fields: Option<Vec<String>>) -> AppResult<ReportSchema> {
+        self.open_report_for("", fields, false)
+    }
+
+    /// Like `open_report`, for one of several users of the dashboard (a tab, a call of the AI):
+    /// the builder runs until the last of them has closed. Opening again as the same user only
+    /// changes the fields. `keep_fields` leaves the fields of a table that exists as they are
+    /// (the AI must not rebuild the table the user chose columns for).
+    pub fn open_report_for(
+        &self,
+        user: &str,
+        fields: Option<Vec<String>>,
+        keep_fields: bool,
+    ) -> AppResult<ReportSchema> {
+        // Held to the end: opening and closing do not overlap.
+        let mut users = self.report_users.lock();
+        let mut existed = true;
         let db = {
             let mut slot = self.report.lock();
             match slot.as_ref() {
                 Some(db) => Arc::clone(db),
                 None => {
+                    existed = false;
                     let dir = self.report_dir.as_ref().ok_or_else(|| {
                         AppError::new(ErrorCode::Io, "no cache folder for the dashboard")
                     })?;
@@ -804,13 +846,27 @@ impl LogSession {
                 }
             }
         };
-        db.set_fields(fields);
+        if !(keep_fields && existed) {
+            db.set_fields(fields);
+        }
         db.start(Arc::clone(&self.shared), self.id)?;
+        users.insert(user.to_string());
         self.report_schema()
     }
 
     /// The dashboard is hidden: the builder stops (the file stays until the session closes).
     pub fn close_report(&self) {
+        self.close_report_for("");
+    }
+
+    /// One user of the dashboard is gone; the builder stops with the last one. A close that
+    /// arrives before the open of another user (commands run in any order) stops nothing.
+    pub fn close_report_for(&self, user: &str) {
+        let mut users = self.report_users.lock();
+        users.remove(user);
+        if !users.is_empty() {
+            return;
+        }
         let db = self.report.lock().clone();
         if let Some(db) = db {
             db.pause();
@@ -880,6 +936,22 @@ impl LogSession {
 
     pub fn set_keep_on_rotate(&self, keep: bool) {
         self.shared.data.write().keep_on_rotate = keep;
+    }
+
+    /// Like `set_keep_on_rotate`; `seq` orders the calls (`order.rs`).
+    pub fn set_keep_on_rotate_at(&self, keep: bool, seq: Option<u64>) -> AppResult<()> {
+        let mut order = self.order.lock();
+        order.admit("keep_on_rotate", seq)?;
+        self.set_keep_on_rotate(keep);
+        Ok(())
+    }
+
+    /// Like `set_frozen`; `seq` orders the calls (`order.rs`).
+    pub fn set_frozen_at(&self, frozen: bool, seq: Option<u64>) -> AppResult<()> {
+        let mut order = self.order.lock();
+        order.admit("frozen", seq)?;
+        self.set_frozen(frozen);
+        Ok(())
     }
 
     /// Stops or resumes reading the file. Resuming picks up everything written in between.
@@ -1039,6 +1111,20 @@ impl LogSession {
     /// own. Everything is compiled first, so an invalid filter (also one that only fails in the chain
     /// below) changes nothing.
     pub fn set_view_filter(&self, view: u32, own: ViewFilter) -> AppResult<FilterInfo> {
+        self.set_view_filter_at(view, own, None)
+    }
+
+    /// Like `set_view_filter`; `seq` orders the calls for one view (`order.rs`). The chains are
+    /// compiled and stored under one lock: a filter of another view of the file set in between
+    /// would otherwise be overwritten with the chain as it was before it.
+    pub fn set_view_filter_at(
+        &self,
+        view: u32,
+        own: ViewFilter,
+        seq: Option<u64>,
+    ) -> AppResult<FilterInfo> {
+        let mut order = self.order.lock();
+        order.admit(&format!("filter:{view}"), seq)?;
         let (specs, gens) = {
             let data = self.shared.data.read();
             data.view(view)?;
@@ -1059,6 +1145,7 @@ impl LogSession {
                 .collect();
             (specs, gens)
         };
+        self.compiled();
         let mut info = None;
         {
             let mut data = self.shared.data.write();
@@ -1076,6 +1163,19 @@ impl LogSession {
         }
         self.shared.wake();
         info.ok_or_else(|| unknown_view(view))
+    }
+
+    /// Tests only (prompt 023): `hook` runs between compiling a filter and storing it, the place
+    /// where another command used to get in between.
+    #[doc(hidden)]
+    pub fn on_compiled(&self, hook: impl Fn() + Send + Sync + 'static) {
+        *self.compiled_hook.lock() = Some(Box::new(hook));
+    }
+
+    fn compiled(&self) {
+        if let Some(hook) = self.compiled_hook.lock().as_ref() {
+            hook();
+        }
     }
 
     /// The parts of the chain above a view, outermost first (closed ancestors included).
@@ -1169,6 +1269,8 @@ impl LogSession {
     /// Opens a view below `parent` (prompt 013): the result of the parent, filtered further by `own`.
     /// Its updates go to `sink`. At most `MAX_VIEWS` visible views per session.
     pub fn open_view(&self, parent: u32, own: ViewFilter, sink: UpdateSink) -> AppResult<ViewInfo> {
+        // Under the lock of the changing commands: the chain of the parent stays as compiled here.
+        let _order = self.order.lock();
         let spec = {
             let data = self.shared.data.read();
             data.view(parent)?;
@@ -1186,6 +1288,7 @@ impl LogSession {
             };
             self.compile(&data, &compose(&chain, &own))?
         };
+        self.compiled();
         let generation = self.shared.next_view_generation();
         let info = {
             let mut data = self.shared.data.write();
@@ -1218,6 +1321,8 @@ impl LogSession {
     /// Closes a view: its children take over its part of the chain and stay the same. View 0 stays
     /// as a hidden identity (no list, no listener) while other views are open.
     pub fn close_view(&self, view: u32) -> AppResult<()> {
+        let mut order = self.order.lock();
+        order.forget(&format!("filter:{view}"));
         let mut data = self.shared.data.write();
         let index = data
             .views
@@ -1293,6 +1398,7 @@ impl LogSession {
     /// The rules of the profile changed: the format takes them over now, the requested one too.
     /// A new columns revision and view generation make the frontend load columns and lines again.
     pub fn refresh_rules(&self) {
+        let _order = self.order.lock();
         let view = self.shared.next_view_generation();
         let mut data = self.shared.data.write();
         let current = Arc::clone(&data.format);
@@ -1355,6 +1461,14 @@ impl LogSession {
     /// A chosen profile wins over the suggestion, for the levels and for the layout. The new
     /// columns apply when the levels are recomputed, together with a new view generation.
     pub fn set_profile(&self, profile: &Profile) -> AppResult<FilterInfo> {
+        self.set_profile_at(profile, None)
+    }
+
+    /// Like `set_profile`; `seq` orders the calls (`order.rs`). Detector, format and the job
+    /// generation are taken under one lock, so two changes cannot mix.
+    pub fn set_profile_at(&self, profile: &Profile, seq: Option<u64>) -> AppResult<FilterInfo> {
+        let mut order = self.order.lock();
+        order.admit("profile", seq)?;
         if self.is_merge() {
             // Every source has its own profile, chosen in the merge dialog.
             return Err(AppError::new(
@@ -1950,6 +2064,22 @@ impl Drop for LogSession {
         if let Some(worker) = self.worker.lock().take() {
             let _ = worker.join();
         }
+        // Stopping a file watcher asks the system's event service and waits for its thread; on a
+        // busy macOS that took seconds to minutes (prompt 023, measured 3–133 s under load) and
+        // held up whoever closed the tab. Nothing depends on it: the worker is gone, an event
+        // that still arrives wakes nobody. So on macOS the watchers end on a thread of their own.
+        // Only there: on Windows a watcher holds a handle of the folder, which should be gone
+        // when this returns (tests and users delete the folder next).
+        #[cfg(target_os = "macos")]
+        {
+            let watchers = std::mem::take(&mut self._watchers);
+            if !watchers.is_empty() {
+                // Without a thread the closure is dropped right here, and the watchers with it.
+                let _ = thread::Builder::new()
+                    .name("watcher-drop".into())
+                    .spawn(move || drop(watchers));
+            }
+        }
     }
 }
 
@@ -2262,6 +2392,8 @@ pub struct SessionManager {
     spool_limit: AtomicU64,
     /// SSH connections, known hosts and keychain (prompt 017), set at start.
     remote: RwLock<Option<Arc<crate::remote::Hub>>>,
+    /// Order of the changes that are not of one session: custom profiles, extraction rules.
+    order: Mutex<Order>,
 }
 
 impl Default for SessionManager {
@@ -2275,6 +2407,7 @@ impl Default for SessionManager {
             spool_root: RwLock::new(None),
             spool_limit: AtomicU64::new(crate::spool::DEFAULT_MAX_TOTAL),
             remote: RwLock::new(None),
+            order: Mutex::new(Order::default()),
         }
     }
 }
@@ -2476,13 +2609,37 @@ impl SessionManager {
     }
 
     pub fn set_custom_profiles(&self, profiles: Vec<Profile>) -> AppResult<()> {
+        self.set_custom_profiles_at(profiles, None)
+    }
+
+    /// Like `set_custom_profiles`; `seq` orders the calls (`order.rs`): each call brings the whole
+    /// list, an older one arriving late must not bring back what the newer one removed.
+    pub fn set_custom_profiles_at(
+        &self,
+        profiles: Vec<Profile>,
+        seq: Option<u64>,
+    ) -> AppResult<()> {
+        let mut order = self.order.lock();
+        order.admit("custom_profiles", seq)?;
         self.profiles.write().set_custom(profiles)
     }
 
     /// Rules for the profile of a session (prompt 011), right away for every open session of that
     /// profile. Returns the columns of the session.
     pub fn set_extract_rules(&self, id: u64, rules: Vec<ExtractRule>) -> AppResult<ColumnSet> {
+        self.set_extract_rules_at(id, rules, None)
+    }
+
+    /// Like `set_extract_rules`; `seq` orders the calls per profile (`order.rs`).
+    pub fn set_extract_rules_at(
+        &self,
+        id: u64,
+        rules: Vec<ExtractRule>,
+        seq: Option<u64>,
+    ) -> AppResult<ColumnSet> {
         let session = self.session(id)?;
+        let mut order = self.order.lock();
+        order.admit(&format!("extract_rules:{}", session.format_profile()), seq)?;
         let profile = session.set_extract_rules(rules)?;
         for other in self.sessions.read().values() {
             if other.id != id && other.format_profile() == profile {

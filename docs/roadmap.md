@@ -80,8 +80,15 @@ Architektur verbaut nichts davon.
   drei Stufen (lesen, Ansicht steuern, vorschlagen mit Bestätigung im Fenster), `help` mit Konzepten, Filterbaum, SQL,
   Rezepten, Grenzen und Fehlercodes, MCP-Prompts; aus per Default, Tabs vor der KI verbergen, bekannte Geheimnisse
   maskiert, Verlauf und „KI trennen“ in der Statusleiste, Einrichtungszeilen und Verbindungstest in den Einstellungen
+- CI stabil (Prompt 023): Reihenfolge der ändernden Befehle (Nummer je Aufruf, Sperre je Sitzung), Dashboard zählt
+  seine Nutzer, Diagramme auch mit `LANG=C.UTF-8`, Lineal-Klick trifft den angeklickten Eintrag, Tests warten auf
+  Zustände statt auf Zeiten (`test_support`, `actAndWait`), `scripts/flaky-hunt.mjs` und Workflow „CI repeat“
 
 ## Offen
+
+**Aus Prompt 023:** größerer Empfangspuffer für Syslog-UDP (`SO_RCVBUF`; unter Last verwirft der Kernel Datagramme,
+die App zählt sie nicht), übrige e2e-Schritte auf `actAndWait` umstellen (bisher die aus dem Inventar),
+`run_report`: Reihenfolge je Panel über die Nummer des Aufrufs statt über die Ankunft.
 
 **KI-Steuerung (Nachfragen zu 022):** `propose_dashboard_panel` (Dashboard mit vorbelegtem Panel), Arbeitsstand
 speichern als Vorschlag (braucht einen Weg am nativen Dialog vorbei, der den Pfad sichtbar bestätigt), eigene

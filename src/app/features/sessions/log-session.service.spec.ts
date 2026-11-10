@@ -111,6 +111,26 @@ describe('LogSessionService filter calls', () => {
   });
 });
 
+describe('LogSessionService filter calls of a closed tab', () => {
+  it('drops a call that still waits and shows no error of one on its way', async () => {
+    const answers: ((error: AppError) => void)[] = [];
+    const setFilter = vi.fn(() => new Promise((_resolve, reject) => answers.push(reject)));
+    const close = vi.fn(() => Promise.resolve());
+    const { service, session } = setup(setFilter as never, { close });
+    service.sessions.set([session]);
+    const first = service.setLevels(session, new Set(['ERROR']));
+    const second = service.setLevels(session, new Set(['WARN']));
+    await new Promise((r) => setTimeout(r));
+    await service.close(session.id);
+    // The backend no longer knows the view of the call on its way.
+    answers[0]({ code: 'io', message: 'unknown view 0' });
+    await first;
+    await second;
+    expect(setFilter).toHaveBeenCalledTimes(1);
+    expect(service.error()).toBeNull();
+  });
+});
+
 describe('LogSessionService.openMerged', () => {
   function mergeSetup() {
     const openMerged = vi.fn((sources: { path: string }[]) =>
@@ -350,6 +370,71 @@ describe('LogSessionService filter tree (prompt 010)', () => {
   });
 });
 
+describe('LogSessionService ruler click and stale answers (prompt 023)', () => {
+  const target = { from: 129, until: 131, levels: ['ERROR'] as const, fallback: 130 };
+
+  it('a click on the lower part of a stack trace goes to its head, not to the next error', async () => {
+    // Forward the next error is far below the clicked buckets, backward is the head of the trace.
+    const findLevel = vi.fn((_s: number, _from: number | null, forward: boolean) =>
+      Promise.resolve(
+        forward
+          ? { line: 290, position: 290, wrapped: false }
+          : { line: 100, position: 100, wrapped: false },
+      ),
+    );
+    const { service, session } = setup(undefined, { findLevel });
+    await service.jumpToRulerLevel(session, target);
+    expect(findLevel).toHaveBeenNthCalledWith(1, 1, 129, true, ['ERROR'], 0);
+    expect(findLevel).toHaveBeenNthCalledWith(2, 1, 130, false, ['ERROR'], 0);
+    expect(session.jumpMark).toMatchObject({ position: 100, line: 100 });
+  });
+
+  it('a hit in the clicked buckets is taken, nothing found goes to the clicked place', async () => {
+    const hit = { line: 130, position: 130, wrapped: false };
+    const findLevel = vi.fn(() => Promise.resolve<typeof hit | null>(hit));
+    const { service, session } = setup(undefined, { findLevel });
+    await service.jumpToRulerLevel(session, target);
+    expect(findLevel).toHaveBeenCalledTimes(1);
+    expect(session.jumpMark).toMatchObject({ position: 130, line: 130 });
+    findLevel.mockImplementation(() => Promise.resolve(null));
+    await service.jumpToRulerLevel(session, { ...target, from: null, until: 2, fallback: 0 });
+    expect(session.jumpMark).toMatchObject({ position: 0, line: null });
+  });
+
+  it('an answer for a view that is gone moves nothing', async () => {
+    let answer: (hit: unknown) => void = () => undefined;
+    const pending = () => new Promise((resolve) => (answer = resolve));
+    const { service, session } = setup(undefined, {
+      findLevel: vi.fn(pending),
+      positionAtTime: vi.fn(pending),
+      find: vi.fn(pending),
+    });
+    const newView = () => session.update.set({ ...session.update(), viewGeneration: 7 });
+    const calls = [
+      () => service.jumpToRulerLevel(session, target),
+      () => service.jumpToLevel(session, 'error', true),
+      () => service.jumpToTime(session, 1),
+    ];
+    for (const call of calls) {
+      session.update.set({ ...session.update(), viewGeneration: 0 });
+      const done = call();
+      newView();
+      answer({ line: 5, position: 5, wrapped: false });
+      await done;
+      expect(session.jumpMark).toBeNull();
+    }
+    session.update.set({ ...session.update(), viewGeneration: 0 });
+    session.query.set({ text: 'x', isRegex: false, caseSensitive: false });
+    const found = service.find(session, true);
+    // Another search text since the question: the hit is of the old one.
+    session.query.set({ text: 'y', isRegex: false, caseSensitive: false });
+    answer({ line: 5, position: 5, wrapped: false });
+    await found;
+    expect(session.currentHitLine()).toBeNull();
+    expect(session.selection()).toBeNull();
+  });
+});
+
 describe('LogSessionService and the dashboard (prompt 012)', () => {
   function withLines(position: number, lineThere: number) {
     const setFilter = vi.fn(() => Promise.resolve({ viewGeneration: 1, pending: false }));
@@ -465,6 +550,26 @@ describe('LogSessionService filter tabs (prompt 013)', () => {
     expect(sibling.tabLabel()).toBe('a.log › ERROR › Alle');
     // Bookmarks are the file's.
     expect(child.bookmarks).toBe(session.bookmarks);
+  });
+
+  it('reads whole entries through the view of the tab: view 0 is gone once the file tab is closed', async () => {
+    const { service, session } = tabsSetup();
+    const api = TestBed.inject(LogApi) as unknown as Record<string, unknown>;
+    const copyLines = vi.fn(() => Promise.resolve('text'));
+    const getLines = vi.fn(() => Promise.resolve([{ line: 4, text: '12:00 x', fields: [[0, 5]] }]));
+    const getEntryRange = vi.fn(() => Promise.resolve({ first: 4, last: 4 }));
+    Object.assign(api, { copyLines, getLines, getEntryRange });
+    document.execCommand ??= () => true;
+    const child = (await service.openFilterTab(session))!;
+    await service.copyEntry(child, 4, 6);
+    expect(copyLines).toHaveBeenLastCalledWith(1, 4, 6, 'all', child.viewId);
+    child.columns.set({
+      revision: 1,
+      columns: [{ id: 'time', kind: 'timestamp' }],
+    } as never);
+    child.selection.set({ anchor: 4, first: 4, last: 4 });
+    await service.shareSelection(child, 'markdown');
+    expect(getLines).toHaveBeenCalledWith(1, 'all', 4, 1, child.viewId);
   });
 
   it('routes the updates of each view to its tab', async () => {

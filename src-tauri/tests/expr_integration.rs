@@ -14,9 +14,11 @@ use std::fs::{self, File, OpenOptions as FsOptions};
 use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-const TIMEOUT: Duration = Duration::from_secs(15);
+#[path = "../src/test_support.rs"]
+mod test_support;
+use test_support::wait_until_or;
 
 struct Fixture {
     session: LogSession,
@@ -45,16 +47,13 @@ fn open(path: &Path, keep_on_rotate: bool) -> Fixture {
 }
 
 impl Fixture {
+    #[track_caller]
     fn wait(&self, what: &str, condition: impl Fn(&SessionUpdate) -> bool) {
-        let start = Instant::now();
-        loop {
-            let stats = self.session.stats();
-            if condition(&stats) {
-                return;
-            }
-            assert!(start.elapsed() < TIMEOUT, "timeout: {what}: {stats:?}");
-            std::thread::sleep(Duration::from_millis(5));
-        }
+        wait_until_or(
+            what,
+            || format!("{:?}", self.session.stats()),
+            || condition(&self.session.stats()),
+        );
     }
 
     fn set(&self, expr: Option<&FilterExpr>) {
@@ -456,8 +455,11 @@ fn rotation_truncation_and_freeze_keep_the_tail_and_the_job_equal() {
 
     // Freeze: a new filter finishes on the frozen index, resuming catches up incrementally.
     fx.session.set_frozen(true);
-    fx.wait("frozen", |s| s.frozen);
-    append(&path, "2024-01-15 INFO BEGIN\n2024-01-15 INFO z\n");
+    let held = "2024-01-15 INFO BEGIN\n2024-01-15 INFO z\n";
+    append(&path, held);
+    fx.wait("the frozen worker sees the lines", |s| {
+        s.frozen && s.pending_bytes == held.len() as u64
+    });
     let other = group(GroupOp::And, vec![range("BEGIN", "END")]);
     fx.set(Some(&other));
     assert_eq!(fx.session.stats().total_lines, 2);

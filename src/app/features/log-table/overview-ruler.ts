@@ -445,7 +445,7 @@ export class OverviewRulerComponent implements OnInit, OnDestroy {
     if (!view || view.count === 0) return;
     const target = clickTarget(this.yOf(event), view);
     if (target.kind === 'position') session.jumpTo(target.position, null);
-    else void this.sessions.jumpToRulerLevel(session, target.from, target.levels, target.fallback);
+    else void this.sessions.jumpToRulerLevel(session, target);
   }
 
   protected toEnd(): void {

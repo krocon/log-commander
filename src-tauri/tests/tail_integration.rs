@@ -12,7 +12,10 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-const TIMEOUT: Duration = Duration::from_secs(10);
+#[path = "../src/test_support.rs"]
+mod test_support;
+use test_support::{stays_false, wait_until_or};
+
 const GENERIC_PATTERN_FOR_TESTS: &str = r"(?i)\b(?P<level>TRACE|DEBUG|INFO|WARN|ERROR|FATAL)\b";
 
 fn generic() -> Profile {
@@ -45,33 +48,32 @@ fn open(path: &Path, keep_on_rotate: bool) -> Fixture {
 }
 
 impl Fixture {
+    #[track_caller]
     fn wait(&self, what: &str, condition: impl Fn(&SessionUpdate) -> bool) {
-        let start = Instant::now();
-        loop {
-            let stats = self.session.stats();
-            if condition(&stats) {
-                return;
-            }
-            assert!(
-                start.elapsed() < TIMEOUT,
-                "timeout waiting for {what}: {stats:?}"
-            );
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        wait_until_or(
+            what,
+            || format!("{:?}", self.session.stats()),
+            || condition(&self.session.stats()),
+        );
     }
 
+    /// Waits for an update that was sent to the frontend, not for the state of the session.
+    #[track_caller]
+    fn wait_update(&self, what: &str, condition: impl Fn(&SessionUpdate) -> bool) {
+        wait_until_or(
+            what,
+            || {
+                let updates = self.updates.lock();
+                let seen: Vec<_> = updates.iter().map(|u| &u.status).collect();
+                format!("statuses sent: {seen:?}, now: {:?}", self.session.stats())
+            },
+            || self.updates.lock().iter().any(&condition),
+        );
+    }
+
+    #[track_caller]
     fn wait_status(&self, what: &str, condition: impl Fn(&Status) -> bool) {
-        let start = Instant::now();
-        loop {
-            if self.updates.lock().iter().any(|u| condition(&u.status)) {
-                return;
-            }
-            assert!(
-                start.elapsed() < TIMEOUT,
-                "timeout waiting for status {what}"
-            );
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        self.wait_update(what, |u| condition(&u.status));
     }
 
     fn texts(&self, filtered: bool) -> Vec<String> {
@@ -103,12 +105,16 @@ fn write_tail_truncate_rotate() {
     // The end of the load shows a partial line at once, so tailing starts after it.
     fx.wait("loaded", |s| s.status == Status::Live);
 
-    // Tail: new lines appear, an incomplete one only when its end arrives.
+    // Tail: new lines appear, an incomplete one is completed when its end arrives. (After a
+    // second without its end it is shown as it is, so the number of lines says nothing here.)
     append(&path, "2024-01-01 ERROR two\n2024-01-01 WARN thr");
-    fx.wait("two lines", |s| s.total_lines == 2);
-    assert_eq!(fx.session.stats().counts.error, 1);
+    fx.wait("the second line", |s| s.counts.error == 1);
+    assert_eq!(fx.texts(false)[1], "2024-01-01 ERROR two");
     append(&path, "ee\n");
-    fx.wait("third line", |s| s.total_lines == 3);
+    let size = fs::metadata(&path).unwrap().len();
+    fx.wait("the end of the third line", |s| {
+        s.file_size == size && s.total_lines == 3
+    });
     assert_eq!(fx.texts(false)[2], "2024-01-01 WARN three");
 
     // Truncation: index restarts, reported once.
@@ -267,7 +273,7 @@ fn a_newer_filter_wins_over_a_running_one() {
         .set_filter(&Level::ALL, &query("line 199999"), SearchMode::Filter)
         .unwrap();
     fx.wait("newest filter", |s| {
-        s.view_generation == last.view_generation
+        s.view_generation == last.view_generation && !s.filter_pending
     });
     assert_eq!(fx.session.stats().filtered_lines, 1);
 }
@@ -658,10 +664,8 @@ fn freeze_holds_the_lines_and_resuming_catches_up() {
     assert_eq!(held.total_lines, 1);
     assert_eq!(held.counts.error, 0);
     assert!(held.frozen);
-    assert!(
-        fx.updates.lock().iter().any(|u| u.frozen),
-        "the frontend hears of it"
-    );
+    // The frontend hears of it.
+    fx.wait_update("an update that says frozen", |u| u.frozen);
 
     fx.session.set_frozen(false);
     fx.wait("caught up", |s| s.total_lines == 2);
@@ -684,9 +688,15 @@ fn a_line_without_end_is_not_shown_during_a_freeze() {
 
     fx.session.set_frozen(true);
     std::thread::sleep(SETTLE);
-    append(&path, "2024-01-01 INFO par");
-    std::thread::sleep(Duration::from_millis(1300));
-    assert_eq!(fx.session.stats().total_lines, 1);
+    let partial = "2024-01-01 INFO par";
+    append(&path, partial);
+    fx.wait("the frozen worker sees the bytes", |s| {
+        s.pending_bytes == partial.len() as u64
+    });
+    // Longer than a line without end waits before it is shown.
+    assert!(stays_false(Duration::from_millis(1300), || {
+        fx.session.stats().total_lines != 1
+    }));
 
     append(&path, "tial\n");
     fx.session.set_frozen(false);
@@ -716,19 +726,9 @@ fn a_filter_set_during_a_freeze_finishes_without_new_lines() {
     fx.wait("filter done", |s| {
         !s.filter_pending && s.filtered_lines == 1
     });
-    let start = Instant::now();
-    while !fx
-        .updates
-        .lock()
-        .iter()
-        .any(|u| u.frozen && !u.filter_pending && u.filtered_lines == 1)
-    {
-        assert!(
-            start.elapsed() < TIMEOUT,
-            "the result must reach the frontend during the freeze"
-        );
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    fx.wait_update("the result to reach the frontend during the freeze", |u| {
+        u.frozen && !u.filter_pending && u.filtered_lines == 1
+    });
     assert_eq!(fx.texts(true), vec!["2024-01-01 ERROR two"]);
     assert_eq!(fx.session.stats().total_lines, 2);
 
@@ -783,6 +783,9 @@ fn rotation_without_keeping_starts_over_when_resuming() {
     std::thread::sleep(SETTLE);
     fs::rename(&path, dir.path().join("app.log.1")).unwrap();
     fs::write(&path, "2024-01-01 ERROR new\n").unwrap();
+    fx.wait("the frozen worker sees the new file", |s| {
+        s.pending_bytes == "2024-01-01 ERROR new\n".len() as u64
+    });
     std::thread::sleep(SETTLE);
     assert_eq!(
         fx.texts(false),
