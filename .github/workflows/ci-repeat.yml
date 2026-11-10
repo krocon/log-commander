@@ -1,0 +1,61 @@
+# Runs the Rust tests and the end-to-end scenario several times on all three platforms, to
+# find tests that only fail now and then. Started by hand (Actions → CI repeat → Run workflow).
+name: CI repeat
+
+on:
+  workflow_dispatch:
+    inputs:
+      hunt_runs:
+        description: 'Additional runs of scripts/flaky-hunt.mjs under load per job (0 = none)'
+        default: '0'
+      e2e:
+        description: 'Run the end-to-end scenario on Linux'
+        type: boolean
+        default: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-22.04]
+        repeat: [1, 2, 3, 4, 5]
+    name: ${{ matrix.os }} #${{ matrix.repeat }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Linux packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf xvfb
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          # all repeats share one cache, only the first writes it
+          shared-key: ci-repeat
+          save-if: ${{ matrix.repeat == 1 }}
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      # tauri-build needs the frontend output to exist
+      - run: npm run build
+      - run: npm run rust:test
+      - name: Tests under load
+        if: ${{ !cancelled() && inputs.hunt_runs != '0' }}
+        run: node scripts/flaky-hunt.mjs --runs ${{ inputs.hunt_runs }} --out flaky-hunt.json
+      - name: End-to-end in the real webview (Linux, under Xvfb)
+        if: ${{ !cancelled() && runner.os == 'Linux' && inputs.e2e }}
+        run: xvfb-run -a npm run e2e
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && inputs.hunt_runs != '0' }}
+        with:
+          name: flaky-hunt-${{ matrix.os }}-${{ matrix.repeat }}
+          path: flaky-hunt.json
+          if-no-files-found: ignore

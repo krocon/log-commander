@@ -1,0 +1,3 @@
+# Test data is compared byte for byte: no CRLF on a Windows checkout.
+samples/** -text
+src-tauri/tests/data/** -text
