@@ -81,6 +81,17 @@ export interface Settings {
   keymap: KeymapSetting;
   /** AI control over MCP (prompt 022): off by default; no port while off. */
   mcp: McpSettings;
+  /** Update check: asking GitHub at start is off by default; the menu entry always works. */
+  update: UpdateSettings;
+}
+
+export interface UpdateSettings {
+  /** Ask at start, at most once a day (`lastCheck`). */
+  checkAtStart: boolean;
+  /** Time of the last answered check in ms since the epoch, 0 = never. */
+  lastCheck: number;
+  /** The version whose hint the user closed (`1.2.3`), '' = none. */
+  dismissed: string;
 }
 
 export interface McpSettings {
@@ -126,6 +137,7 @@ export const DEFAULT_SETTINGS: Settings = {
   spoolLimitMb: 2048,
   keymap: { version: KEYMAP_VERSION, bindings: {} },
   mcp: { enabled: false, maskSecrets: true, skipConfirm: false },
+  update: { checkAtStart: false, lastCheck: 0, dismissed: '' },
 };
 
 export const MIN_FONT_SIZE = 9;
@@ -221,7 +233,23 @@ export function mergeSettings(saved: Partial<Settings> | null | undefined): Sett
     : DEFAULT_SETTINGS.spoolLimitMb;
   merged.keymap = mergeKeymap(merged.keymap).keymap;
   merged.mcp = mergeMcp(merged.mcp);
+  merged.update = mergeUpdate(merged.update);
   return merged;
+}
+
+/** Update check: anything unreadable is the default (not asking at start, never asked, nothing dismissed). */
+export function mergeUpdate(raw: unknown): UpdateSettings {
+  const v = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {};
+  const last = v['lastCheck'];
+  const dismissed = v['dismissed'];
+  return {
+    checkAtStart: v['checkAtStart'] === true,
+    lastCheck: typeof last === 'number' && Number.isFinite(last) && last > 0 ? last : 0,
+    dismissed:
+      typeof dismissed === 'string' && /^\d{1,9}\.\d{1,9}\.\d{1,9}$/.test(dismissed)
+        ? dismissed
+        : '',
+  };
 }
 
 /** AI control (prompt 022): only booleans, anything else is the default (off, masked, asking). */

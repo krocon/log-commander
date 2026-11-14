@@ -74,6 +74,11 @@ tauri-plugin-window-state = "2"
 thiserror = "2"
 # AI control over MCP (prompt 022): bridge server, tool list, connection test. Only serde/serde_json.
 lc-mcp = { path = "mcp" }
+# Update check (update.rs): one GET to the GitHub releases API. Blocking and small; rustls with the
+# verifier of the OS (company CAs work) and ring like everything else here.
+ureq = { version = "3", default-features = false, features = ["rustls-no-provider", "platform-verifier"] }
+# Opens the release page in the browser, from Rust only (no permission for the window).
+tauri-plugin-opener = "2"
 
 # Free disk space before building the dashboard database (prompt 012).
 [target.'cfg(unix)'.dependencies]

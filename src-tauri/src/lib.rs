@@ -11,6 +11,7 @@
 //! - `report_db`: the dashboard database (SQLite) and its guarded queries
 //! - `export`, `anchor`, `workspace`: export jobs, anchored lines, workspace files (prompt 015)
 //! - `spool`, `sources`: sources without a file (syslog …) write a spool the session follows (016)
+//! - `update`: asks GitHub for the latest release (a hint only)
 //! - `commands`: the thin Tauri command layer; everything else is free of Tauri
 
 pub mod anchor;
@@ -44,6 +45,7 @@ pub mod tail;
 pub(crate) mod test_support;
 pub mod timeline;
 pub mod timestamp;
+pub mod update;
 pub mod views;
 pub mod workspace;
 
@@ -63,6 +65,7 @@ const MENU_OPEN_REMOTE: &str = "OPEN_REMOTE";
 const MENU_CLOSE_TAB: &str = "CLOSE_TAB";
 const MENU_COLOR_SCHEME: &str = "COLOR_SCHEME";
 const MENU_SHORTCUTS: &str = "OPEN_SHORTCUTS";
+const MENU_CHECK_UPDATE: &str = "CHECK_UPDATE";
 /// The window starts hidden (prompt 020) and is shown with the first colour scheme; at the latest then.
 const SHOW_FALLBACK: std::time::Duration = std::time::Duration::from_secs(1);
 
@@ -84,6 +87,8 @@ pub fn run() {
     builder
         .plugin(tauri_plugin_cli::init())
         .plugin(tauri_plugin_dialog::init())
+        // Only from Rust (`open_release_page`): the window has no permission of this plugin.
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         // The window starts hidden until its colour scheme is on (prompt 020): restoring "visible" would
         // show it before that.
@@ -209,6 +214,8 @@ pub fn run() {
             commands::mcp_reply,
             commands::mcp_disconnect,
             commands::mcp_probe,
+            commands::check_for_update,
+            commands::open_release_page,
             #[cfg(debug_assertions)]
             e2e::e2e_report,
             #[cfg(debug_assertions)]
@@ -284,7 +291,7 @@ impl remote::secrets::SecretStore for SystemStore {
 }
 
 /// The platform's default menu plus File → Open…, Open Path…, Open Source…, Open Remote File…, Merge Files…, Export…, Open Workspace…,
-/// Save Workspace… and Close Tab, View → Colour Scheme…, Help → Keyboard Shortcuts…. The accelerators are the
+/// Save Workspace… and Close Tab, View → Colour Scheme…, Help → Keyboard Shortcuts… and Check for Updates…. The accelerators are the
 /// defaults; the frontend sets the keymap's with `set_menu_accelerators` (prompt 021).
 fn build_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<Menu<R>> {
     let menu = Menu::default(app)?;
@@ -404,9 +411,22 @@ fn build_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<Men
         let submenu = item.as_submenu()?;
         (submenu.text().ok()? == "Help").then(|| submenu.clone())
     });
+    // Asks GitHub for the latest release; no accelerator by default.
+    let check_update = MenuItem::with_id(
+        app,
+        MENU_CHECK_UPDATE,
+        "Check for Updates…",
+        true,
+        None::<&str>,
+    )?;
     match help {
-        Some(help) => help.insert(&shortcuts, 0)?,
-        None => menu.append(&SubmenuBuilder::new(app, "Help").item(&shortcuts).build()?)?,
+        Some(help) => help.insert_items(&[&shortcuts, &check_update], 0)?,
+        None => menu.append(
+            &SubmenuBuilder::new(app, "Help")
+                .item(&shortcuts)
+                .item(&check_update)
+                .build()?,
+        )?,
     }
     Ok(menu)
 }

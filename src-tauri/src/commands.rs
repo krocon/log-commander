@@ -1139,6 +1139,24 @@ pub async fn mcp_probe() -> AppResult<lc_mcp::probe::Probe> {
     .map_err(|e| AppError::new(ErrorCode::Io, e.to_string()))
 }
 
+/// Asks GitHub for the latest release (`update.rs`); only a comparison, nothing is downloaded.
+#[tauri::command]
+pub async fn check_for_update(app: tauri::AppHandle) -> AppResult<crate::update::UpdateInfo> {
+    let current = app.package_info().version.to_string();
+    blocking(move || crate::update::check(&current)).await
+}
+
+/// Opens the page of a release in the browser. The address is built in `update.rs` from the version's
+/// numbers: the frontend cannot open anything else.
+#[tauri::command]
+pub fn open_release_page(app: tauri::AppHandle, version: Option<String>) -> AppResult<()> {
+    use tauri_plugin_opener::OpenerExt;
+    let url = crate::update::release_page(version.as_deref());
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(|e| AppError::new(ErrorCode::Io, e.to_string()))
+}
+
 #[cfg(test)]
 mod chrome_tests {
     use super::parse_hex_rgb;

@@ -82,6 +82,8 @@ src/                         Angular 22 (zoneless, Signals, OnPush, Standalone)
                              Vorschlagsdialog
   app/features/database/     Datenbanken (019): database-dialog (lazy: Verbindung, Tabelle wählen, Vorschau),
                              database-logic (Prüfen, Arbeitsstand, Labels, Zähler, Vorschau-Tabelle)
+  app/features/update/       Update-Prüfung: UpdateService (Root: prüfen, Hinweis, ausblenden), update-logic (rein:
+                             fällig beim Start, Hinweis-Version, Texte)
 src-tauri/src/               Rust; alles außer commands.rs und lib.rs ist frei von Tauri
   session.rs                 LogSession, Ansichten (ViewState), Abfragen, Hintergrund-Jobs (Filter, Level neu), SessionManager
   views.rs                   Filter-Tabs (013): ViewFilter, Kette zu einem Filter zusammensetzen, MAX_VIEWS
@@ -119,6 +121,7 @@ src-tauri/src/               Rust; alles außer commands.rs und lib.rs ist frei 
                              mysql.rs (sqlx), mssql.rs (tiberius), sqlite.rs (rusqlite read-only), fake.rs (nur Tests)
   sources/syslog.rs          Syslog UDP/TCP: Binden (nur Loopback ohne allowRemote), Absender-Filter, TCP-Framing
                              (RFC 6587), Spool-Zeile (Empfangszeit, Absender, Meldung escaped)
+  update.rs                  Update-Prüfung: neuestes Release von GitHub (ureq), Versionsvergleich, Adresse der Release-Seite
   mcp.rs                     KI-Steuerung (022): Router (Positivliste, Größen, Zeitgrenzen, 2 Long-Polls) zum Frontend
   e2e.rs                     nur Debug-Build: Szenario im WebView (Fenster im Hintergrund), siehe scripts/e2e/
 src-tauri/mcp/               Crate lc-mcp (022): Sidecar log-commander-mcp (stdio-MCP), Brücke (bridge/client/host), tools.rs
@@ -404,6 +407,15 @@ samples/                     Beispiel-Logs
   Ein echtes FIFO im Backend geht nicht (schon der Start der Tasks ist ungeordnet). Die Kette je Tab im Frontend
   (`applyFilter`) bleibt, sie spart verworfene Filter-Jobs. Neue Befehle mit „letzter gewinnt“: in `ORDERED_COMMANDS`
   eintragen und im Backend `Order::admit` unter der Sperre rufen.
+- **Update-Prüfung, nur Hinweis:** `check_for_update` fragt `api.github.com/…/releases/latest` (`ureq`, blockierend,
+  10 s, Antwort ≤ 1 MiB, Zertifikate über den Prüfer des OS, ring) und vergleicht `tag_name` mit der eigenen Version;
+  kein Updater, kein Download. Die einzige Anfrage ohne geöffnete Quelle: über Hilfe → „Check for Updates…“ (Aktion
+  `CHECK_UPDATE`, ohne Kürzel) oder den Knopf in den Einstellungen, beim Start nur mit `update.checkAtStart`
+  (**aus per Default**, höchstens 1×/Tag, Fehler still). Im Backend statt per `fetch`, damit die CSP (`connect-src`
+  nur IPC) bleibt. Aus der Antwort zählt nur `tag_name` als `v1.2.3`; `open_release_page` baut die Adresse aus den
+  drei Zahlen selbst, das Frontend kann keine andere öffnen (`tauri-plugin-opener` nur aus Rust, keine Permission für
+  das Fenster). Hinweis in der Statusleiste, „×“ merkt die Version (`update.dismissed`), von Hand geprüft erscheint
+  sie wieder. Echte Abfrage von Hand: `cd src-tauri && cargo test --lib update:: -- --ignored --nocapture`.
 - **Tastenkürzel nur über Katalog und Keymaps (Prompt 021).** Neue Kürzel: Aktion in `action-catalog.ts`, Default in
   `keymaps/*.json`, Handler per `ActionService.register`, nie ein eigener `keydown`-Handler am `document`. Lokale Tasten von
   Widgets (Baum, Zeitstrahl, Splitter, Panels, Menüs, Dialoge, Diagramm) bleiben am Element; der Dispatcher lässt `view`-Aktionen

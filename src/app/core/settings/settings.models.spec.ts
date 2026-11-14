@@ -381,3 +381,28 @@ describe('sources and spool (prompt 016)', () => {
     expect(many.keymap.bindings['A']).toHaveLength(8);
   });
 });
+
+describe('mergeUpdate', () => {
+  it('does not ask at start by default', () => {
+    expect(mergeSettings(null).update).toEqual({
+      checkAtStart: false,
+      lastCheck: 0,
+      dismissed: '',
+    });
+  });
+
+  it('keeps valid values', () => {
+    const update = { checkAtStart: true, lastCheck: 1_800_000_000_000, dismissed: '1.2.3' };
+    expect(mergeSettings({ update }).update).toEqual(update);
+  });
+
+  it('falls back to the defaults for anything else', () => {
+    const broken = { checkAtStart: 'yes', lastCheck: -5, dismissed: '<b>1.2</b>' };
+    expect(mergeSettings({ update: broken as never }).update).toEqual({
+      checkAtStart: false,
+      lastCheck: 0,
+      dismissed: '',
+    });
+    expect(mergeSettings({ update: 'on' as never }).update.checkAtStart).toBe(false);
+  });
+});

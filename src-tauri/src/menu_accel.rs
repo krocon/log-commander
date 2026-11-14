@@ -16,6 +16,7 @@ pub const MENU_ACTIONS: &[&str] = &[
     "CLOSE_TAB",
     "COLOR_SCHEME",
     "OPEN_SHORTCUTS",
+    "CHECK_UPDATE",
 ];
 
 /// Longest shortcut text accepted (the frontend's limit too).
