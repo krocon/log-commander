@@ -2342,14 +2342,13 @@ fn run_filter(shared: &Shared, view: u32, job: &AtomicU64, generation: u64, view
         let total = data.index.len();
         let provisional = data.provisional.is_some();
         let before_provisional = total - usize::from(provisional);
-        for line in position..before_provisional {
-            let entry = data.index.entries[line];
-            feed(&mut builder, &entry, &mut reader, &test);
+        let entries = &data.index.entries;
+        for entry in entries.iter().take(before_provisional).skip(position) {
+            feed(&mut builder, entry, &mut reader, &test);
         }
         let checkpoint = provisional.then(|| builder.checkpoint());
-        for line in before_provisional..total {
-            let entry = data.index.entries[line];
-            feed(&mut builder, &entry, &mut reader, &test);
+        for entry in entries.iter().take(total).skip(before_provisional) {
+            feed(&mut builder, entry, &mut reader, &test);
         }
         let Ok(v) = data.view_mut(view) else { return };
         v.provisional = checkpoint;
@@ -2783,8 +2782,9 @@ impl LogSession {
             None => {
                 let end = (cursor.end_line as usize).min(total);
                 let to = end.min(cursor.position.saturating_add(max));
-                for line in cursor.position..to {
-                    lines.push((line as u32, data.index.entries[line]));
+                let entries = data.index.entries.iter().enumerate();
+                for (line, entry) in entries.take(to).skip(cursor.position) {
+                    lines.push((line as u32, *entry));
                 }
                 cursor.position = to.max(cursor.position);
                 cursor.next_line = cursor.position as u32;
