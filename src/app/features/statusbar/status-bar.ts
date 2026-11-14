@@ -14,6 +14,7 @@ import { DATABASE_COUNTER_TITLE } from '../database/database-logic';
 import { REMOTE_COUNTER_TITLE } from '../remote/remote-logic';
 import { McpBadgeComponent } from '../mcp/mcp-badge';
 import { McpService } from '../mcp/mcp.service';
+import { UpdateService } from '../update/update.service';
 
 @Component({
   selector: 'app-status-bar',
@@ -126,6 +127,28 @@ import { McpService } from '../mcp/mcp.service';
     @if (sessions.notice(); as notice) {
       <span class="notice" role="status">{{ notice }}</span>
     }
+    <!-- Update check: a newer release, opened in the browser or dismissed for this version. -->
+    @if (update.available(); as version) {
+      <span class="update" role="status">
+        <button
+          type="button"
+          class="link"
+          title="Release-Seite im Browser öffnen"
+          (click)="update.open()"
+        >
+          Version {{ version }} verfügbar
+        </button>
+        <button
+          type="button"
+          class="link dismiss"
+          title="Hinweis für diese Version ausblenden"
+          aria-label="Hinweis auf die neue Version ausblenden"
+          (click)="update.dismiss()"
+        >
+          ×
+        </button>
+      </span>
+    }
     <!-- Prompt 022: AI control – connections, history, hide a tab, disconnect. -->
     @if (mcp.visible()) {
       @defer (on immediate) {
@@ -205,6 +228,9 @@ import { McpService } from '../mcp/mcp.service';
       text-decoration: underline;
       font-size: inherit;
     }
+    .dismiss {
+      text-decoration: none;
+    }
     @keyframes pulse {
       50% {
         opacity: 0.35;
@@ -216,6 +242,7 @@ export class StatusBarComponent {
   protected readonly sessions = inject(LogSessionService);
   protected readonly exports = inject(ExportService);
   protected readonly mcp = inject(McpService);
+  protected readonly update = inject(UpdateService);
   protected readonly progressText = progressText;
   protected readonly session = this.sessions.active;
 

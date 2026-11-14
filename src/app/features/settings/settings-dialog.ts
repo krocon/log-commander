@@ -26,6 +26,7 @@ import { ThemeService } from '../../core/theme/theme.service';
 import { LogSessionService } from '../sessions/log-session.service';
 import { formatMapping, newProfileId, parseMapping } from './profile-logic';
 import { draftFromInference, parseLayouts } from '../sessions/format-logic';
+import { UpdateService } from '../update/update.service';
 import { McpSettingsComponent } from '../mcp/mcp-settings';
 
 @Component({
@@ -110,6 +111,21 @@ import { McpSettingsComponent } from '../mcp/mcp-settings';
               (change)="setSpoolLimit($event)"
             />
           </label>
+          <label class="check">
+            <input
+              type="checkbox"
+              [checked]="settings().update.checkAtStart"
+              title="Fragt beim Start höchstens einmal am Tag bei api.github.com nach der neuesten Version. Es wird nichts geladen oder installiert, ein Hinweis erscheint in der Statusleiste."
+              (change)="setUpdateCheck($event)"
+            />
+            Beim Start nach einer neueren Version suchen (Anfrage an GitHub)
+          </label>
+          <p class="kept" role="status">
+            <button type="button" [disabled]="update.checking()" (click)="update.check(true)">
+              Jetzt nach Updates suchen
+            </button>
+            {{ update.result() }}
+          </p>
           <!-- Security review of 016 (L4): kept spools stay until deleted here. -->
           <p class="kept" role="status">
             @if (kept(); as k) {
@@ -387,6 +403,7 @@ export class SettingsDialogComponent implements OnInit {
   private readonly settingsService = inject(SettingsService);
   private readonly sessions = inject(LogSessionService);
   private readonly api = inject(LogApi);
+  protected readonly update = inject(UpdateService);
   protected readonly settings = this.settingsService.settings;
   private readonly dialog = viewChild.required<ElementRef<HTMLDialogElement>>('dialog');
 
@@ -458,6 +475,11 @@ export class SettingsDialogComponent implements OnInit {
     event: Event,
   ): void {
     this.settingsService.update({ [key]: (event.target as HTMLInputElement).checked });
+  }
+
+  protected setUpdateCheck(event: Event): void {
+    const checkAtStart = (event.target as HTMLInputElement).checked;
+    this.settingsService.update({ update: { ...this.settings().update, checkAtStart } });
   }
 
   /** Prompt 016: total size of a spool; the backend takes it when the next source opens. */

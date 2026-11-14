@@ -51,6 +51,7 @@ import { ActionService } from './core/actions/action.service';
 import type { ActionId } from './core/actions/action-catalog';
 import { ShortcutDialogComponent } from './features/shortcuts/shortcut-dialog';
 import { SessionState } from './features/sessions/session-state';
+import { UpdateService } from './features/update/update.service';
 import { McpService } from './features/mcp/mcp.service';
 import { McpProposalDialogComponent } from './features/mcp/mcp-proposal-dialog';
 
@@ -386,6 +387,7 @@ export class App implements OnInit, OnDestroy {
   protected readonly shortcutsOpen = signal<'edit' | 'read' | null>(null);
   private readonly actions = inject(ActionService);
   protected readonly mcp = inject(McpService);
+  private readonly update = inject(UpdateService);
   protected readonly pathDialogOpen = signal(false);
   protected readonly mergeDialogOpen = signal(false);
   protected readonly dropActive = signal(false);
@@ -457,6 +459,8 @@ export class App implements OnInit, OnDestroy {
     await this.sessions.loadWineventSupport();
     // Prompt 022: AI control listens and follows its setting (off by default: no port).
     this.mcp.start();
+    // Asks GitHub for a newer version only when the setting is on (off by default), once a day.
+    this.update.startCheck();
     // Menu entries are actions too; their accelerators follow the keymap (ActionService).
     this.cleanups.push(
       await listen<string>('menu-action', (event) => {
@@ -517,6 +521,7 @@ export class App implements OnInit, OnDestroy {
       COLOR_SCHEME: () => this.theme.pickerOpen.set(true),
       OPEN_SHORTCUTS: () => this.shortcutsOpen.set('edit'),
       SHOW_SHORTCUTS: () => this.shortcutsOpen.set('read'),
+      CHECK_UPDATE: () => void this.update.check(true),
       // Prompt 022: AI control.
       MCP_SHOW_HISTORY: () => this.mcp.panelOpen.set(true),
       MCP_DISCONNECT: () => void this.mcp.disconnect(),

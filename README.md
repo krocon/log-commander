@@ -326,6 +326,11 @@ sensitive tabs (status bar → KI), known secrets are masked. Details, all tools
 Packages for each platform are built by the [release workflow](.github/workflows/release.yml) (unsigned until the signing
 secrets are set; see the comments there).
 
+**Updates:** Help → Check for Updates… asks GitHub for the latest release and, if there is a newer one, shows a link
+to its page in the status bar. Nothing is downloaded or installed. The app does not ask on its own unless you switch
+on „Beim Start nach einer neueren Version suchen“ in the settings (off by default, then at most once a day). The
+request goes to `api.github.com` and carries nothing but the app's version.
+
 ## Usage
 
 ```bash
@@ -393,6 +398,7 @@ Plain keys act in the log only, not in text fields, dialogs or the widgets below
 | `Esc` | In the search field: clear it |
 | `Cmd/Ctrl+Shift+K` | Keyboard shortcuts: view, record, remove, reset (also Help → Keyboard Shortcuts…) |
 | `?` | Keyboard shortcuts as an overview |
+| – | Ask GitHub whether a newer version exists (no default key; also Help → Check for Updates…) |
 | – | Show the AI control history (no default key) |
 | – | Disconnect the AI (no default key) |
 | – | Hide the tab in front from the AI, or show it again (no default key) |

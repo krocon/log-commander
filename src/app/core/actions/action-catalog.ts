@@ -237,6 +237,8 @@ export const ACTIONS = [
     menu: true,
   },
   { id: 'SHOW_SHORTCUTS', label: 'Tastenkürzel anzeigen', group: 'Hilfe', scope: 'view' },
+  // Update check, without a default shortcut
+  { id: 'CHECK_UPDATE', label: 'Nach Updates suchen', group: 'Hilfe', scope: 'global', menu: true },
   // KI-Steuerung (prompt 022), without default shortcuts
   { id: 'MCP_SHOW_HISTORY', label: 'KI-Verlauf zeigen', group: 'Hilfe', scope: 'global' },
   { id: 'MCP_DISCONNECT', label: 'KI trennen', group: 'Hilfe', scope: 'global' },
